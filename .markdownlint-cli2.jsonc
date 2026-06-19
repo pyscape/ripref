@@ -1,0 +1,44 @@
+// markdownlint configuration for the rr repository.
+// Runner: markdownlint-cli2 (the same engine the VS Code "markdownlint"
+// extension uses). Run `npm run lint:md`, or `npx markdownlint-cli2`.
+// Rule reference: https://github.com/DavidAnson/markdownlint/blob/main/doc/Rules.md
+//
+// Tuned to the docs' intentional, ripgrep-style conventions so the linter
+// surfaces real problems instead of drowning them in style false-positives.
+// Anything not listed keeps its default (MD009 trailing spaces, MD012 multiple
+// blank lines, MD022 blanks-around-headings, MD031/MD032 list & fence spacing,
+// MD047 final newline, …) — those still catch real formatting bugs.
+{
+  "config": {
+    "default": true,
+
+    // Line length: prose is hand-wrapped to ~90 cols, while tables, fenced code
+    // and the FORMAT.md ASCII box run wider, and the wrap width varies by file.
+    // Line length is contentious for prose docs, so it is off. To enforce a
+    // loose cap instead, swap `false` for:
+    //   { "line_length": 100, "code_blocks": false, "tables": false }
+    "MD013": false,
+
+    // Fenced code is intentionally bare: `$`-prefixed shell sessions and the
+    // FORMAT.md box-drawing. Don't require a language on every fence.
+    "MD040": false,
+
+    // The CLI reference repeats ### Synopsis / Options / Exit status / Examples
+    // under each command. Allow duplicate headings that are not siblings.
+    "MD024": { "siblings_only": true },
+
+    // README.md uses a setext H1 (ripgrep homage); doc/*.md use an ATX H1.
+    // Both are intentional, so don't force a single heading style.
+    "MD003": false,
+
+    // Examples show `$ cmd` without output on purpose (commands to run).
+    "MD014": false,
+
+    // A valid setext H1 trips first-line-h1; every file already opens with a
+    // title, so this rule isn't earning its keep here.
+    "MD041": false
+  },
+  "globs": ["**/*.md"],
+  "gitignore": true,
+  "ignores": ["node_modules", "target"]
+}
