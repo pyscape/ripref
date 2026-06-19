@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # rustfmt + clippy + tests, on every first-class platform.
+  rust:
+    name: rust (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format (cargo fmt-check)
+        run: cargo fmt-check
+      - name: Lint (cargo lint)
+        run: cargo lint
+      - name: Test (cargo test --all)
+        run: cargo test --all
+
+  # Coverage gate: fail if line coverage regresses below the threshold.
+  coverage:
+    name: coverage (cargo cov-gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Coverage gate
+        run: cargo cov-gate
+
+  # Markdown: lint + format check, both via rumdl (Rust-native, no Node).
+  docs:
+    name: docs (lint + format)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install rumdl
+        run: cargo install rumdl --locked --version 0.2.20
+      - name: Lint Markdown
+        run: rumdl check .
+      - name: Check Markdown formatting
+        run: rumdl fmt --check .

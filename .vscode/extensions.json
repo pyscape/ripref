@@ -1,0 +1,5 @@
+{
+  // Prompt contributors to install the Rust-native Markdown tooling.
+  // rumdl provides lint + format for docs; .rumdl.toml holds the rules.
+  "recommendations": ["rvben.rumdl"]
+}

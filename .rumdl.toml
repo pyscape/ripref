@@ -1,0 +1,46 @@
+# rumdl configuration for the rr repository.
+# Runner: rumdl (https://github.com/rvben/rumdl) — a Rust-native, markdownlint-
+# compatible linter + formatter. No Node/npm toolchain required.
+#   cargo install rumdl --locked   — install the tool (Cargo-managed)
+#   rumdl check .                  — lint (report only), CI gate
+#   rumdl fmt .                    — format in place (rewrite to canonical style)
+#   rumdl fmt --check .            — verify formatting without rewriting, CI gate
+# Rule IDs match markdownlint's MDxxx; run `rumdl explain MD024` for details.
+#
+# Tuned to the docs' intentional, ripgrep-style conventions so the linter
+# surfaces real problems instead of drowning them in style false-positives.
+# Anything not disabled keeps its default (MD009 trailing spaces, MD012 multiple
+# blank lines, MD022 blanks-around-headings, MD031/MD032 list & fence spacing,
+# MD047 final newline, …) — those still catch real formatting bugs.
+
+[global]
+# Respect .gitignore when scanning (true is the default; stated for clarity).
+respect_gitignore = true
+# Build artifacts that may contain generated Markdown.
+exclude = ["target"]
+
+# Disabled rules (each off for a deliberate, documented reason):
+#   MD013 line-length — prose is hand-wrapped to ~90 cols, while tables, fenced
+#         code and the FORMAT.md ASCII box run wider; the wrap width varies by
+#         file. Line length is contentious for prose docs, so it is off.
+#   MD040 fenced-code-language — fenced code is intentionally bare: `$`-prefixed
+#         shell sessions and the FORMAT.md box-drawing. Don't require a language.
+#   MD003 heading-style — README.md uses a setext H1 (ripgrep homage); doc/*.md
+#         use an ATX H1. Both are intentional; don't force a single style.
+#   MD014 commands-show-output — examples show `$ cmd` without output on purpose.
+#   MD041 first-line-heading — a valid setext H1 trips this; every file already
+#         opens with a title, so the rule isn't earning its keep here.
+#
+# rumdl-only rules (no markdownlint equivalent), disabled to keep this swap
+# behavior-preserving — the docs passed markdownlint without them. Both are
+# reasonable opt-ins later; see the note in doc/TESTING.md:
+#   MD057 relative-link-exists — flags links to missing files. Useful signal,
+#         but currently fires on intentional/not-yet-created targets.
+#   MD076 list-item-spacing — flags loose/tight spacing mix; its autofix
+#         reorders loose lists with embedded code fences and corrupts them.
+disable = ["MD013", "MD040", "MD003", "MD014", "MD041", "MD057", "MD076"]
+
+# The CLI reference repeats ### Synopsis / Options / Exit status / Examples under
+# each command. Allow duplicate headings that are not siblings.
+[MD024]
+siblings-only = true

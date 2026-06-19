@@ -1,0 +1,9 @@
+{
+  // Markdown linting + formatting via the rumdl extension (rvben.rumdl).
+  // Mirrors the CLI gates in CI: `rumdl check .` / `rumdl fmt --check .`.
+  // Rule posture lives in .rumdl.toml. Install the extension with `rumdl vscode`.
+  "[markdown]": {
+    "editor.defaultFormatter": "rvben.rumdl",
+    "editor.formatOnSave": true
+  }
+}
