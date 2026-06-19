@@ -1,5 +1,5 @@
-ripref (rr)
------------
+# ripref (rr)
+
 ripref is a tool for citing code by stable anchors instead of fragile line
 numbers. It recursively indexes the current directory into a single compact,
 memory-mapped index that maps each anchor (a file path, a symbol, a document
@@ -10,7 +10,7 @@ or gone dangling as the code changes. ripref is language agnostic and has
 first-class support on Windows, macOS and Linux.
 
 A reference like `parser.go:42` is wrong the moment a line is inserted above
-it, and nothing tells you it broke. An anchor names *what* you meant (the
+it, and nothing tells you it broke. An anchor names _what_ you meant (the
 function, the heading, the decision) and stays correct across edits, moves and
 refactors. ripref makes that the cheap default and turns reference rot into a
 build-time (or lint-time) error.
@@ -22,15 +22,17 @@ Dual-licensed under MIT or the [UNLICENSE](https://unlicense.org).
 > implementation is being built to. The commands below describe intended
 > behavior.
 
-### Documentation
+## Documentation
 
 The full reference lives in [`doc/`](doc/):
 
-* [`doc/CLI.md`](doc/CLI.md): every command, flag, exit code and example.
-* [`doc/FORMAT.md`](doc/FORMAT.md): the on-disk index byte layout.
-* [`doc/JSON.md`](doc/JSON.md): the `--format json` output schema.
-* [`doc/examples/clam.rr.toml`](doc/examples/clam.rr.toml): an example
-  configuration profile.
+- [`doc/CLI.md`](doc/CLI.md): every command, flag, exit code and example.
+- [`doc/FORMAT.md`](doc/FORMAT.md): the on-disk index byte layout.
+- [`doc/JSON.md`](doc/JSON.md): the `--format json` output schema.
+- [`doc/TESTING.md`](doc/TESTING.md): how ripref is tested and how coverage is
+  proven.
+- [`doc/examples/`](doc/examples/): the config files, `rr.toml` (built-in
+  defaults) and `clam.rr.toml` (an example profile).
 
 In-page: [Quick examples](#quick-examples) ·
 [Why use it](#why-should-i-use-ripref) · [Anchors](#anchors) ·
@@ -98,24 +100,24 @@ out of vim or vscode is neither cheap nor easy; here it is one command.
 
 The rest follows from that:
 
-* ripref references code by *meaning*, not by line number, so your docs,
+- ripref references code by _meaning_, not by line number, so your docs,
   comments and specs keep pointing at the right thing across edits and
   refactors.
-* ripref is fast. Every read memory-maps a single prebuilt index and
+- ripref is fast. Every read memory-maps a single prebuilt index and
   binary-searches it (no rescan, no deserialization, no allocation) so a
   lookup costs microseconds and the thousands of lookups a build fans out share
   one page-cached copy.
-* ripref checks freshness with a single `stat` per in-scope file. There is no
+- ripref checks freshness with a single `stat` per in-scope file. There is no
   content hashing and no `git` on the read path, and when the index is stale
   ripref tells you (exit code 3) instead of returning a stale answer.
-* ripref is language agnostic. Out of the box it resolves file paths, document
+- ripref is language agnostic. Out of the box it resolves file paths, document
   headings, scenarios, decision records, manifest keys and API operations;
   language-specific symbols come from plugins, so teaching ripref a new
   language is a query file, not a patch to ripref.
-* ripref degrades gracefully. When the index is stale and you can't rebuild,
+- ripref degrades gracefully. When the index is stale and you can't rebuild,
   fall back to [ripgrep](https://github.com/BurntSushi/ripgrep) (always fresh,
   if slower) as a correct floor.
-* ripref has structured output (`--format json`) so it composes cleanly with
+- ripref has structured output (`--format json`) so it composes cleanly with
   editors, linters and CI.
 
 In other words, use ripref if you want references that span documentation and
@@ -124,30 +126,30 @@ every commit, save, or even read.
 
 ### Why shouldn't I use ripref?
 
-* You only need to *find* text. If you're searching for a pattern rather than
+- You only need to _find_ text. If you're searching for a pattern rather than
   resolving a named reference, use
   [ripgrep](https://github.com/BurntSushi/ripgrep) or grep, that's what
   they're for.
-* You work entirely inside code, in a single editor, and never cite it from
+- You work entirely inside code, in a single editor, and never cite it from
   documentation or specs. If your editor's "find references" already covers
   what you need, ripref may be more than you want.
-* The language or artifact you care about has no plugin yet and you don't want
+- The language or artifact you care about has no plugin yet and you don't want
   to write one. (Please file an issue, or a plugin.)
 
 ### Anchors
 
-An *anchor* is the stable identity an artifact already has. Every command
+An _anchor_ is the stable identity an artifact already has. Every command
 accepts the same grammar:
 
-| Anchor kind | Example |
-| ----------- | ------- |
-| file path | `src/server/http.go` |
-| symbol | `my_module::handler` |
-| scenario | `tests/features/auth.feature#"User can log in"` |
-| record | `AD-42` |
-| heading | `docs/guide.md#configuration` |
-| manifest key | `pyproject.toml#[tool.poetry] name` |
-| API operation | `createUser` |
+| Anchor kind   | Example                                         |
+| ------------- | ----------------------------------------------- |
+| file path     | `src/server/http.go`                            |
+| symbol        | `my_module::handler`                            |
+| scenario      | `tests/features/auth.feature#"User can log in"` |
+| record        | `AD-42`                                         |
+| heading       | `docs/guide.md#configuration`                   |
+| manifest key  | `pyproject.toml#[tool.poetry] name`             |
+| API operation | `createUser`                                    |
 
 A bare line number such as `http.go:42` is never an anchor, it is exactly the
 thing `rr enforce` flags. Which concrete patterns map to which kind is set by
@@ -187,7 +189,8 @@ are durable prose subject to enforcement, are **configuration**, not built-in
 rules, so ripref stays general and any one project's conventions are just a
 profile on top of it.
 
-Drop a `.rr.toml` at the repository root to set them.
+Drop a `.rr.toml` at the repository root to override them; rr's built-in defaults
+(the base layer your config merges over) are in [`doc/examples/rr.toml`](doc/examples/rr.toml).
 [`doc/examples/clam.rr.toml`](doc/examples/clam.rr.toml) is a worked profile
 that teaches ripref one project's conventions end to end (scope, the anchor
 kinds it recognizes, and per-language scan rules) using only built-in
@@ -198,20 +201,20 @@ ripref.
 
 Every command accepts:
 
-* `--index <path>` (or the `REF_INDEX` environment variable): location of the
+- `--index <path>` (or the `REF_INDEX` environment variable): location of the
   index. Defaults to `.ref-cache/index`.
-* `--format text|json`: human-readable text (default), or one JSON document
+- `--format text|json`: human-readable text (default), or one JSON document
   for piping into other tools (see [`doc/JSON.md`](doc/JSON.md)).
-* `--color auto|always|never`: when to colorize output (default `auto`);
+- `--color auto|always|never`: when to colorize output (default `auto`);
   `--no-color` is shorthand for `--color never`.
 
 Exit codes are consistent across commands:
 
-* `0`: success.
-* `1`: findings: `enforce` saw violations, or `read`/`search` found nothing or
+- `0`: success.
+- `1`: findings: `enforce` saw violations, or `read`/`search` found nothing or
   an ambiguous match.
-* `2`: usage error.
-* `3`: the index is stale; rebuild with `rr index`, or fall back to ripgrep.
+- `2`: usage error.
+- `3`: the index is stale; rebuild with `rr index`, or fall back to ripgrep.
 
 ### Installation
 
@@ -247,13 +250,58 @@ $ ./target/release/rr --version
 
 ### Running tests
 
-ripref has both unit tests and integration tests. To run the full suite, use:
+ripref has both unit tests (each component in isolation) and integration tests
+(the compiled `rr` binary driven end to end against the spec). To run the full
+suite, use:
 
 ```
 $ cargo test --all
 ```
 
 from the repository root.
+
+### Linting and formatting
+
+Rust style is enforced with `rustfmt` (formatter) and `clippy` (linter), both
+bundled with the toolchain. The lint posture is declared as crate-level
+attributes in `src/lib.rs` / `src/main.rs`, and convenience aliases (in
+`.cargo/config.toml`) provide the CI gates:
+
+```
+$ cargo fmt          # rewrite to canonical style
+$ cargo fmt-check    # verify formatting without rewriting (CI gate)
+$ cargo lint         # clippy --all-targets, warnings as errors (CI gate)
+```
+
+Markdown docs use the same formatter-then-linter split, kept Rust-native via
+[`rumdl`](https://github.com/rvben/rumdl) (`cargo install rumdl --locked`) — no
+Node/npm. The rule posture lives in `.rumdl.toml`; see
+[`doc/TESTING.md`](doc/TESTING.md) for details.
+
+```
+$ rumdl fmt .         # rewrite Markdown to canonical style
+$ rumdl fmt --check . # verify formatting without rewriting (CI gate)
+$ rumdl check .       # lint, non-zero exit on any finding (CI gate)
+```
+
+### Test coverage
+
+Coverage is measured with source-based LLVM instrumentation via
+[`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov) (cross-platform,
+unlike `tarpaulin`). One-time setup, then run a coverage alias:
+
+```
+$ rustup component add llvm-tools-preview
+$ cargo install cargo-llvm-cov
+
+$ cargo cov          # per-file coverage table
+$ cargo cov-gate     # fail if line coverage drops below the threshold
+$ cargo cov-html     # browsable report under target/llvm-cov/html/
+```
+
+`cargo cov-gate` is the CI gate, so coverage is enforced rather than merely
+observed. The strategy, current numbers, and the test-to-exit-code mapping are
+documented in [`doc/TESTING.md`](doc/TESTING.md).
 
 ### License
 
