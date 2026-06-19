@@ -1,0 +1,96 @@
+# ===========================================================================
+# rr — built-in default configuration
+# ===========================================================================
+# This is the base layer every rr run starts from, before any project config.
+# A project overrides it by dropping a `.rr.toml` at its repo root; rr merges
+# that file over these defaults. (Tier-2: this content is embedded in the binary
+# via include_str!; during Tier-1 it lives here as a standalone file.)
+#
+# Status: PROVISIONAL Tier-1 sketch — these values define rr's out-of-the-box
+# behavior and double as the schema's documented defaults. Conservative by
+# design: index broadly, but only scan contexts rr understands structurally for
+# citations, so a fresh project gets zero false positives.
+
+[index]
+path = ".ref-cache/index"          # or the REF_INDEX env var
+respect-gitignore = true           # honor .gitignore / .ignore / .rgignore (CLI: --no-ignore)
+hidden = false                     # skip dotfiles (CLI: --hidden to include)
+follow-symlinks = false            # CLI: -L/--follow to enable
+# Default scope is the whole working tree minus ignored files — no narrowing.
+# Projects restrict it via include/exclude (or -g/--glob).
+include = ["**"]
+exclude = []
+
+[enforce]
+# Out of the box the gate checks documentation prose — where references live and
+# where rr can scan safely (see [scan] below). Projects widen this, e.g. to
+# source-comment scopes, in their own .rr.toml.
+in-scope = ["**/*.md"]
+append-only = []                   # no files exempt from the drift rule by default
+rules = ["line-number", "dangling"]
+# Dangling is existence-checked only for kinds that carry a membership section
+# in the index. Other kinds resolve for read/search but are not
+# existence-checked.
+dangling-check-kinds = ["path", "scenario", "record"]
+
+# ---------------------------------------------------------------------------
+# Anchor kinds enabled by default — the universal, language-agnostic kinds the
+# README promises out of the box. `symbol` is deliberately absent: symbols are
+# language-specific and come from a language extractor (built-in or plugin).
+# ---------------------------------------------------------------------------
+
+[anchor.path]
+# Any repo-relative path present in the index resolves. No extension allow-list
+# by default; a project may add `extensions = [...]` to limit what counts as a
+# path citation.
+
+[anchor.heading]
+# Markdown headings + bolded / table-row anchors, addressed by GitHub slug.
+files = ["**/*.md"]
+slug = "github"
+
+[anchor.scenario]
+# Gherkin `path/to/x.feature#"Scenario title"`.
+files = ["**/*.feature"]
+
+[anchor.record]
+# Decision records: an ID defined by a markdown heading. The default pattern
+# covers the common conventions; a project narrows it, e.g. `prefix = "AD-"`
+# (shorthand for `pattern = "AD-[0-9]+"`).
+pattern = "(ADR|AD|RFC)-[0-9]+"
+defined-by = "heading"
+files = ["**/*.md"]
+normalize = "strip-leading-zeros"  # ADR-007 resolves the same as ADR-7
+
+[anchor.operation]
+# OpenAPI operationId in spec files.
+defined-by = "yaml-key"
+key = "operationId"
+files = ["**/*.{yaml,yml,json}"]
+
+[anchor.manifest-key]
+# `path/to/file.toml#[section] key`.
+files = ["**/*.toml"]
+
+# To resolve a language's symbols (crate::module::Symbol, package.Class, …),
+# enable its extractor — built-in where available, otherwise a plugin:
+#
+#   [anchor.symbol]
+#   language = "rust"
+#   internal-roots = "workspace"
+
+# ---------------------------------------------------------------------------
+# Citation-scanning scope — which byte-ranges are eligible to be scanned for
+# references. Conservative default: only contexts rr understands structurally,
+# so string literals and code are never mis-indexed as citations. Unknown file
+# types are NOT scanned until a language rule or plugin declares their scopes.
+# ---------------------------------------------------------------------------
+
+[scan.markdown]
+eligible = ["prose"]               # everything except ``` fenced code blocks
+
+[scan.text]
+eligible = ["all"]                 # .txt / .rst and other plain prose
+
+# Code languages: add a [scan.<lang>] (built-in or via plugin) to scan their
+# comments — e.g.  [scan.rust]  with  eligible = ["comments"].

@@ -20,20 +20,20 @@ respect_gitignore = true
 exclude = ["target"]
 
 # Disabled rules (each off for a deliberate, documented reason):
-#   MD013 line-length — prose is hand-wrapped to ~90 cols, while tables, fenced
-#         code and the FORMAT.md ASCII box run wider; the wrap width varies by
-#         file. Line length is contentious for prose docs, so it is off.
+#   MD013 line-length — prose is hand-wrapped to ~90 cols, while tables and
+#         fenced code run wider; the wrap width varies by file. Line length is
+#         contentious for prose docs, so it is off.
 #   MD040 fenced-code-language — fenced code is intentionally bare: `$`-prefixed
-#         shell sessions and the FORMAT.md box-drawing. Don't require a language.
-#   MD003 heading-style — README.md uses a setext H1 (ripgrep homage); doc/*.md
-#         use an ATX H1. Both are intentional; don't force a single style.
+#         shell sessions. Don't require a language.
+#   MD003 heading-style — README.md uses a setext H1 (ripgrep homage); other
+#         Markdown may use an ATX H1. Both are intentional; don't force one style.
 #   MD014 commands-show-output — examples show `$ cmd` without output on purpose.
 #   MD041 first-line-heading — a valid setext H1 trips this; every file already
 #         opens with a title, so the rule isn't earning its keep here.
 #
 # rumdl-only rules (no markdownlint equivalent), disabled to keep this swap
 # behavior-preserving — the docs passed markdownlint without them. Both are
-# reasonable opt-ins later; see the note in doc/TESTING.md:
+# reasonable opt-ins later:
 #   MD057 relative-link-exists — flags links to missing files. Useful signal,
 #         but currently fires on intentional/not-yet-created targets.
 #   MD076 list-item-spacing — flags loose/tight spacing mix; its autofix

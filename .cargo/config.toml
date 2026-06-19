@@ -1,4 +1,4 @@
-# Repeatable quality entry points (see doc/TESTING.md).
+# Repeatable quality entry points.
 #
 # Linting & formatting (built-in: rustfmt + clippy components):
 #   cargo fmt-check — verify formatting without rewriting (CI gate)

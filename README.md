@@ -17,22 +17,20 @@ build-time (or lint-time) error.
 
 Dual-licensed under MIT or the [UNLICENSE](https://unlicense.org).
 
-> **Status: pre-release, in active design.** ripref is being specified
-> README-first; the pages under [`doc/`](doc/) are the working spec the
-> implementation is being built to. The commands below describe intended
-> behavior.
+> **Status: pre-release, in active design.** The design spec is maintained in
+> the separate `ripref` project, and reference docs are generated from the
+> code. The commands below describe intended behavior.
 
 ## Documentation
 
-The full reference lives in [`doc/`](doc/):
+ripref is documented from the code:
 
-- [`doc/CLI.md`](doc/CLI.md): every command, flag, exit code and example.
-- [`doc/FORMAT.md`](doc/FORMAT.md): the on-disk index byte layout.
-- [`doc/JSON.md`](doc/JSON.md): the `--format json` output schema.
-- [`doc/TESTING.md`](doc/TESTING.md): how ripref is tested and how coverage is
-  proven.
-- [`doc/examples/`](doc/examples/): the config files, `rr.toml` (built-in
-  defaults) and `clam.rr.toml` (an example profile).
+- `rr --help` lists every command and flag; the help text is generated from the
+  flag definitions, so it can't drift from the parser.
+- `cargo doc --open` renders the API, including the on-disk index byte layout,
+  which is specified in the `refidx` module (`src/refidx.rs`).
+- Built-in defaults are in [`rr.toml`](rr.toml); the build, tests and coverage
+  are covered in the sections below.
 
 In-page: [Quick examples](#quick-examples) ·
 [Why use it](#why-should-i-use-ripref) · [Anchors](#anchors) ·
@@ -122,7 +120,7 @@ The rest follows from that:
 
 In other words, use ripref if you want references that span documentation and
 code, that survive change, and that are checked fast enough to run on every
-every commit, save, or even read.
+commit, save, or even read.
 
 ### Why shouldn't I use ripref?
 
@@ -153,8 +151,7 @@ accepts the same grammar:
 
 A bare line number such as `http.go:42` is never an anchor, it is exactly the
 thing `rr enforce` flags. Which concrete patterns map to which kind is set by
-configuration, not hardcoded; see [Configuration](#configuration) and the full
-grammar in [`doc/CLI.md`](doc/CLI.md).
+configuration, not hardcoded; see [Configuration](#configuration).
 
 ### How it works
 
@@ -178,7 +175,7 @@ resolve against. If anything is newer, the index is stale and the reader exits
 3 rather than answer from stale data. Recover by re-running `rr index`, or fall
 back to ripgrep, which is always fresh.
 
-The on-disk index format is specified in [`doc/FORMAT.md`](doc/FORMAT.md).
+The on-disk index format is specified in the `refidx` module (`src/refidx.rs`).
 
 ### Configuration
 
@@ -190,12 +187,11 @@ rules, so ripref stays general and any one project's conventions are just a
 profile on top of it.
 
 Drop a `.rr.toml` at the repository root to override them; rr's built-in defaults
-(the base layer your config merges over) are in [`doc/examples/rr.toml`](doc/examples/rr.toml).
-[`doc/examples/clam.rr.toml`](doc/examples/clam.rr.toml) is a worked profile
-that teaches ripref one project's conventions end to end (scope, the anchor
-kinds it recognizes, and per-language scan rules) using only built-in
-extractors. Additional languages plug in as query files rather than patches to
-ripref.
+(the base layer your config merges over) are in [`rr.toml`](rr.toml) at the
+repository root. A worked profile that teaches ripref one project's conventions
+end to end (scope, the anchor kinds it recognizes, and per-language scan rules)
+using only built-in extractors ships with the `ripref` design spec. Additional
+languages plug in as query files rather than patches to ripref.
 
 ### Shared options
 
@@ -204,7 +200,7 @@ Every command accepts:
 - `--index <path>` (or the `REF_INDEX` environment variable): location of the
   index. Defaults to `.ref-cache/index`.
 - `--format text|json`: human-readable text (default), or one JSON document
-  for piping into other tools (see [`doc/JSON.md`](doc/JSON.md)).
+  for piping into other tools.
 - `--color auto|always|never`: when to colorize output (default `auto`);
   `--no-color` is shorthand for `--color never`.
 
@@ -275,8 +271,7 @@ $ cargo lint         # clippy --all-targets, warnings as errors (CI gate)
 
 Markdown docs use the same formatter-then-linter split, kept Rust-native via
 [`rumdl`](https://github.com/rvben/rumdl) (`cargo install rumdl --locked`) — no
-Node/npm. The rule posture lives in `.rumdl.toml`; see
-[`doc/TESTING.md`](doc/TESTING.md) for details.
+Node/npm. The rule posture lives in `.rumdl.toml`.
 
 ```
 $ rumdl fmt .         # rewrite Markdown to canonical style
@@ -300,8 +295,7 @@ $ cargo cov-html     # browsable report under target/llvm-cov/html/
 ```
 
 `cargo cov-gate` is the CI gate, so coverage is enforced rather than merely
-observed. The strategy, current numbers, and the test-to-exit-code mapping are
-documented in [`doc/TESTING.md`](doc/TESTING.md).
+observed.
 
 ### License
 

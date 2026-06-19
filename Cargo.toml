@@ -1,0 +1,28 @@
+[package]
+name = "ripref"
+version = "0.0.1"
+edition = "2021"
+description = "Cite code by stable anchors instead of fragile line numbers."
+license = "MIT OR Unlicense"
+repository = "https://github.com/pyscape/ripref"
+default-run = "rr"
+
+# The binary name for ripref is `rr` (see README §Installation).
+[[bin]]
+name = "rr"
+path = "src/main.rs"
+
+[lib]
+name = "ripref"
+path = "src/lib.rs"
+
+[dependencies]
+# Reused from ripgrep's stack, per the project's "model on ripgrep" ethos:
+ignore = "0.4"     # gitignore-aware parallel tree walk
+memmap2 = "0.9"    # the reader memory-maps the index, never deserializes it
+
+# NOTE: the lint posture (warn on unsafe_code + clippy::all) is declared as
+# crate-level attributes in src/lib.rs and src/main.rs, NOT via a `[lints]`
+# table here. `[lints]` (Cargo 1.74+) is the modern home for this, but some
+# editors ship a stale Cargo schema that false-flags it; crate attributes are
+# editor-agnostic and enforce identically. `cargo lint` is the hard gate.
