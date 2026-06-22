@@ -173,7 +173,9 @@ Freshness is a `stat`, not a hash. The index records its build time; a reader
 compares that against the newest modification time among the files it would
 resolve against. If anything is newer, the index is stale and the reader exits
 3 rather than answer from stale data. Recover by re-running `rr index`, or fall
-back to ripgrep, which is always fresh.
+back to ripgrep, which is always fresh. The comparison is second-granular
+(filesystem `mtime` resolution); a file written within the same second as the
+index build is treated as fresh by design.
 
 The on-disk index format is specified in the `refidx` module (`src/refidx.rs`).
 
@@ -272,10 +274,10 @@ Once installed, two ways to launch a debug session:
 
 - **CodeLens** (quickest): open `tests/cli.rs`, click the **Debug** link that
   appears above any `#[test]` function.
-- **Run and Debug panel** (`Ctrl+Shift+D`, then `F5`): pick **"Debug:
-  tests/cli.rs (all tests)"** to run every test under the debugger, or **"Debug:
-  tests/cli.rs (filter by name)"** to be prompted for a substring and run only
-  matching tests.
+- **Run and Debug panel** (`Ctrl+Shift+D`, then `F5`): pick
+  **"Debug: tests/cli.rs (all tests)"** to run every test under the debugger,
+  or **"Debug: tests/cli.rs (filter by name)"** to be prompted for a substring
+  and run only matching tests.
 
 Both launch configurations run `cargo test --test cli --no-run` before
 attaching, so the binary is always current. Set breakpoints anywhere in
