@@ -1,0 +1,15 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      // Builds the integration-test binary and copies it to a fixed path so
+      // launch.json can point at it without knowing the hash suffix.
+      "label": "build: cli tests",
+      "type": "shell",
+      "command": "$lines = cargo test --test cli --no-run 2>&1; $lines | Out-Host; $m = ($lines | Select-String 'Executable[^(]+\\(([^)]+)\\)'); if ($m) { Copy-Item ($m.Matches.Groups[1].Value) target\\debug\\cli_test_runner.exe } else { exit 1 }",
+      "group": "build",
+      "problemMatcher": "$rustc",
+      "presentation": { "reveal": "always", "panel": "shared" }
+    }
+  ]
+}

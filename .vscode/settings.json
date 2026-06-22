@@ -5,5 +5,9 @@
   "[markdown]": {
     "editor.defaultFormatter": "rvben.rumdl",
     "editor.formatOnSave": true
-  }
+  },
+
+  // CodeLLDB crashes on Windows/MSVC (exit 0xC0000005); use the MSVC debugger instead.
+  // This makes rust-analyzer's "Debug" CodeLens buttons use cppvsdbg.
+  "rust-analyzer.debug.engine": "ms-vscode.cpptools"
 }

@@ -1,0 +1,36 @@
+{
+  // Uses ms-vscode.cpptools (cppvsdbg) — CodeLLDB crashes on Windows/MSVC (0xC0000005).
+  // preLaunchTask compiles the test binary and copies it to a fixed path.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "cppvsdbg",
+      "request": "launch",
+      "name": "Debug: tests/cli.rs (all tests)",
+      "program": "${workspaceFolder}/target/debug/cli_test_runner.exe",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "preLaunchTask": "build: cli tests"
+    },
+    {
+      "type": "cppvsdbg",
+      "request": "launch",
+      "name": "Debug: tests/cli.rs (filter by name)",
+      "program": "${workspaceFolder}/target/debug/cli_test_runner.exe",
+      "args": ["${input:testName}"],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "preLaunchTask": "build: cli tests"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "testName",
+      "type": "promptString",
+      "description": "Test name filter (substring match, e.g. 'freshness')"
+    }
+  ]
+}

@@ -17,9 +17,9 @@ build-time (or lint-time) error.
 
 Dual-licensed under MIT or the [UNLICENSE](https://unlicense.org).
 
-> **Status: pre-release, in active design.** The design spec is maintained in
-> the separate `ripref` project, and reference docs are generated from the
-> code. The commands below describe intended behavior.
+> **Status: pre-release, in active design.** Reference docs are generated from
+> the code (rustdoc and `rr --help`). The commands below describe intended
+> behavior.
 
 ## Documentation
 
@@ -188,10 +188,10 @@ profile on top of it.
 
 Drop a `.rr.toml` at the repository root to override them; rr's built-in defaults
 (the base layer your config merges over) are in [`rr.toml`](rr.toml) at the
-repository root. A worked profile that teaches ripref one project's conventions
+repository root. A project's own `.rr.toml` can teach ripref its conventions
 end to end (scope, the anchor kinds it recognizes, and per-language scan rules)
-using only built-in extractors ships with the `ripref` design spec. Additional
-languages plug in as query files rather than patches to ripref.
+using only built-in extractors. Additional languages plug in as query files
+rather than patches to ripref.
 
 ### Shared options
 
@@ -255,6 +255,31 @@ $ cargo test --all
 ```
 
 from the repository root.
+
+### Debugging
+
+VS Code is configured for step-through debugging of the integration tests in
+`tests/cli.rs`. You need two extensions:
+
+- [`rust-lang.rust-analyzer`](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+- [`ms-vscode.cpptools`](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cpptools)
+
+Open the Extensions panel — both appear under **Workspace Recommendations** and
+can be installed from there. CodeLLDB is not used; it crashes on Windows with
+the MSVC toolchain (exit `0xC0000005`).
+
+Once installed, two ways to launch a debug session:
+
+- **CodeLens** (quickest): open `tests/cli.rs`, click the **Debug** link that
+  appears above any `#[test]` function.
+- **Run and Debug panel** (`Ctrl+Shift+D`, then `F5`): pick **"Debug:
+  tests/cli.rs (all tests)"** to run every test under the debugger, or **"Debug:
+  tests/cli.rs (filter by name)"** to be prompted for a substring and run only
+  matching tests.
+
+Both launch configurations run `cargo test --test cli --no-run` before
+attaching, so the binary is always current. Set breakpoints anywhere in
+`src/` or `tests/` before pressing `F5`.
 
 ### Linting and formatting
 

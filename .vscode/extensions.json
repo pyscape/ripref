@@ -1,5 +1,10 @@
 {
-  // Prompt contributors to install the Rust-native Markdown tooling.
-  // rumdl provides lint + format for docs; .rumdl.toml holds the rules.
-  "recommendations": ["rvben.rumdl"]
+  "recommendations": [
+    // Rust language support: IntelliSense, run/debug CodeLens above each #[test].
+    "rust-lang.rust-analyzer",
+    // MSVC debugger (cppvsdbg) for Rust on Windows; CodeLLDB crashes (0xC0000005).
+    "ms-vscode.cpptools",
+    // Markdown lint + format; mirrors `rumdl check .` / `rumdl fmt --check .` in CI.
+    "rvben.rumdl"
+  ]
 }
