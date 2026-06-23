@@ -19,6 +19,8 @@ pub enum Subcommand {
     Index,
     /// `rr read` — dereference one anchor.
     Read,
+    /// `rr at` — list the anchors whose span covers a `file:line` position.
+    At,
 }
 
 impl Subcommand {
@@ -26,6 +28,7 @@ impl Subcommand {
         match tok.to_str()? {
             "index" => Some(Subcommand::Index),
             "read" => Some(Subcommand::Read),
+            "at" => Some(Subcommand::At),
             _ => None,
         }
     }
@@ -368,6 +371,13 @@ fn validate(args: &LowArgs) -> Result<(), String> {
             1 => Ok(()),
             _ => Err("read takes exactly one <anchor>".to_string()),
         },
+        Subcommand::At => match args.positional.len() {
+            0 => Err("at requires a <file>:<line> argument".to_string()),
+            // Resolve the position now so a malformed `file:line` is a usage
+            // error (exit 2) caught before any command touches the index.
+            1 => parse_position(&args.positional[0].to_string_lossy()).map(|_| ()),
+            _ => Err("at takes exactly one <file>:<line>".to_string()),
+        },
         Subcommand::Index => {
             if args.positional.is_empty() {
                 Ok(())
@@ -376,6 +386,24 @@ fn validate(args: &LowArgs) -> Result<(), String> {
             }
         }
     }
+}
+
+/// Split a `<file>:<line>` position into its parts. Parses the line from the
+/// right (`rsplit_once`) so a path containing a colon keeps its prefix; the line
+/// must be a bare `u64`. The richer `file:start-end` (range) and `file:line:col`
+/// (column) forms are reserved as provisional and are not accepted yet — a
+/// range tail fails the numeric parse and reports a usage error.
+pub fn parse_position(s: &str) -> Result<(String, u64), String> {
+    let (file, line) = s
+        .rsplit_once(':')
+        .ok_or_else(|| format!("expected <file>:<line>, got {s:?}"))?;
+    if file.is_empty() {
+        return Err(format!("expected <file>:<line>, got {s:?}"));
+    }
+    let line = line
+        .parse::<u64>()
+        .map_err(|_| format!("line must be a number in <file>:<line>, got {s:?}"))?;
+    Ok((file.to_string(), line))
 }
 
 /// Resolve the index path: `--index`, else `REF_INDEX`, else the default.
@@ -397,7 +425,8 @@ pub fn help_text() -> String {
     out.push_str("USAGE:\n    rr <command> [options] [args]\n\n");
     out.push_str("COMMANDS:\n");
     out.push_str("    index    Build / refresh the index from the working tree (writer)\n");
-    out.push_str("    read     Dereference an anchor to the chunk it points at\n\n");
+    out.push_str("    read     Dereference an anchor to the chunk it points at\n");
+    out.push_str("    at       List the anchors whose span covers a file:line position\n\n");
     out.push_str("OPTIONS:\n");
     for flag in FLAGS {
         let short = match flag.name_short() {
@@ -439,6 +468,20 @@ mod tests {
     fn picks_the_command() {
         assert_eq!(parse_run(&["index"]).command, Subcommand::Index);
         assert_eq!(parse_run(&["read", "a.rs"]).command, Subcommand::Read);
+        assert_eq!(parse_run(&["at", "a.rs:1"]).command, Subcommand::At);
+    }
+
+    #[test]
+    fn parse_position_splits_file_and_line() {
+        assert_eq!(
+            parse_position("src/a.rs:42").unwrap(),
+            ("src/a.rs".to_string(), 42)
+        );
+        // Right-split keeps a colon-bearing prefix attached to the file.
+        assert_eq!(parse_position("a:b:7").unwrap(), ("a:b".to_string(), 7));
+        assert!(parse_position("no-line").is_err());
+        assert!(parse_position("a.rs:1-3").is_err()); // range form not accepted yet
+        assert!(parse_position(":5").is_err()); // empty file
     }
 
     #[test]
@@ -500,6 +543,10 @@ mod tests {
         assert!(parse_err(&["frobnicate"]).contains("unknown command"));
         assert!(parse_err(&["read"]).contains("requires an <anchor>"));
         assert!(parse_err(&["read", "a", "b"]).contains("exactly one"));
+        assert!(parse_err(&["at"]).contains("requires a <file>:<line>"));
+        assert!(parse_err(&["at", "a.rs:1", "b.rs:2"]).contains("exactly one"));
+        assert!(parse_err(&["at", "a.rs"]).contains("<file>:<line>"));
+        assert!(parse_err(&["at", "a.rs:xyz"]).contains("number"));
         assert!(parse_err(&["index", "stray"]).contains("no positional"));
         assert!(parse_err(&["index", "--bogus"]).contains("unknown flag"));
         assert!(parse_err(&["index", "-z"]).contains("unknown flag"));

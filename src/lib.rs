@@ -61,6 +61,7 @@ pub fn run() -> u8 {
     let result = match args.command {
         Subcommand::Index => commands::run_index(&args),
         Subcommand::Read => commands::run_read(&args),
+        Subcommand::At => commands::run_at(&args),
     };
 
     match result {

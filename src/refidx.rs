@@ -25,6 +25,18 @@ pub struct ForwardEntry {
     pub location: String,
 }
 
+/// One anchor whose definition span covers a queried position, returned by
+/// [`Reader::covering`]. Unlike [`ForwardEntry`] — the on-disk record whose
+/// `location` is unparsed text — the span is split into line numbers so the
+/// caller can sort by it and emit structured (JSON) output.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AnchorHit {
+    pub anchor: String,
+    pub file: String,
+    pub start_line: u64,
+    pub end_line: u64,
+}
+
 /// The logical contents of an index, before/after (de)serialization.
 #[derive(Clone, Debug, Default)]
 pub struct IndexData {
@@ -187,6 +199,43 @@ impl<'a> Reader<'a> {
         out
     }
 
+    /// Every anchor whose definition span covers `file:line`, ordered
+    /// outermost-first: widest span first, ties broken by start line, then by
+    /// anchor name (a total order, so the output is deterministic).
+    ///
+    /// This is a linear scan of the `forward` section. Positions live only
+    /// inside the location text there, and that section is sorted by anchor —
+    /// not by file — so there is no binary-search shortcut for the inverse
+    /// query. A position-keyed section could replace this with a bisect later
+    /// (see FORMAT.md); the scan keeps the walking skeleton format-compatible.
+    pub fn covering(&self, file: &str, line: u64) -> Vec<AnchorHit> {
+        let mut hits = Vec::new();
+        for record in split_records(self.section("forward")) {
+            let Ok(anchor) = std::str::from_utf8(fwd_key(record)) else {
+                continue;
+            };
+            let Some((loc_file, start, end)) = fwd_location(record).and_then(parse_location) else {
+                continue;
+            };
+            // Exact file match (not a prefix): `a/b.rs` must not answer for `b.rs`.
+            if loc_file == file && start <= line && line <= end {
+                hits.push(AnchorHit {
+                    anchor: anchor.to_string(),
+                    file: loc_file.to_string(),
+                    start_line: start,
+                    end_line: end,
+                });
+            }
+        }
+        hits.sort_by(|a, b| {
+            (b.end_line - b.start_line)
+                .cmp(&(a.end_line - a.start_line))
+                .then(a.start_line.cmp(&b.start_line))
+                .then_with(|| a.anchor.cmp(&b.anchor))
+        });
+        hits
+    }
+
     /// Every in-scope path recorded in the index (the freshness/dangling set).
     pub fn paths(&self) -> Vec<&'a str> {
         split_records(self.section("paths"))
@@ -226,6 +275,15 @@ fn fwd_key(line: &[u8]) -> &[u8] {
 fn fwd_location(line: &[u8]) -> Option<&str> {
     let tab = line.iter().position(|&b| b == b'\t')?;
     std::str::from_utf8(&line[tab + 1..]).ok()
+}
+
+/// Split a `file:start-end` location into `(file, start, end)`. Parses from the
+/// right so a colon in the path keeps its prefix; returns `None` if the trailing
+/// span is not `<u64>-<u64>`.
+fn parse_location(loc: &str) -> Option<(&str, u64, u64)> {
+    let (file, span) = loc.rsplit_once(':')?;
+    let (start, end) = span.split_once('-')?;
+    Some((file, start.parse().ok()?, end.parse().ok()?))
 }
 
 #[cfg(test)]
@@ -305,5 +363,88 @@ mod tests {
     fn rejects_unknown_magic() {
         let bad = b"refidx v999\nmtime:0\ntree:\n\n";
         assert!(Reader::parse(bad).is_err());
+    }
+
+    /// The names of the covering anchors, in returned order.
+    fn covering_names(r: &Reader, file: &str, line: u64) -> Vec<String> {
+        r.covering(file, line)
+            .into_iter()
+            .map(|h| h.anchor)
+            .collect()
+    }
+
+    #[test]
+    fn covering_returns_nested_anchors_outermost_first() {
+        // `forward` MUST be sorted by anchor (the writer's invariant), so the
+        // fixture is in anchor order, not span order.
+        let data = IndexData {
+            mtime: 0,
+            tree: String::new(),
+            forward: vec![
+                ForwardEntry {
+                    anchor: "file".into(),
+                    location: "f.rs:1-40".into(),
+                },
+                ForwardEntry {
+                    anchor: "inner".into(),
+                    location: "f.rs:12-18".into(),
+                },
+                ForwardEntry {
+                    anchor: "other".into(),
+                    location: "g.rs:1-5".into(),
+                },
+                ForwardEntry {
+                    anchor: "outer".into(),
+                    location: "f.rs:8-30".into(),
+                },
+            ],
+            paths: vec!["f.rs".into(), "g.rs".into()],
+        };
+        let bytes = serialize(&data);
+        let r = Reader::parse(&bytes).unwrap();
+
+        // Outermost-first: file (1-40) ⊃ outer (8-30) ⊃ inner (12-18).
+        assert_eq!(
+            covering_names(&r, "f.rs", 15),
+            vec!["file", "outer", "inner"]
+        );
+        assert_eq!(
+            r.covering("f.rs", 15)[0],
+            AnchorHit {
+                anchor: "file".into(),
+                file: "f.rs".into(),
+                start_line: 1,
+                end_line: 40,
+            }
+        );
+        // Line 9 sits in file + outer but above inner's 12-18.
+        assert_eq!(covering_names(&r, "f.rs", 9), vec!["file", "outer"]);
+        // Past every span on f.rs → nothing (drives the exit-1 path).
+        assert!(r.covering("f.rs", 50).is_empty());
+        // Exact-file match: f.rs records must not leak into a g.rs query.
+        assert_eq!(covering_names(&r, "g.rs", 3), vec!["other"]);
+    }
+
+    #[test]
+    fn covering_breaks_equal_spans_lexicographically() {
+        let data = IndexData {
+            mtime: 0,
+            tree: String::new(),
+            forward: vec![
+                ForwardEntry {
+                    anchor: "alpha".into(),
+                    location: "f.rs:20-20".into(),
+                },
+                ForwardEntry {
+                    anchor: "beta".into(),
+                    location: "f.rs:20-20".into(),
+                },
+            ],
+            paths: vec!["f.rs".into()],
+        };
+        let bytes = serialize(&data);
+        let r = Reader::parse(&bytes).unwrap();
+        // Same width, same start → anchor name breaks the tie.
+        assert_eq!(covering_names(&r, "f.rs", 20), vec!["alpha", "beta"]);
     }
 }
