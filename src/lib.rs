@@ -19,7 +19,9 @@ machinery exercised here.
 
 pub mod cli;
 pub mod commands;
+pub mod extractors;
 pub mod indexer;
+pub mod languages;
 pub mod refidx;
 
 use cli::{ParseOutcome, Special, Subcommand};
