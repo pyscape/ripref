@@ -4,9 +4,10 @@ ripref is a tool for citing code by stable anchors instead of fragile line
 numbers. It recursively indexes the current directory into a single compact,
 memory-mapped index that maps each anchor (a file path, a symbol, a document
 heading, a decision record, an API operation) to its location in the tree.
-Once the index is built, ripref can dereference an anchor, find everything that
-cites it across documentation and code, and flag references that have drifted
-or gone dangling as the code changes. ripref is language agnostic and has
+Once the index is built, ripref can dereference an anchor, turn a file and line
+back into the anchors that cover it, find everything that cites it across
+documentation and code, and flag references that have drifted or gone dangling
+as the code changes. ripref is language agnostic and has
 first-class support on Windows, macOS and Linux.
 
 A reference like `parser.go:42` is wrong the moment a line is inserted above
@@ -53,6 +54,17 @@ $ rr read my_module::handler
 src/handlers.py:8-26
 def handler(request):
     ...
+```
+
+Go the other way: turn a `file:line` back into the anchors whose definition
+covers it, listed outermost (whole file) first. Each line is an anchor and its
+location, so it feeds straight back into `rr read` — handy for an editor or
+agent that wants to cite the code under a cursor (columns are tab-separated):
+
+```
+$ rr at src/handlers.py:15
+src/handlers.py       src/handlers.py:1-40
+my_module::handler    src/handlers.py:8-26
 ```
 
 Find every reference to an anchor (across documentation and code) before you
@@ -164,7 +176,7 @@ one flat, sorted, memory-mappable file (by default `.ref-cache/index`). It is
 the only part of ripref that runs `git`, which it uses once to stamp the index.
 Keep it running with `rr index --watch` to rebuild as files change.
 
-`read`, `search` and `enforce` are readers. They memory-map the index and
+`read`, `at`, `search` and `enforce` are readers. They memory-map the index and
 binary-search it: no per-call rescan, no deserialization, no allocation, and a
 single page-cached copy shared across every concurrent reader. This is why a
 lookup costs microseconds and a build that fans out thousands of them doesn't
@@ -247,8 +259,8 @@ Every command accepts:
 Exit codes are consistent across commands:
 
 - `0`: success.
-- `1`: findings: `enforce` saw violations, or `read`/`search` found nothing or
-  an ambiguous match.
+- `1`: findings: `enforce` saw violations, `read`/`search` found nothing or an
+  ambiguous match, or `at` found no anchor covering the line.
 - `2`: usage error.
 - `3`: the index is stale; rebuild with `rr index`, or fall back to ripgrep.
 
