@@ -1,0 +1,4 @@
+# Shell scripts must stay LF so they run under bash on every platform.
+# Without this, core.autocrlf=true hands them CRLF on a Windows checkout and
+# bash fails with "bad interpreter".
+*.sh text eol=lf
