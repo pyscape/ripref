@@ -203,6 +203,15 @@ back to ripgrep, which is always fresh. The comparison is second-granular
 (filesystem `mtime` resolution); a file written within the same second as the
 index build is treated as fresh by design.
 
+At repository scale it is this freshness walk, not the lookup, that dominates a
+query, so the stat-walk runs in parallel (`std::thread::scope`, no added
+dependency). On a real ~2,200-file, ~26k-anchor tree the parallel walk is about
+15 ms, roughly 3x faster than the serial reduction it replaced, and the gap
+widens as the tree grows (see the
+[`freshness`](benches/freshness.rs) micro-benchmark). Two paths skip the walk
+entirely: `--no-freshness` answers from the index as-is, and a clean working tree
+whose `HEAD` matches the index stamp is known-fresh without any `stat` at all.
+
 The on-disk index format is specified in the `refidx` module (`src/refidx.rs`).
 
 #### Languages: native and WebAssembly
@@ -224,12 +233,12 @@ same markdown grammar (`cargo bench --bench grammar_loader --features wasm`):
 
 | operation                              | native  | WebAssembly |
 | -------------------------------------- | ------- | ----------- |
-| `language_init` (load the grammar)     | ~1 ns   | ~140 ms     |
-| `query_compile` (compile the query)    | ~0.8 ms | ~0.8 ms     |
-| `parse` + extract (small doc / README) | 29 us / 3.8 ms | 44 us / 5.9 ms |
+| `language_init` (load the grammar)     | ~1 ns   | ~145 ms     |
+| `query_compile` (compile the query)    | ~1 ms   | ~0.8 ms     |
+| `parse` + extract (small doc / README) | 33 us / 5.9 ms | 49 us / 8.6 ms |
 
 The headline is `language_init`. Native is a pointer wrap; the WebAssembly path
-pays a one-time ~140 ms to compile the grammar module (**per process start**),
+pays a one-time ~145 ms to compile the grammar module (**per process start**),
 because tree-sitter's `WasmStore` does not expose wasmtime's ahead-of-time
 (`Module::serialize`) cache. With that cache the load drops to well under a
 millisecond; [`examples/wasm_load_probe.rs`](examples/wasm_load_probe.rs)
