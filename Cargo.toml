@@ -20,6 +20,10 @@ path = "src/lib.rs"
 name = "grammar_loader"
 harness = false
 
+[[bench]]
+name = "freshness"
+harness = false
+
 [features]
 # Off by default so `cargo build`, `cargo test`, and the native benchmark stay
 # toolchain-light. Enabling it turns on tree-sitter's WASM runtime (which pulls
