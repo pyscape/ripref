@@ -127,8 +127,10 @@ pub fn run_read(args: &LowArgs) -> Result<u8, String> {
     })
 }
 
-/// `rr at <file>:<line>` — list every anchor whose span covers the position,
-/// outermost-first. The inverse of `read`: a `file:line` in, anchors out.
+/// `rr at <file>:<line>` — name the anchor to cite for the position. The inverse
+/// of `read`: a `file:line` in, the anchor you would write out. Text prints the
+/// single tightest (innermost) anchor by default, or the whole nest it sits in
+/// with `--all`; JSON always carries the full list with spans.
 pub fn run_at(args: &LowArgs) -> Result<u8, String> {
     let root = Path::new(".");
     let index_path = PathBuf::from(cli::index_path(args));
@@ -143,7 +145,7 @@ pub fn run_at(args: &LowArgs) -> Result<u8, String> {
             // the exit code signals it (see doc/JSON.md).
             OutputFormat::Json => println!("{}", at_json(&file, line, &hits)),
             OutputFormat::Text if hits.is_empty() => eprintln!("no anchor covers {file}:{line}"),
-            OutputFormat::Text => println!("{}", at_text(&hits)),
+            OutputFormat::Text => println!("{}", at_text(&hits, args.all)),
         }
         if hits.is_empty() {
             Ok(exit::FINDINGS)
@@ -153,14 +155,23 @@ pub fn run_at(args: &LowArgs) -> Result<u8, String> {
     })
 }
 
-/// Text rendering for `rr at`: one anchor per line, `anchor\tfile:start-end`, so
-/// a line round-trips straight into `rr read` and greps cleanly. Returned rather
-/// than printed so it is unit-testable; `run_at` does the printing.
-fn at_text(hits: &[AnchorHit]) -> String {
-    hits.iter()
-        .map(|h| format!("{}\t{}:{}-{}", h.anchor, h.file, h.start_line, h.end_line))
-        .collect::<Vec<_>>()
-        .join("\n")
+/// Text rendering for `rr at`: the anchor a human would cite, by name, with no
+/// line numbers — those are the fragile coordinate ripref exists to replace and
+/// live only in `--format json`. The default is the single tightest anchor
+/// covering the position (the reference to write); `--all` prints the whole nest
+/// it sits in, outermost-first, for when the tightest is not the one you mean.
+/// Each line is a bare anchor, so it round-trips straight into `rr read`.
+/// Returned rather than printed so it is unit-testable; `run_at` does the I/O.
+fn at_text(hits: &[AnchorHit], all: bool) -> String {
+    if all {
+        hits.iter()
+            .map(|h| h.anchor.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        // `covering` is outermost-first, so the tightest anchor is the last one.
+        hits.last().map_or(String::new(), |h| h.anchor.clone())
+    }
 }
 
 /// JSON rendering for `rr at`: the `rr-json` envelope from doc/JSON.md. Hand-rolled
@@ -283,14 +294,15 @@ mod tests {
     }
 
     #[test]
-    fn at_text_is_outermost_first_tab_separated() {
+    fn at_text_default_is_the_tightest_anchor_by_name() {
+        // `covering` order: outermost (whole file) first, tightest last.
         let hits = vec![
             hit("src/handlers.py", "src/handlers.py", 1, 40),
             hit("handle_request", "src/handlers.py", 8, 30),
         ];
-        assert_eq!(
-            at_text(&hits),
-            "src/handlers.py\tsrc/handlers.py:1-40\nhandle_request\tsrc/handlers.py:8-30"
-        );
+        // Default: just the anchor a human would cite, no line numbers.
+        assert_eq!(at_text(&hits, false), "handle_request");
+        // `--all`: the whole nest, outermost-first, names only.
+        assert_eq!(at_text(&hits, true), "src/handlers.py\nhandle_request");
     }
 }

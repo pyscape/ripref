@@ -56,16 +56,27 @@ def handler(request):
     ...
 ```
 
-Go the other way: turn a `file:line` back into the anchors whose definition
-covers it, listed outermost (whole file) first. Each line is an anchor and its
-location, so it feeds straight back into `rr read`, handy for an editor or agent
-that wants to cite the code under a cursor (columns are tab-separated):
+Go the other way: ask which anchor to cite for a line you are looking at. `rr at`
+takes a `file:line` and prints the one anchor you would write, the tightest
+(innermost) one covering that line, which feeds straight back into `rr read`:
 
 ```
 $ rr at src/handlers.py:15
-src/handlers.py       src/handlers.py:1-40
-my_module::handler    src/handlers.py:8-26
+my_module::handler
 ```
+
+Add `--all` to see the whole nest the line sits in, outermost (whole file) first,
+for when the tightest anchor is not the one you mean:
+
+```
+$ rr at src/handlers.py:15 --all
+src/handlers.py
+my_module::handler
+```
+
+The text output is anchor names only, never line numbers (the fragile coordinate
+ripref replaces); `--format json` carries the full list with spans, for editors
+and agents citing the code under a cursor.
 
 Find every reference to an anchor (across documentation and code) before you
 change or delete it:

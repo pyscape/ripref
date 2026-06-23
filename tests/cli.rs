@@ -84,21 +84,24 @@ rrtest!(
     }
 );
 
-// `rr at <file>:<line>` — the inverse of `read`. A multi-line fixture makes the
-// whole-file path anchor's span (`1-3`) genuinely wider than the single-line
-// `main` symbol (`1-1`), so outermost-first lists the path anchor first.
+// `rr at <file>:<line>` — the inverse of `read`. The default answers with the one
+// anchor you would cite: the tightest span covering the line. A multi-line fixture
+// makes the `main` symbol (`1-1`) genuinely tighter than the whole-file path anchor
+// (`1-3`), so the symbol is the default answer and `--all` adds the file around it.
 rrtest!(
     at_returns_covering_anchors,
     |mut dir: Dir, mut cmd: TestCommand| {
         dir.file("src/main.rs", "fn main() {\n    let x = 1;\n}\n");
         cmd.arg("index").assert_exit_code(0);
 
-        let out = cmd.args(["at", "src/main.rs:1"]).stdout();
-        let lines: Vec<&str> = out.lines().collect();
-        // Outermost (the whole-file path anchor) is first.
-        assert_eq!(lines[0], "src/main.rs\tsrc/main.rs:1-3", "{out:?}");
-        // The `main` symbol (single-line span at its definition) is also covered.
-        assert!(out.contains("main\tsrc/main.rs:1-1"), "{out:?}");
+        // Default: the tightest anchor, by name, no line numbers.
+        let tightest = cmd.args(["at", "src/main.rs:1"]).stdout();
+        assert_eq!(tightest.trim(), "main", "{tightest:?}");
+
+        // `--all`: the whole nest, outermost-first, names only.
+        let all = cmd.args(["at", "src/main.rs:1", "--all"]).stdout();
+        let lines: Vec<&str> = all.lines().collect();
+        assert_eq!(lines, ["src/main.rs", "main"], "{all:?}");
     }
 );
 
@@ -113,15 +116,16 @@ rrtest!(
         dir.copy_fixture("sectioned-code.rs", "sections.rs");
         cmd.arg("index").assert_exit_code(0);
 
-        // A real code line is covered by both the file anchor and its symbol.
+        // A real code line: the tightest cover is its symbol.
         let on_code = cmd.args(["at", "sections.rs:1"]).stdout();
-        assert!(on_code.contains("first\tsections.rs:1-1"), "{on_code:?}");
+        assert_eq!(on_code.trim(), "first", "{on_code:?}");
 
-        // The blank line 4 falls between `first` and `second`: the file anchor alone.
-        let in_gap = cmd.args(["at", "sections.rs:4"]).stdout();
+        // The blank line 4 falls between `first` and `second`: no symbol covers it,
+        // so even `--all` lists the file anchor alone.
+        let in_gap = cmd.args(["at", "sections.rs:4", "--all"]).stdout();
         assert_eq!(
             in_gap.trim(),
-            "sections.rs\tsections.rs:1-7",
+            "sections.rs",
             "blank-line gap should resolve to the file anchor alone: {in_gap:?}"
         );
     }
@@ -254,19 +258,21 @@ rrtest!(
             .split_once('-')
             .expect("start-end span in read output");
 
-        // Reverse lookup: feed the macro's own line back through `at`. It must
-        // return the macro anchor (round-trip) plus the file anchor that also
-        // covers that line, and the file anchor must match what `read` reported.
-        let at_out = run(&["at", &format!("{file}:{sym_start}")]);
+        // Reverse lookup: feed the macro's own line back through `at --all`. Text
+        // output is anchor identities, one per line (the references you would cite,
+        // no line numbers — those live in `--format json`). Both the macro anchor
+        // (the round-trip) and the file anchor that also covers the line appear.
+        let at_out = run(&["at", &format!("{file}:{sym_start}"), "--all"]);
         assert_eq!(code(&at_out), 0, "reverse lookup: {at_out:?}");
         let at = String::from_utf8_lossy(&at_out.stdout);
+        let names: Vec<&str> = at.lines().collect();
         assert!(
-            at.contains(&format!("rrtest\t{sym_loc}")),
+            names.contains(&"rrtest"),
             "macro anchor should round-trip through `at`: {at}"
         );
         assert!(
-            at.contains(&format!("{file}\t{file_loc}")),
-            "file anchor should agree between `read` and `at`: {at}"
+            names.contains(&file),
+            "file anchor should also cover the macro's line: {at}"
         );
     }
 );

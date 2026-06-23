@@ -72,6 +72,8 @@ pub struct LowArgs {
     pub quiet: bool,
     /// `rr read/at --no-freshness`: answer from the index without the staleness check.
     pub no_freshness: bool,
+    /// `rr at --all`: list every covering anchor, not just the tightest.
+    pub all: bool,
     /// Positional arguments (e.g. the anchor for `read`).
     pub positional: Vec<OsString>,
 }
@@ -86,6 +88,7 @@ impl LowArgs {
             locate: false,
             quiet: false,
             no_freshness: false,
+            all: false,
             positional: Vec::new(),
         }
     }
@@ -291,6 +294,26 @@ impl Flag for NoFreshnessFlag {
     }
 }
 
+struct AllFlag;
+impl Flag for AllFlag {
+    fn is_switch(&self) -> bool {
+        true
+    }
+    fn name_long(&self) -> &'static str {
+        "all"
+    }
+    fn doc_category(&self) -> &'static str {
+        "output"
+    }
+    fn doc_short(&self) -> &'static str {
+        "rr at: list every covering anchor, not just the tightest."
+    }
+    fn update(&self, _value: FlagValue, args: &mut LowArgs) -> Result<(), String> {
+        args.all = true;
+        Ok(())
+    }
+}
+
 /// The global flag registry: every optional flag, as a trait object.
 static FLAGS: &[&dyn Flag] = &[
     &IndexFlag,
@@ -300,6 +323,7 @@ static FLAGS: &[&dyn Flag] = &[
     &LocateFlag,
     &QuietFlag,
     &NoFreshnessFlag,
+    &AllFlag,
 ];
 
 fn lookup_long(name: &str) -> Option<&'static dyn Flag> {
@@ -450,7 +474,9 @@ pub fn help_text() -> String {
     out.push_str("COMMANDS:\n");
     out.push_str("    index    Build / refresh the index from the working tree (writer)\n");
     out.push_str("    read     Dereference an anchor to the chunk it points at\n");
-    out.push_str("    at       List the anchors whose span covers a file:line position\n\n");
+    out.push_str(
+        "    at       Name the anchor to cite for a file:line position (--all: full nest)\n\n",
+    );
     out.push_str("OPTIONS:\n");
     for flag in FLAGS {
         let short = match flag.name_short() {
