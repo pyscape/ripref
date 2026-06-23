@@ -121,9 +121,9 @@ pub fn run_at(args: &LowArgs) -> Result<u8, String> {
         match args.format {
             // JSON always emits the envelope; `found`/`anchors` carry the result,
             // the exit code signals it (see doc/JSON.md).
-            OutputFormat::Json => print_at_json(&file, line, &hits),
+            OutputFormat::Json => println!("{}", at_json(&file, line, &hits)),
             OutputFormat::Text if hits.is_empty() => eprintln!("no anchor covers {file}:{line}"),
-            OutputFormat::Text => print_at_text(&hits),
+            OutputFormat::Text => println!("{}", at_text(&hits)),
         }
         if hits.is_empty() {
             Ok(exit::FINDINGS)
@@ -133,18 +133,21 @@ pub fn run_at(args: &LowArgs) -> Result<u8, String> {
     })
 }
 
-/// Text output for `rr at`: one anchor per line, `anchor\tfile:start-end`, so a
-/// line round-trips straight into `rr read` and greps cleanly.
-fn print_at_text(hits: &[AnchorHit]) {
-    for h in hits {
-        println!("{}\t{}:{}-{}", h.anchor, h.file, h.start_line, h.end_line);
-    }
+/// Text rendering for `rr at`: one anchor per line, `anchor\tfile:start-end`, so
+/// a line round-trips straight into `rr read` and greps cleanly. Returned rather
+/// than printed so it is unit-testable; `run_at` does the printing.
+fn at_text(hits: &[AnchorHit]) -> String {
+    hits.iter()
+        .map(|h| format!("{}\t{}:{}-{}", h.anchor, h.file, h.start_line, h.end_line))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
-/// JSON output for `rr at`: the `rr-json` envelope from doc/JSON.md. Hand-rolled
+/// JSON rendering for `rr at`: the `rr-json` envelope from doc/JSON.md. Hand-rolled
 /// because the crate has no serde dependency and the schema is a hand-written
-/// source of truth; the first command to actually emit `--format json`.
-fn print_at_json(file: &str, line: u64, hits: &[AnchorHit]) {
+/// source of truth; the first command to actually emit `--format json`. Returned
+/// (not printed) so the exact document can be asserted in tests.
+fn at_json(file: &str, line: u64, hits: &[AnchorHit]) -> String {
     let mut out = String::from(r#"{"format":"rr-json","version":1,"command":"at","data":{"file":"#);
     push_json_str(&mut out, file);
     out.push_str(",\"line\":");
@@ -167,7 +170,7 @@ fn print_at_json(file: &str, line: u64, hits: &[AnchorHit]) {
         out.push_str("}}");
     }
     out.push_str("]}}");
-    println!("{out}");
+    out
 }
 
 /// Append `s` to `out` as a quoted, escaped JSON string. Escapes `"`, `\`, and
@@ -188,4 +191,86 @@ fn push_json_str(out: &mut String, s: &str) {
         }
     }
     out.push('"');
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hit(anchor: &str, file: &str, start_line: u64, end_line: u64) -> AnchorHit {
+        AnchorHit {
+            anchor: anchor.to_string(),
+            file: file.to_string(),
+            start_line,
+            end_line,
+        }
+    }
+
+    #[test]
+    fn at_json_lists_anchors_outermost_first() {
+        let hits = vec![
+            hit("src/handlers.py", "src/handlers.py", 1, 40),
+            hit("handle_request", "src/handlers.py", 8, 30),
+        ];
+        // Pins the whole envelope: field order, the nested `location`, and the
+        // outermost-first ordering of `anchors`.
+        assert_eq!(
+            at_json("src/handlers.py", 15, &hits),
+            r#"{"format":"rr-json","version":1,"command":"at","data":{"file":"src/handlers.py","line":15,"found":true,"anchors":[{"anchor":"src/handlers.py","location":{"file":"src/handlers.py","start_line":1,"end_line":40}},{"anchor":"handle_request","location":{"file":"src/handlers.py","start_line":8,"end_line":30}}]}}"#
+        );
+    }
+
+    #[test]
+    fn at_json_not_found_emits_false_and_empty_anchors() {
+        assert_eq!(
+            at_json("a.rs", 9, &[]),
+            r#"{"format":"rr-json","version":1,"command":"at","data":{"file":"a.rs","line":9,"found":false,"anchors":[]}}"#
+        );
+    }
+
+    #[test]
+    fn push_json_str_escapes_quotes_backslashes_and_controls() {
+        let mut quoted = String::new();
+        push_json_str(&mut quoted, r#"a"b\c"#);
+        assert_eq!(quoted, r#""a\"b\\c""#);
+
+        let mut whitespace = String::new();
+        push_json_str(&mut whitespace, "tab\tnl\n");
+        assert_eq!(whitespace, r#""tab\tnl\n""#);
+
+        // A C0 control char becomes a \uXXXX escape; the raw byte must not survive.
+        // Asserted by property to keep the literal escape out of this test's source.
+        let mut control = String::new();
+        push_json_str(&mut control, "\u{1}");
+        assert!(
+            control.contains("u0001"),
+            "control char should escape: {control}"
+        );
+        assert!(
+            !control.contains(char::from_u32(1).unwrap()),
+            "raw control byte must not survive"
+        );
+    }
+
+    #[test]
+    fn at_json_escapes_anchor_text() {
+        // A scenario-style anchor carries a quoted title (`file.feature#"Title"`).
+        // No extractor emits one yet, so only a unit test exercises the escape
+        // path that keeps such an anchor from breaking the JSON document.
+        let hits = vec![hit(r#"x.feature#"Title""#, "x.feature", 3, 3)];
+        let doc = at_json("x.feature", 3, &hits);
+        assert!(doc.contains(r#""anchor":"x.feature#\"Title\"""#), "{doc}");
+    }
+
+    #[test]
+    fn at_text_is_outermost_first_tab_separated() {
+        let hits = vec![
+            hit("src/handlers.py", "src/handlers.py", 1, 40),
+            hit("handle_request", "src/handlers.py", 8, 30),
+        ];
+        assert_eq!(
+            at_text(&hits),
+            "src/handlers.py\tsrc/handlers.py:1-40\nhandle_request\tsrc/handlers.py:8-30"
+        );
+    }
 }
