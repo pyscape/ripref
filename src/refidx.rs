@@ -208,6 +208,36 @@ impl<'a> Reader<'a> {
     /// not by file — so there is no binary-search shortcut for the inverse
     /// query. A position-keyed section could replace this with a bisect later
     /// (see FORMAT.md); the scan keeps the walking skeleton format-compatible.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ripref::refidx::{serialize, ForwardEntry, IndexData, Reader};
+    ///
+    /// // One file with two overlapping anchors: the whole-file path anchor
+    /// // (lines 1-20) and a function defined inside it (lines 5-12). `forward`
+    /// // is kept sorted by anchor — the writer's invariant.
+    /// let data = IndexData {
+    ///     mtime: 0,
+    ///     tree: String::new(),
+    ///     forward: vec![
+    ///         ForwardEntry { anchor: "handle".into(), location: "src/api.rs:5-12".into() },
+    ///         ForwardEntry { anchor: "src/api.rs".into(), location: "src/api.rs:1-20".into() },
+    ///     ],
+    ///     paths: vec!["src/api.rs".into()],
+    /// };
+    ///
+    /// // Round-trip through the on-disk format, exactly as a reader does:
+    /// // serialize to bytes, then parse them back (here from a slice, in the
+    /// // binary from an mmap).
+    /// let bytes = serialize(&data);
+    /// let reader = Reader::parse(&bytes).unwrap();
+    ///
+    /// // Line 8 falls inside both spans; `covering` returns them outermost-first.
+    /// let hits = reader.covering("src/api.rs", 8);
+    /// let names: Vec<&str> = hits.iter().map(|h| h.anchor.as_str()).collect();
+    /// assert_eq!(names, ["src/api.rs", "handle"]);
+    /// ```
     pub fn covering(&self, file: &str, line: u64) -> Vec<AnchorHit> {
         let mut hits = Vec::new();
         for record in split_records(self.section("forward")) {
