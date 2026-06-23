@@ -75,6 +75,19 @@ impl Dir {
         }
     }
 
+    /// Copy a file from `tests/data/<fixture_rel>` into this directory at `dest_rel`.
+    pub fn copy_fixture(&mut self, fixture_rel: &str, dest_rel: &str) -> &mut Self {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/data")
+            .join(fixture_rel);
+        let dest = self.dir.join(dest_rel);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::copy(&src, &dest).unwrap_or_else(|e| panic!("copy fixture {fixture_rel}: {e}"));
+        self
+    }
+
     /// Path to this directory.
     pub fn path(&self) -> &std::path::Path {
         &self.dir
@@ -191,7 +204,7 @@ macro_rules! rrtest {
     ($name:ident, $fun:expr) => {
         #[test]
         fn $name() {
-            let (dir, cmd) = crate::common::setup(stringify!($name));
+            let (dir, cmd) = $crate::common::setup(stringify!($name));
             $fun(dir, cmd);
         }
     };
