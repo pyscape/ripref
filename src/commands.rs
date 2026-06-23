@@ -48,7 +48,12 @@ pub fn run_index(args: &LowArgs) -> Result<u8, String> {
 /// command: a missing or stale index short-circuits to `exit::STALE` without
 /// ever calling `f`. The `Reader` borrows the mmap, so it cannot be returned
 /// past its backing buffer — a closure keeps both alive for the call.
-fn with_fresh_reader<F>(index_path: &Path, root: &Path, f: F) -> Result<u8, String>
+fn with_fresh_reader<F>(
+    index_path: &Path,
+    root: &Path,
+    skip_freshness: bool,
+    f: F,
+) -> Result<u8, String>
 where
     F: FnOnce(&Reader) -> Result<u8, String>,
 {
@@ -68,12 +73,27 @@ where
     let reader = Reader::parse(&mmap).map_err(|e| format!("corrupt index: {e}"))?;
 
     // Freshness gates the answer: a reader exits 3 rather than answer stale.
-    if indexer::newest_mtime(&reader.paths(), root) > reader.mtime {
+    if !fresh(&reader, root, skip_freshness) {
         eprintln!("index is stale — rebuild with `rr index`");
         return Ok(exit::STALE);
     }
 
     f(&reader)
+}
+
+/// Whether the index may answer this query. Cheap-first: (1) `--no-freshness`
+/// trusts unconditionally; (2) a clean tree whose HEAD SHA matches the stamp is
+/// provably what we indexed (no stat-walk needed); (3) else fall back to the
+/// (now parallel) mtime walk. The git probe spawns one `git status`, so it runs
+/// only after the free checks and only when a clean-tree stamp exists to match.
+fn fresh(reader: &Reader, root: &Path, skip_freshness: bool) -> bool {
+    if skip_freshness {
+        return true;
+    }
+    if !reader.tree.is_empty() && indexer::git_tree(root) == reader.tree {
+        return true;
+    }
+    indexer::newest_mtime(&reader.paths(), root) <= reader.mtime
 }
 
 /// `rr read <anchor>` — dereference one anchor through the forward map.
@@ -82,7 +102,7 @@ pub fn run_read(args: &LowArgs) -> Result<u8, String> {
     let index_path = PathBuf::from(cli::index_path(args));
     let anchor = args.positional[0].to_string_lossy().into_owned();
 
-    with_fresh_reader(&index_path, root, |reader| {
+    with_fresh_reader(&index_path, root, args.no_freshness, |reader| {
         let hits = reader.forward_lookup(&anchor);
         match hits.len() {
             0 => {
@@ -116,7 +136,7 @@ pub fn run_at(args: &LowArgs) -> Result<u8, String> {
     // one place rather than threading a parsed field through `LowArgs`.
     let (file, line) = cli::parse_position(&args.positional[0].to_string_lossy())?;
 
-    with_fresh_reader(&index_path, root, |reader| {
+    with_fresh_reader(&index_path, root, args.no_freshness, |reader| {
         let hits = reader.covering(&file, line);
         match args.format {
             // JSON always emits the envelope; `found`/`anchors` carry the result,

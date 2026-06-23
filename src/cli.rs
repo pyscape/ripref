@@ -70,6 +70,8 @@ pub struct LowArgs {
     pub locate: bool,
     /// `rr index -q/--quiet`: suppress the summary line.
     pub quiet: bool,
+    /// `rr read/at --no-freshness`: answer from the index without the staleness check.
+    pub no_freshness: bool,
     /// Positional arguments (e.g. the anchor for `read`).
     pub positional: Vec<OsString>,
 }
@@ -83,6 +85,7 @@ impl LowArgs {
             color: Color::Auto,
             locate: false,
             quiet: false,
+            no_freshness: false,
             positional: Vec::new(),
         }
     }
@@ -268,6 +271,26 @@ impl Flag for QuietFlag {
     }
 }
 
+struct NoFreshnessFlag;
+impl Flag for NoFreshnessFlag {
+    fn is_switch(&self) -> bool {
+        true
+    }
+    fn name_long(&self) -> &'static str {
+        "no-freshness"
+    }
+    fn doc_category(&self) -> &'static str {
+        "output"
+    }
+    fn doc_short(&self) -> &'static str {
+        "Skip the staleness check and answer from the index as-is."
+    }
+    fn update(&self, _value: FlagValue, args: &mut LowArgs) -> Result<(), String> {
+        args.no_freshness = true;
+        Ok(())
+    }
+}
+
 /// The global flag registry: every optional flag, as a trait object.
 static FLAGS: &[&dyn Flag] = &[
     &IndexFlag,
@@ -276,6 +299,7 @@ static FLAGS: &[&dyn Flag] = &[
     &NoColorFlag,
     &LocateFlag,
     &QuietFlag,
+    &NoFreshnessFlag,
 ];
 
 fn lookup_long(name: &str) -> Option<&'static dyn Flag> {

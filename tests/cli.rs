@@ -289,3 +289,87 @@ rrtest!(
         cmd.arg("frobnicate").assert_exit_code(2);
     }
 );
+
+// `--no-freshness` answers from the index without the staleness check. The same
+// edit that makes a plain `read` exit 3 (stale) must still resolve under the
+// flag — and the plain read must keep exiting 3, proving the flag, not a
+// changed default, is what skips the gate.
+rrtest!(
+    no_freshness_skips_stale_check,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file("a.txt", "v1\n");
+        cmd.arg("index").assert_exit_code(0);
+
+        // mtimes are whole seconds; cross the boundary before editing so the
+        // stat-walk sees a newer file. (Mirrors `stale_index_exits_three`.)
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        dir.write("a.txt", "v2 changed\n");
+
+        // Existing behavior preserved: the unflagged read still reports stale.
+        cmd.args(["read", "a.txt", "--locate"]).assert_exit_code(3);
+        // The flag answers anyway.
+        cmd.args(["read", "a.txt", "--locate", "--no-freshness"])
+            .assert_exit_code(0);
+    }
+);
+
+// The git-tree short-circuit serves a clean checkout whose HEAD matches the
+// stamp without stat-ing: a content-identical rewrite bumps the mtime (so the
+// stat-walk alone would cry stale) but leaves the tree clean, so exit 0 proves
+// the short-circuit fired. Dirtying the tree must then fall through to a real
+// stale verdict (exit 3) — the short-circuit must not mask genuine staleness.
+rrtest!(
+    git_clean_tree_short_circuits_freshness,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        if !git_available() {
+            eprintln!("skipping: git not available");
+            return;
+        }
+        dir.file("a.txt", "hello\n");
+        // The index lives in the working tree; gitignore it (as a real repo
+        // would) so `rr index` does not dirty the tree it just stamped clean.
+        dir.file(".gitignore", ".ref-cache/\n");
+        git(&dir, &["init", "-q"]);
+        git(&dir, &["config", "user.email", "t@example.com"]);
+        git(&dir, &["config", "user.name", "t"]);
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-q", "-m", "init"]);
+
+        // Stamp a clean `tree` into the index.
+        cmd.arg("index").assert_exit_code(0);
+
+        // Cross the second boundary, then rewrite with identical content: mtime
+        // bumps, tree stays clean.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        dir.write("a.txt", "hello\n");
+        cmd.args(["read", "a.txt", "--locate"]).assert_exit_code(0);
+
+        // Now actually change the content: the tree is dirty, the stamp no
+        // longer matches, and the stat-walk sees a newer file -> stale.
+        dir.write("a.txt", "changed\n");
+        cmd.args(["read", "a.txt", "--locate"]).assert_exit_code(3);
+    }
+);
+
+/// Whether a `git` binary is on PATH; the short-circuit test needs a real repo.
+fn git_available() -> bool {
+    Command::new("git")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Run `git <args>` in the test dir, asserting success.
+fn git(dir: &Dir, args: &[&str]) {
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(dir.path())
+        .output()
+        .expect("failed to spawn git");
+    assert!(
+        out.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
