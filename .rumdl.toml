@@ -20,9 +20,6 @@ respect_gitignore = true
 exclude = ["target"]
 
 # Disabled rules (each off for a deliberate, documented reason):
-#   MD013 line-length — prose is hand-wrapped to ~90 cols, while tables and
-#         fenced code run wider; the wrap width varies by file. Line length is
-#         contentious for prose docs, so it is off.
 #   MD040 fenced-code-language — fenced code is intentionally bare: `$`-prefixed
 #         shell sessions. Don't require a language.
 #   MD003 heading-style — README.md uses a setext H1 (ripgrep homage); other
@@ -38,7 +35,18 @@ exclude = ["target"]
 #         but currently fires on intentional/not-yet-created targets.
 #   MD076 list-item-spacing — flags loose/tight spacing mix; its autofix
 #         reorders loose lists with embedded code fences and corrupts them.
-disable = ["MD013", "MD040", "MD003", "MD014", "MD041", "MD057", "MD076"]
+disable = ["MD040", "MD003", "MD014", "MD041", "MD057", "MD076"]
+
+# MD013: enforce line length for prose only.
+#   tables = false     — table rows run as wide as they need to.
+#   code_blocks = false — fenced blocks are already excluded by context.
+#   strict = false      — a line whose only content is a link (can't be
+#                         wrapped) is not flagged even if it exceeds the limit.
+[MD013]
+line_length = 80
+tables = false
+code_blocks = false
+strict = false
 
 # The CLI reference repeats ### Synopsis / Options / Exit status / Examples under
 # each command. Allow duplicate headings that are not siblings.
