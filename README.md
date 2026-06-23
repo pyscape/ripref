@@ -110,8 +110,9 @@ The rest follows from that:
   ripref tells you (exit code 3) instead of returning a stale answer.
 - ripref is language agnostic. Out of the box it resolves file paths, document
   headings, scenarios, decision records, manifest keys and API operations;
-  language-specific symbols come from plugins, so teaching ripref a new
-  language is a query file, not a patch to ripref.
+  language-specific symbols come from per-language Tree-sitter grammars paired
+  with a small query. First-class languages are built in; third-party grammars
+  load from WebAssembly without rebuilding ripref.
 - ripref degrades gracefully. When the index is stale and you can't rebuild,
   fall back to [ripgrep](https://github.com/BurntSushi/ripgrep) (always fresh,
   if slower) as a correct floor.
@@ -131,8 +132,8 @@ commit, save, or even read.
 - You work entirely inside code, in a single editor, and never cite it from
   documentation or specs. If your editor's "find references" already covers
   what you need, ripref may be more than you want.
-- The language or artifact you care about has no plugin yet and you don't want
-  to write one. (Please file an issue, or a plugin.)
+- The language or artifact you care about isn't supported yet and you don't
+  want to add it. (Please file an issue, or contribute a grammar + query.)
 
 ### Anchors
 
@@ -169,6 +170,8 @@ single page-cached copy shared across every concurrent reader. This is why a
 lookup costs microseconds and a build that fans out thousands of them doesn't
 fall over.
 
+#### Freshness
+
 Freshness is a `stat`, not a hash. The index records its build time; a reader
 compares that against the newest modification time among the files it would
 resolve against. If anything is newer, the index is stale and the reader exits
@@ -178,6 +181,41 @@ back to ripgrep, which is always fresh. The comparison is second-granular
 index build is treated as fresh by design.
 
 The on-disk index format is specified in the `refidx` module (`src/refidx.rs`).
+
+#### Languages: native and WebAssembly
+
+Extracting a language's anchors pairs a
+[Tree-sitter](https://tree-sitter.github.io/) grammar with a small query (see
+[`src/languages`](src/languages/README.md)). A grammar can reach ripref two
+ways, and they cost very differently to load:
+
+- **First-class (native).** The grammar is a Rust crate dependency
+  (`tree-sitter-rust`, `tree-sitter-md`, …) compiled into the binary. Loading it
+  is a function-pointer wrap — effectively free.
+- **Third-party (WebAssembly).** The grammar ships as a prebuilt `parser.wasm`
+  loaded at runtime, so adding a language needs no rebuild of ripref. The
+  runtime compiles the module on load.
+
+[`benches/grammar_loader.rs`](benches/grammar_loader.rs) measures both on the
+same markdown grammar (`cargo bench --bench grammar_loader --features wasm`):
+
+| operation                              | native  | WebAssembly |
+| -------------------------------------- | ------- | ----------- |
+| `language_init` (load the grammar)     | ~1 ns   | ~140 ms     |
+| `query_compile` (compile the query)    | ~0.8 ms | ~0.8 ms     |
+| `parse` + extract (small doc / README) | 29 µs / 3.8 ms | 44 µs / 5.9 ms |
+
+The headline is `language_init`. Native is a pointer wrap; the WebAssembly path
+pays a one-time ~140 ms to compile the grammar module — **per process start**,
+because tree-sitter's `WasmStore` does not expose wasmtime's ahead-of-time
+(`Module::serialize`) cache. With that cache the load drops to well under a
+millisecond; [`examples/wasm_load_probe.rs`](examples/wasm_load_probe.rs)
+measures the decomposition and that cached ceiling. Once loaded, query
+compilation is at parity and parsing is ~1.5× slower under the sandbox.
+
+So ripref keeps its built-in languages native and treats the WebAssembly path as
+opt-in extensibility; making it cheap enough for routine use means teaching the
+loader to cache compiled modules, which `WasmStore` would first need to expose.
 
 ### Configuration
 
@@ -192,8 +230,8 @@ Drop a `.rr.toml` at the repository root to override them; rr's built-in default
 (the base layer your config merges over) are in [`rr.toml`](rr.toml) at the
 repository root. A project's own `.rr.toml` can teach ripref its conventions
 end to end (scope, the anchor kinds it recognizes, and per-language scan rules)
-using only built-in extractors. Additional languages plug in as query files
-rather than patches to ripref.
+using only built-in extractors. Additional languages are a Tree-sitter grammar
+plus a query — built in, or loaded from WebAssembly.
 
 ### Shared options
 
