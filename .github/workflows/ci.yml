@@ -60,3 +60,13 @@ jobs:
         run: rumdl check .
       - name: Check Markdown formatting
         run: rumdl fmt --check .
+      - name: Check Markdown is ASCII-only
+        # ripgrep is preinstalled on ubuntu-latest runners. It finds any
+        # non-ASCII byte in tracked Markdown (em dashes, curly quotes, etc.);
+        # test fixtures under tests/data are exempt. rg exits 0 when it matches,
+        # so a match trips the gate.
+        run: |
+          if rg -n --column -g '*.md' -g '!tests/data/**' '[^\x00-\x7F]' .; then
+            echo 'error: non-ASCII characters found in Markdown (replace em dashes, curly quotes, etc. with ASCII)'
+            exit 1
+          fi

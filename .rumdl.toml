@@ -16,8 +16,11 @@
 [global]
 # Respect .gitignore when scanning (true is the default; stated for clarity).
 respect_gitignore = true
-# Build artifacts that may contain generated Markdown.
-exclude = ["target"]
+# Build artifacts that may contain generated Markdown, plus test fixtures:
+# tests/data holds intentionally odd Markdown that exercises the indexer (e.g.
+# a deliberate heading-level jump). Those are inputs under test, not docs, so
+# they are not subject to doc-style rules.
+exclude = ["target", "tests/data"]
 
 # Disabled rules (each off for a deliberate, documented reason):
 #   MD040 fenced-code-language — fenced code is intentionally bare: `$`-prefixed
@@ -37,15 +40,17 @@ exclude = ["target"]
 #         reorders loose lists with embedded code fences and corrupts them.
 disable = ["MD040", "MD003", "MD014", "MD041", "MD057", "MD076"]
 
-# MD013: enforce line length for prose only.
-#   tables = false     — table rows run as wide as they need to.
-#   code_blocks = false — fenced blocks are already excluded by context.
-#   strict = false      — a line whose only content is a link (can't be
-#                         wrapped) is not flagged even if it exceeds the limit.
+# MD013: enforce line length on prose only.
+#   line-length = 80     prose wraps at 80 columns (the lint-docs skill's
+#                        reflow.py rewraps paragraphs to fit).
+#   tables = false       table rows run as wide as they need to.
+#   code-blocks = false  fenced code (CLI sessions, examples) is exempt.
+#   strict = false       tolerate small overflow inside the trailing word;
+#                        only flag lines with a breakable point past column 80.
 [MD013]
-line_length = 80
+line-length = 80
 tables = false
-code_blocks = false
+code-blocks = false
 strict = false
 
 # The CLI reference repeats ### Synopsis / Options / Exit status / Examples under

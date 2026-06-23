@@ -356,6 +356,18 @@ $ rumdl fmt --check . # verify formatting without rewriting (CI gate)
 $ rumdl check .       # lint, non-zero exit on any finding (CI gate)
 ```
 
+Markdown is kept ASCII-only as well, so docs stay portable and diffs stay clean:
+no em dashes, curly quotes, or other non-ASCII punctuation (use parentheses or
+commas for asides, and reserve `--` for documenting command-line flags). CI
+fails on any non-ASCII character, via the same
+[`rg`](https://github.com/BurntSushi/ripgrep) scan you can run locally (test
+fixtures under `tests/data` are exempt, since they may hold deliberate
+non-ASCII):
+
+```
+$ rg -n --column -g '*.md' -g '!tests/data/**' '[^\x00-\x7F]'
+```
+
 ### Test coverage
 
 Coverage is measured with source-based LLVM instrumentation via
