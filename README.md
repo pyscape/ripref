@@ -33,10 +33,10 @@ ripref is documented from the code:
 - Built-in defaults are in [`rr.toml`](rr.toml); the build, tests and coverage
   are covered in the sections below.
 
-In-page: [Quick examples](#quick-examples) ·
-[Why use it](#why-should-i-use-ripref) · [Anchors](#anchors) ·
-[How it works](#how-it-works) · [Configuration](#configuration) ·
-[Shared options](#shared-options) · [Installation](#installation)
+In-page: [Quick examples](#quick-examples),
+[Why use it](#why-should-i-use-ripref), [Anchors](#anchors),
+[How it works](#how-it-works), [Configuration](#configuration),
+[Shared options](#shared-options), [Installation](#installation)
 
 ### Quick examples
 
@@ -58,8 +58,8 @@ def handler(request):
 
 Go the other way: turn a `file:line` back into the anchors whose definition
 covers it, listed outermost (whole file) first. Each line is an anchor and its
-location, so it feeds straight back into `rr read` — handy for an editor or
-agent that wants to cite the code under a cursor (columns are tab-separated):
+location, so it feeds straight back into `rr read`, handy for an editor or agent
+that wants to cite the code under a cursor (columns are tab-separated):
 
 ```
 $ rr at src/handlers.py:15
@@ -202,8 +202,8 @@ Extracting a language's anchors pairs a
 ways, and they cost very differently to load:
 
 - **First-class (native).** The grammar is a Rust crate dependency
-  (`tree-sitter-rust`, `tree-sitter-md`, …) compiled into the binary. Loading it
-  is a function-pointer wrap — effectively free.
+  (`tree-sitter-rust`, `tree-sitter-md`, ...) compiled into the binary. Loading
+  it is a function-pointer wrap (effectively free).
 - **Third-party (WebAssembly).** The grammar ships as a prebuilt `parser.wasm`
   loaded at runtime, so adding a language needs no rebuild of ripref. The
   runtime compiles the module on load.
@@ -215,15 +215,15 @@ same markdown grammar (`cargo bench --bench grammar_loader --features wasm`):
 | -------------------------------------- | ------- | ----------- |
 | `language_init` (load the grammar)     | ~1 ns   | ~140 ms     |
 | `query_compile` (compile the query)    | ~0.8 ms | ~0.8 ms     |
-| `parse` + extract (small doc / README) | 29 µs / 3.8 ms | 44 µs / 5.9 ms |
+| `parse` + extract (small doc / README) | 29 us / 3.8 ms | 44 us / 5.9 ms |
 
 The headline is `language_init`. Native is a pointer wrap; the WebAssembly path
-pays a one-time ~140 ms to compile the grammar module — **per process start**,
+pays a one-time ~140 ms to compile the grammar module (**per process start**),
 because tree-sitter's `WasmStore` does not expose wasmtime's ahead-of-time
 (`Module::serialize`) cache. With that cache the load drops to well under a
 millisecond; [`examples/wasm_load_probe.rs`](examples/wasm_load_probe.rs)
 measures the decomposition and that cached ceiling. Once loaded, query
-compilation is at parity and parsing is ~1.5× slower under the sandbox.
+compilation is at parity and parsing is ~1.5x slower under the sandbox.
 
 So ripref keeps its built-in languages native and treats the WebAssembly path as
 opt-in extensibility; making it cheap enough for routine use means teaching the
@@ -243,7 +243,7 @@ defaults (the base layer your config merges over) are in [`rr.toml`](rr.toml) at
 the repository root. A project's own `.rr.toml` can teach ripref its conventions
 end to end (scope, the anchor kinds it recognizes, and per-language scan rules)
 using only built-in extractors. Additional languages are a Tree-sitter grammar
-plus a query — built in, or loaded from WebAssembly.
+plus a query, built in or loaded from WebAssembly.
 
 ### Shared options
 
@@ -316,7 +316,7 @@ VS Code is configured for step-through debugging of the integration tests in
 - [`rust-lang.rust-analyzer`](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
 - [`ms-vscode.cpptools`](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cpptools)
 
-Open the Extensions panel — both appear under **Workspace Recommendations** and
+Open the Extensions panel; both appear under **Workspace Recommendations** and
 can be installed from there. CodeLLDB is not used; it crashes on Windows with
 the MSVC toolchain (exit `0xC0000005`).
 
@@ -347,8 +347,8 @@ $ cargo lint         # clippy --all-targets, warnings as errors (CI gate)
 ```
 
 Markdown docs use the same formatter-then-linter split, kept Rust-native via
-[`rumdl`](https://github.com/rvben/rumdl) (`cargo install rumdl --locked`) — no
-Node/npm. The rule posture lives in `.rumdl.toml`.
+[`rumdl`](https://github.com/rvben/rumdl) (`cargo install rumdl --locked`), no
+Node/npm required. The rule posture lives in `.rumdl.toml`.
 
 ```
 $ rumdl fmt .         # rewrite Markdown to canonical style
