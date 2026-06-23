@@ -1,11 +1,10 @@
 /*!
 The writer side of `rr index`: walk the working tree and produce [`IndexData`].
 
-For now this extracts only `path` anchors — a file path is its own stable
-identity, so its forward entry is the path → whole-file span (`path:1-N`), and
-the same paths populate the `paths` membership section. The walk reuses
-ripgrep's `ignore` crate, so `.gitignore` and hidden-file rules match rr.toml's
-defaults (`respect-gitignore = true`, `hidden = false`) for free.
+The walk reuses ripgrep's `ignore` crate, so `.gitignore` and hidden-file
+rules match rr.toml's defaults (`respect-gitignore = true`, `hidden = false`)
+for free. Per-file anchor extraction is delegated to [`crate::extractors::PathExtractor`]
+and the [`crate::languages`] registry; the walker itself is type-blind.
 */
 
 use std::path::{Path, PathBuf};
@@ -14,7 +13,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use ignore::WalkBuilder;
 
-use crate::refidx::{ForwardEntry, IndexData};
+use crate::extractors::Extractor as _;
+use crate::extractors::PathExtractor;
+use crate::languages;
+use crate::refidx::IndexData;
 
 /// Walk `root` and build the index contents. `index_path` is excluded so the
 /// index never indexes (or freshness-checks against) itself.
@@ -48,14 +50,13 @@ pub fn build(root: &Path, index_path: &Path) -> std::io::Result<IndexData> {
         if rel == index_rel {
             continue;
         }
-        let anchor = to_unix(rel);
-        let end = count_lines(dent.path())?.max(1);
-        let location = format!("{anchor}:1-{end}");
-        forward.push(ForwardEntry {
-            anchor: anchor.clone(),
-            location,
-        });
-        paths.push(anchor);
+        let rel_path = to_unix(rel);
+        forward.extend(PathExtractor.extract(&rel_path, dent.path()));
+        let ext = rel.extension().and_then(|e| e.to_str());
+        if let Some(language) = languages::for_extension(ext) {
+            forward.extend(language.extract(&rel_path, dent.path()));
+        }
+        paths.push(rel_path);
     }
 
     // Sort forward for the reader's binary search; sort paths for deterministic output.
@@ -79,18 +80,6 @@ pub fn build(root: &Path, index_path: &Path) -> std::io::Result<IndexData> {
 /// Windows and Unix.
 fn to_unix(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
-}
-
-/// Count content lines: newline count, plus one for a final unterminated line.
-fn count_lines(path: &Path) -> std::io::Result<u64> {
-    let bytes = std::fs::read(path)?;
-    let newlines = bytes.iter().filter(|&&b| b == b'\n').count() as u64;
-    let trailing = if bytes.is_empty() || *bytes.last().unwrap() == b'\n' {
-        0
-    } else {
-        1
-    };
-    Ok(newlines + trailing)
 }
 
 /// The HEAD tree SHA when the working tree is clean, else empty. `index` is the
