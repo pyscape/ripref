@@ -1,20 +1,20 @@
 # ripref (rr)
 
-ripref is a tool for citing code by stable anchors instead of fragile line
-numbers. It recursively indexes the current directory into a single compact,
-memory-mapped index that maps each anchor (a file path, a symbol, a document
-heading, a decision record, an API operation) to its location in the tree.
-Once the index is built, ripref can dereference an anchor, turn a file and line
-back into the anchors that cover it, find everything that cites it across
+ripref is a tool for citing code and documentation by stable anchors instead of
+fragile line numbers. It recursively indexes the current directory into a single
+compact, memory-mapped index that maps each anchor (a file path, a symbol, a
+document heading, a decision record, an API operation) to its location in the
+tree. Once the index is built, ripref can dereference an anchor, turn a file and
+line back into the anchors that cover it, find everything that cites it across
 documentation and code, and flag references that have drifted or gone dangling
-as the code changes. ripref is language agnostic and has
-first-class support on Windows, macOS and Linux.
+as the code changes. ripref is language agnostic and has first-class support on
+Windows, macOS and Linux.
 
-A reference like `parser.go:42` is wrong the moment a line is inserted above
-it, and nothing tells you it broke. An anchor names _what_ you meant (the
-function, the heading, the decision) and stays correct across edits, moves and
-refactors. ripref makes that the cheap default and turns reference rot into a
-build-time (or lint-time) error.
+A reference like `parser.go:42` is wrong the moment a line is inserted above it,
+and nothing tells you it broke. An anchor names _what_ you meant (the function,
+the heading, the decision) and stays correct across edits, moves and refactors.
+ripref makes that the cheap default and turns reference rot into a build-time
+(or lint-time) error.
 
 Dual-licensed under MIT or the [UNLICENSE](https://unlicense.org).
 
@@ -95,9 +95,9 @@ $ rr search my_module::handler --format json
 ### Why should I use ripref?
 
 Your editor already jumps to a symbol's references, but only within code and
-only inside that editor. It has no idea that a design doc, a `.feature` spec,
-an architecture decision record, or an OpenAPI operation refers to the same
-thing. That is the gap ripref fills. It indexes prose and code into one anchor
+only inside that editor. It has no idea that a design doc, a `.feature` spec, an
+architecture decision record, or an OpenAPI operation refers to the same thing.
+That is the gap ripref fills. It indexes prose and code into one anchor
 namespace, so a single
 
 ```
@@ -105,8 +105,8 @@ $ rr search my_module::handler
 ```
 
 lists every citation in documentation, specs and code at once, and runs in a
-pre-commit hook or in CI, not just interactively in one editor. Getting that
-out of vim or vscode is neither cheap nor easy; here it is one command.
+pre-commit hook or in CI, not just interactively in one editor. Getting that out
+of vim or vscode is neither cheap nor easy; here it is one command.
 
 The rest follows from that:
 
@@ -171,10 +171,10 @@ configuration, not hardcoded; see [Configuration](#configuration).
 ripref splits cleanly into one writer and many readers.
 
 `rr index` is the single writer. It scans the working tree (respecting
-`.gitignore` by default), extracts every anchor and its location, and writes
-one flat, sorted, memory-mappable file (by default `.ref-cache/index`). It is
-the only part of ripref that runs `git`, which it uses once to stamp the index.
-Keep it running with `rr index --watch` to rebuild as files change.
+`.gitignore` by default), extracts every anchor and its location, and writes one
+flat, sorted, memory-mappable file (by default `.ref-cache/index`). It is the
+only part of ripref that runs `git`, which it uses once to stamp the index. Keep
+it running with `rr index --watch` to rebuild as files change.
 
 `read`, `at`, `search` and `enforce` are readers. They memory-map the index and
 binary-search it: no per-call rescan, no deserialization, no allocation, and a
@@ -186,8 +186,8 @@ fall over.
 
 Freshness is a `stat`, not a hash. The index records its build time; a reader
 compares that against the newest modification time among the files it would
-resolve against. If anything is newer, the index is stale and the reader exits
-3 rather than answer from stale data. Recover by re-running `rr index`, or fall
+resolve against. If anything is newer, the index is stale and the reader exits 3
+rather than answer from stale data. Recover by re-running `rr index`, or fall
 back to ripgrep, which is always fresh. The comparison is second-granular
 (filesystem `mtime` resolution); a file written within the same second as the
 index build is treated as fresh by design.
@@ -238,9 +238,9 @@ are durable prose subject to enforcement, are **configuration**, not built-in
 rules, so ripref stays general and any one project's conventions are just a
 profile on top of it.
 
-Drop a `.rr.toml` at the repository root to override them; rr's built-in defaults
-(the base layer your config merges over) are in [`rr.toml`](rr.toml) at the
-repository root. A project's own `.rr.toml` can teach ripref its conventions
+Drop a `.rr.toml` at the repository root to override them; rr's built-in
+defaults (the base layer your config merges over) are in [`rr.toml`](rr.toml) at
+the repository root. A project's own `.rr.toml` can teach ripref its conventions
 end to end (scope, the anchor kinds it recognizes, and per-language scan rules)
 using only built-in extractors. Additional languages are a Tree-sitter grammar
 plus a query — built in, or loaded from WebAssembly.
@@ -330,8 +330,8 @@ Once installed, two ways to launch a debug session:
   and run only matching tests.
 
 Both launch configurations run `cargo test --test cli --no-run` before
-attaching, so the binary is always current. Set breakpoints anywhere in
-`src/` or `tests/` before pressing `F5`.
+attaching, so the binary is always current. Set breakpoints anywhere in `src/`
+or `tests/` before pressing `F5`.
 
 ### Linting and formatting
 
