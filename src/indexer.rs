@@ -82,9 +82,11 @@ fn to_unix(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
-/// The HEAD tree SHA when the working tree is clean, else empty. `index` is the
-/// only command that runs git, and only to stamp the index for provenance.
-fn git_tree(root: &Path) -> String {
+/// The HEAD tree SHA when the working tree is clean, else empty. `index` stamps
+/// it for provenance; the read-side freshness gate reuses it as a short-circuit
+/// (a clean tree whose HEAD SHA still matches the stamp is provably what we
+/// indexed, so no stat-walk is needed).
+pub(crate) fn git_tree(root: &Path) -> String {
     let clean = Command::new("git")
         .arg("-C")
         .arg(root)
@@ -109,7 +111,37 @@ fn git_tree(root: &Path) -> String {
 /// The newest mtime (Unix seconds) among `paths`, resolved relative to `root`.
 /// This is the entire freshness computation: one `stat` per in-scope file, no
 /// git, no hashing.
+///
+/// At real scale the stat-walk dominates query latency, so it fans the
+/// independent stats across the available cores. The reduction is an
+/// order-independent `max` with no shared mutable state, so the parallel result
+/// is identical to the serial one — see `newest_serial`, which it delegates to.
 pub fn newest_mtime(paths: &[&str], root: &Path) -> u64 {
+    // Thread spawn (~tens of µs each) only pays off past a few hundred stats.
+    const PARALLEL_THRESHOLD: usize = 256;
+    let n = std::thread::available_parallelism()
+        .map_or(1, |n| n.get())
+        .min(paths.len());
+    if n <= 1 || paths.len() < PARALLEL_THRESHOLD {
+        return newest_serial(paths, root);
+    }
+    let chunk = paths.len().div_ceil(n);
+    std::thread::scope(|s| {
+        paths
+            .chunks(chunk)
+            .map(|c| s.spawn(move || newest_serial(c, root)))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .filter_map(|h| h.join().ok())
+            .max()
+            .unwrap_or(0)
+    })
+}
+
+/// The serial max-reduction over `paths`: one `stat` each, missing/unreadable
+/// files contribute 0 and are ignored. `newest_mtime` is this run in parallel
+/// chunks; keeping it standalone lets the two be tested for equality.
+fn newest_serial(paths: &[&str], root: &Path) -> u64 {
     let mut newest = 0u64;
     for p in paths {
         let full: PathBuf = root.join(p);
@@ -125,4 +157,43 @@ pub fn newest_mtime(paths: &[&str], root: &Path) -> u64 {
         }
     }
     newest
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The parallel `newest_mtime` must agree with the serial reducer for any
+    /// filesystem state. Generating more than `PARALLEL_THRESHOLD` files forces
+    /// the chunked thread::scope path (not the serial fallback), so equality
+    /// here proves the parallel reduction preserves the result.
+    #[test]
+    fn parallel_equals_serial() {
+        let dir = std::env::temp_dir().join(format!(
+            "rr-newest-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let names: Vec<String> = (0..300).map(|i| format!("f{i}.txt")).collect();
+        for name in &names {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+        // Include a path that does not exist: it must contribute 0 and be
+        // ignored identically by both reducers.
+        let mut paths: Vec<&str> = names.iter().map(String::as_str).collect();
+        paths.push("does-not-exist.txt");
+        assert!(paths.len() > 256, "must exceed the parallel threshold");
+
+        let parallel = newest_mtime(&paths, &dir);
+        let serial = newest_serial(&paths, &dir);
+        assert_eq!(parallel, serial);
+        assert!(parallel > 0, "freshly written files have a real mtime");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }
