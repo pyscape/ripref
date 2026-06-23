@@ -16,10 +16,36 @@ path = "src/main.rs"
 name = "ripref"
 path = "src/lib.rs"
 
+[[bench]]
+name = "grammar_loader"
+harness = false
+
+[features]
+# Off by default so `cargo build`, `cargo test`, and the native benchmark stay
+# toolchain-light. Enabling it turns on tree-sitter's WASM runtime (which pulls
+# in wasmtime-c-api) so a grammar can be loaded at runtime from a `.wasm`
+# artifact. Used only by the `wasm/*` group in benches/grammar_loader.rs today.
+# Regenerate the artifact with benches/wasm/build-markdown-wasm.sh, then:
+#   cargo bench --bench grammar_loader --features wasm
+wasm = ["tree-sitter/wasm"]
+
 [dependencies]
 # Reused from ripgrep's stack, per the project's "model on ripgrep" ethos:
-ignore = "0.4"     # gitignore-aware parallel tree walk
+ignore = "0.4"      # gitignore-aware parallel tree walk
 memmap2 = "0.9"    # the reader memory-maps the index, never deserializes it
+
+# Tree-sitter runtime + grammars. First-class languages come from their own
+# grammar crates (below) and run natively — no vendored C, no WASM toolchain.
+# The WASM benchmark (benches/grammar_loader.rs --features wasm) uses a prebuilt
+# .wasm of the same markdown grammar, under benches/wasm/.
+tree-sitter = "0.26"
+tree-sitter-language = "0.1"     # LanguageFn — the typed grammar function pointer
+streaming-iterator = "0.1"       # required by tree-sitter 0.26 query iteration API
+tree-sitter-rust = "0.24.2"      # first-class language grammar
+tree-sitter-md = "0.5.3"         # first-class language grammar (markdown)
+
+[dev-dependencies]
+criterion = { version = "0.8", features = ["html_reports"] }
 
 # NOTE: the lint posture (warn on unsafe_code + clippy::all) is declared as
 # crate-level attributes in src/lib.rs and src/main.rs, NOT via a `[lints]`
