@@ -1,5 +1,7 @@
 //! Benchmark for the index READER: the query work `rr read` and `rr at` do once
-//! the index exists on disk. The only end-to-end query numbers we have otherwise
+//! the index exists on disk. (Those are the implemented readers; `rr search` and
+//! `rr enforce` are described in the README but not built yet, so there is nothing
+//! to bench for them.) The only end-to-end query numbers we have otherwise
 //! come from spawning the `rr` binary under a shell timer, where roughly half of
 //! every sample is the Windows process spawn plus Defender scanning the ~3.9 MB
 //! exe, which drowns the actual lookup. This bench isolates the lookup, but

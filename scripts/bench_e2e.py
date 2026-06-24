@@ -34,9 +34,29 @@ Invariants a plausible edit could break
   * Time the ENTIRE process (spawn + mmap + page cache + scan), never an inner
     phase. That whole-process wall-clock is the point of this layer; the
     in-process criterion benches already isolate the inner phases.
-  * Numbers are WARM. A warmup run primes the OS page cache before sampling,
-    just like benchsuite. Cold-cache first-touch needs Linux drop_caches and is
-    out of scope on Windows; do not pretend otherwise (see --help).
+  * Numbers are WARM by default. A warmup run primes the OS page cache before
+    sampling, just like benchsuite.
+
+Cold-cache measurement (--cold-prepare)
+---------------------------------------
+By default this reports WARM numbers (the corpus and index are page-cached).
+To report COLD first-touch numbers as well, pass --cold-prepare CMD: a shell
+command run immediately BEFORE every timed run (each warmup AND each recorded
+sample, for every command), outside the timed region, to evict the relevant
+pages so the next invocation faults them from disk. This is the same idea as
+hyperfine's --prepare. The hook is only useful if CMD actually drops the cache;
+a CMD that does nothing yields warm numbers mislabeled as cold, so a CMD that
+exits non-zero aborts the run rather than silently producing warm timings.
+
+Recommended CMDs (the drop is OS-specific; this harness only invokes it):
+
+  * Linux, full drop (needs root):
+      sync && sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches'
+  * Linux, no root, targeted if vmtouch is installed (evict the corpus dir and
+    the index file specifically):
+      vmtouch -e <corpus-dir> <index-file>
+  * Windows: there is no portable user-space page-cache drop, so cold is
+    effectively Linux-only. Do not fake it on Windows; run cold on Linux.
   * rr emits forward-slash paths; ripgrep on Windows emits backslashes. The
     guard normalizes separators before comparing, or it would falsely flag
     every Windows pair.
@@ -84,6 +104,27 @@ def eprint(*args, **kwargs):
     'Like print, but to stderr.'
     kwargs['file'] = sys.stderr
     print(*args, **kwargs)
+
+
+class PrepareError(Exception):
+    'Raised when a --cold-prepare invocation exits non-zero.'
+
+
+def run_prepare(prepare):
+    '''
+    Run the cold-cache prepare command, outside any timed region.
+
+    A non-zero exit aborts: a prepare whose cache drop silently failed would
+    leave pages warm and produce warm timings mislabeled as cold, which is
+    worse than reporting no cold numbers at all.
+    '''
+    completed = subprocess.run(
+        prepare, shell=True, stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL)
+    if completed.returncode != 0:
+        raise PrepareError(
+            'cold-prepare command failed (exit %d): %s'
+            % (completed.returncode, prepare))
 
 
 class Command(object):
@@ -172,9 +213,14 @@ class Benchmark(object):
     time.time(), exactly like benchsuite's run_one.
     '''
 
-    def __init__(self, warmup=1, count=10):
+    def __init__(self, warmup=1, count=10, prepare=None):
+        '''
+        :param str prepare: cold-cache shell command run before every timed run
+            (warmups and samples), outside the timed region. None = warm.
+        '''
         self.warmup = warmup
         self.count = count
+        self.prepare = prepare
 
     def run(self, cmd, capture_last=False):
         '''
@@ -185,11 +231,22 @@ class Benchmark(object):
         '''
         result = Result(cmd.name)
         for _ in range(self.warmup):
-            cmd.run(capture=False)
+            self._timed_run(cmd, capture=False)
         for i in range(self.count):
             last = capture_last and i == self.count - 1
-            result.add(cmd.run(capture=last))
+            result.add(self._timed_run(cmd, capture=last))
         return result
+
+    def _timed_run(self, cmd, capture):
+        '''
+        Run the prepare hook (if any) then time one invocation.
+
+        Nothing runs between the prepare and the timed run that could re-warm
+        the cache, and the prepare's own time is never counted.
+        '''
+        if self.prepare is not None:
+            run_prepare(self.prepare)
+        return cmd.run(capture=capture)
 
 
 # --- The rr-vs-rg task: locate the definition of symbol S ------------------
@@ -315,6 +372,18 @@ def main():
         '--warmup', metavar='N', type=int, default=1,
         help='Warmup runs per command (discarded; primes the page cache). '
              'Default: %(default)s')
+    p.add_argument(
+        '--cold-prepare', metavar='CMD', dest='cold_prepare', default=None,
+        help='Shell command run immediately before every timed run (each '
+             'warmup and each sample), outside the timed region, to evict the '
+             'corpus/index pages so each invocation faults from disk (cold '
+             'first-touch), like hyperfine --prepare. Omit for WARM numbers '
+             '(the default, unchanged). A non-zero exit aborts so a failed '
+             'cache drop cannot silently yield warm numbers labeled cold. '
+             "Linux full drop (root): \"sync && sudo sh -c 'echo 3 > "
+             '/proc/sys/vm/drop_caches\'". Linux no-root: '
+             '"vmtouch -e <corpus> <index>". No portable equivalent on '
+             'Windows, so cold is Linux-only.')
     args = p.parse_args()
 
     corpus = find_corpus(args.corpus)
@@ -346,16 +415,25 @@ def main():
     # file:line the guard checks against rr's resolved location.
     rg_scan_cmd = Command('rg scan', [rg_bin, '-n', s], cwd=corpus)
 
-    print('ripref end-to-end benchmark (warm, full-process wall-clock)')
+    cold = args.cold_prepare is not None
+    mode = 'cold, full-process wall-clock' if cold \
+        else 'warm, full-process wall-clock'
+    print('ripref end-to-end benchmark (%s)' % mode)
     print('  corpus : %s' % corpus)
     print('  rr     : %s' % rr_bin)
     print('  rg     : %s' % rg_bin)
     print('  symbol : %s   (task: locate the definition)' % s)
     print('  method : %d warmup run(s) prime the page cache, then %d samples'
           % (args.warmup, args.samples))
-    print('  note   : WARM numbers only. Cold-cache first-touch needs Linux '
-          'drop_caches')
-    print('           and is out of scope on Windows (not faked here).')
+    if cold:
+        print('  mode   : COLD (prepare = "%s")' % args.cold_prepare)
+        print('           prepare runs before every timed run, outside the '
+              'timing.')
+    else:
+        print('  mode   : WARM (no --cold-prepare). Cold first-touch needs '
+              '--cold-prepare')
+        print('           with a real cache-drop CMD (Linux only); not faked '
+              'on Windows.')
     print()
 
     # The index must exist before the read is timed, and the guard needs both
@@ -375,10 +453,19 @@ def main():
               'finds.)')
     print()
 
-    bench = Benchmark(warmup=args.warmup, count=args.samples)
-    index_res = bench.run(index_cmd)
-    rr_read_res = bench.run(rr_read_cmd)
-    rg_scan_res = bench.run(rg_scan_cmd)
+    # The equivalence guard above stays warm: it is a correctness check, not a
+    # timing, so only the sampled timings carry the cold prepare.
+    bench = Benchmark(
+        warmup=args.warmup, count=args.samples, prepare=args.cold_prepare)
+    try:
+        index_res = bench.run(index_cmd)
+        rr_read_res = bench.run(rr_read_cmd)
+        rg_scan_res = bench.run(rg_scan_cmd)
+    except PrepareError as e:
+        eprint('error: %s' % e)
+        eprint('Aborting: a failed cache drop would mislabel warm numbers as '
+               'cold.')
+        sys.exit(1)
 
     labels = ['rr index (one-time setup)', 'rr read (per query)',
               'rg scan (per query)']
