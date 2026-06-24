@@ -28,7 +28,6 @@
 //! actually transfers between machines. Results land in `target/criterion/`.
 
 use std::hint::black_box;
-use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use criterion::{
@@ -37,98 +36,21 @@ use criterion::{
 use ripref::indexer;
 use ripref::refidx::{self, IndexData};
 
+mod corpus;
+use corpus::{index_path_for, make_corpus};
+
 // 128 brackets a small crate; 512 a mid-size one (clam is ~2,200 files). build
 // is slow, so the build group caps at criterion's minimum sample size to keep
 // the whole run in minutes rather than tens of minutes (see bench_build).
 const SCALES: &[usize] = &[128, 512];
 
-// Each generated `.rs` file emits this many extractable items, spread across the
-// construct kinds the Rust anchors query matches (fn / struct / enum / trait /
-// const / type). With the per-file path anchor that the indexer always adds,
-// each Rust file yields roughly this many + 1 anchors; mixed with Markdown the
-// corpus averages close to clam's observed ~12 anchors/file.
-const ITEMS_PER_RS_FILE: usize = 12;
-
-/// One realistic, parseable Rust source file whose item names are derived from
-/// `i` (so the corpus is deterministic). It defines `ITEMS_PER_RS_FILE` items
-/// spread across the construct kinds the Rust anchors query captures, so every
-/// file contributes a realistic count of anchors rather than just its path.
-fn rust_source(i: usize) -> String {
-    let mut s = String::new();
-    s.push_str(&format!("//! Generated module {i}.\n\n"));
-    // A const and a type alias (both are anchor kinds in the Rust query).
-    s.push_str(&format!("pub const LIMIT_{i}: usize = {i};\n"));
-    s.push_str(&format!("pub type Alias{i} = u64;\n\n"));
-    // A struct plus an impl with a method (the method is a `function_item` nested
-    // in the impl, so it is captured too).
-    s.push_str(&format!(
-        "pub struct Config{i} {{\n    pub value: u64,\n}}\n\n"
-    ));
-    s.push_str(&format!(
-        "impl Config{i} {{\n    pub fn value(&self) -> u64 {{\n        self.value\n    }}\n}}\n\n"
-    ));
-    // An enum and a trait.
-    s.push_str(&format!(
-        "pub enum State{i} {{\n    Idle,\n    Running,\n    Done,\n}}\n\n"
-    ));
-    s.push_str(&format!(
-        "pub trait Handler{i} {{\n    fn handle(&self) -> usize;\n}}\n\n"
-    ));
-    // Free functions to top the file up to ITEMS_PER_RS_FILE items. Items so far:
-    // const, type, struct, method, enum, trait = 6.
-    let already = 6;
-    for f in 0..ITEMS_PER_RS_FILE.saturating_sub(already) {
-        s.push_str(&format!(
-            "pub fn compute_{i}_{f}(x: u64) -> u64 {{\n    x.wrapping_add({f})\n}}\n\n"
-        ));
-    }
-    s
-}
-
-/// One realistic Markdown file with a handful of ATX headings (the Markdown
-/// anchor kind). Deterministic in `i`.
-fn markdown_source(i: usize) -> String {
-    format!(
-        "# Document {i}\n\nIntro paragraph for document {i}.\n\n\
-         ## Overview\n\nSome overview text.\n\n\
-         ## Details\n\nMore detail here.\n\n\
-         ### Notes\n\nClosing notes.\n"
-    )
-}
-
-/// Write a fresh corpus of `n` parseable files under an isolated temp dir and
-/// return that dir. Roughly 80% Rust, 20% Markdown (every fifth file is
-/// Markdown). The dir name carries the process id and scale (mirroring
-/// freshness.rs `make_tree`) so concurrent or repeated runs never collide.
-/// Files are NOT dot-prefixed, since the walker skips hidden entries.
-fn make_corpus(n: usize) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("rr-index-bench-{}-{}", std::process::id(), n));
-    std::fs::create_dir_all(&dir).unwrap();
-    for i in 0..n {
-        if i % 5 == 0 {
-            std::fs::write(dir.join(format!("doc{i}.md")), markdown_source(i)).unwrap();
-        } else {
-            std::fs::write(dir.join(format!("mod{i}.rs")), rust_source(i)).unwrap();
-        }
-    }
-    dir
-}
-
-/// The index path passed to `build` only excludes the index file itself from the
-/// walk; it is dot-prefixed, so it is naturally skipped and need not exist.
-fn index_path_for(root: &Path) -> PathBuf {
-    root.join(".ref-cache").join("index")
-}
-
 fn bench_build(c: &mut Criterion) {
     let mut group = c.benchmark_group("index");
-    // build does real I/O + parsing per file, so it is slow. Cap at criterion's
-    // minimum sample count and use flat sampling (its mode for long-running
-    // benchmarks): the default linear ramp cannot fit 10 samples of a multi-second
-    // build into the window and warns. measurement_time must clear 10 flat samples
-    // of the slowest (512-file) scale (~2 s each), with headroom for filesystem
-    // jitter (Windows Defender scanning each freshly written file). serialize (a
-    // separate group below) is cheap and keeps criterion's defaults.
+    // Flat sampling is criterion's mode for long-running benchmarks: the default
+    // linear ramp cannot fit 10 samples of a multi-second build into the window
+    // and warns. measurement_time must clear 10 flat samples of the slowest
+    // (512-file) scale (~2 s each), with headroom for filesystem jitter (Windows
+    // Defender scanning each freshly written file).
     group.sample_size(10);
     group.sampling_mode(SamplingMode::Flat);
     group.measurement_time(Duration::from_secs(30));
@@ -137,14 +59,12 @@ fn bench_build(c: &mut Criterion) {
         let root = make_corpus(n);
         let index_path = index_path_for(&root);
 
-        // Correctness guard: build once up front and require that language
-        // extraction actually fired, not just the per-file path anchor the indexer
-        // always adds. The path-only floor is one anchor per file (exactly `n`), so
-        // a dead grammar or unparseable corpus would still clear a `>= n` bar and
-        // time nothing meaningful; a healthy corpus yields ~11 anchors/file, so a
-        // `5 * n` threshold sits well above the floor and well below the expected
-        // count, failing loudly on broken extraction. Mirrors grammar_loader's
-        // native/wasm guard.
+        // Correctness guard: require that language extraction fired, not just the
+        // per-file path anchor the indexer always adds. That path-only floor is
+        // exactly `n`, so a dead grammar would still clear a `>= n` bar and time
+        // nothing meaningful; a healthy corpus yields ~11 anchors/file, so `5 * n`
+        // sits well above the floor and well below the expected count. Mirrors
+        // grammar_loader's native/wasm guard.
         let data = indexer::build(&root, &index_path).unwrap();
         assert!(
             data.forward.len() >= n * 5,
