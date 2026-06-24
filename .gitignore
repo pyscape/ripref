@@ -29,3 +29,7 @@ lcov.info
 
 # rumdl (Rust-native Markdown linter) cache
 .rumdl_cache/
+
+# Machine-specific benchmark artifacts (bench_all.py); not
+# committed -- the curated BENCHMARKS.md is.
+bench-results/
