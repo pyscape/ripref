@@ -123,12 +123,13 @@ fn bench_build(c: &mut Criterion) {
     // build does real I/O + parsing per file, so it is slow. Cap at criterion's
     // minimum sample count and use flat sampling (its mode for long-running
     // benchmarks): the default linear ramp cannot fit 10 samples of a multi-second
-    // build into the window and warns. measurement_time is sized to clear 10 flat
-    // samples of the slowest (512-file) scale. serialize (a separate group below)
-    // is cheap and keeps criterion's defaults.
+    // build into the window and warns. measurement_time must clear 10 flat samples
+    // of the slowest (512-file) scale (~2 s each), with headroom for filesystem
+    // jitter (Windows Defender scanning each freshly written file). serialize (a
+    // separate group below) is cheap and keeps criterion's defaults.
     group.sample_size(10);
     group.sampling_mode(SamplingMode::Flat);
-    group.measurement_time(Duration::from_secs(20));
+    group.measurement_time(Duration::from_secs(30));
 
     for &n in SCALES {
         let root = make_corpus(n);
