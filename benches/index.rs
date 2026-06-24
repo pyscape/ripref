@@ -29,6 +29,7 @@
 
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use ripref::indexer;
@@ -121,23 +122,30 @@ fn bench_build(c: &mut Criterion) {
     let mut group = c.benchmark_group("index");
     // build does real I/O + parsing per file, so it is slow; cap at criterion's
     // minimum sample count so the run stays in minutes. serialize (a separate
-    // group below) is cheap and keeps the default sample size.
+    // group below) is cheap and keeps the default sample size. The 512 scale needs
+    // ~15 s to collect 10 samples, so widen the measurement window past criterion's
+    // 5 s default (otherwise it warns and the slow estimate gets noisy).
     group.sample_size(10);
+    group.measurement_time(Duration::from_secs(16));
 
     for &n in SCALES {
         let root = make_corpus(n);
         let index_path = index_path_for(&root);
 
-        // Correctness guard: build once up front and require a non-trivial anchor
-        // count. Every file contributes at least its path anchor, and the Rust
-        // files contribute many more, so an empty or unparseable corpus (a broken
-        // generator) would fall below `n` and fail here loudly rather than produce
-        // fast, meaningless timings. Mirrors grammar_loader's native/wasm guard.
+        // Correctness guard: build once up front and require that language
+        // extraction actually fired, not just the per-file path anchor the indexer
+        // always adds. The path-only floor is one anchor per file (exactly `n`), so
+        // a dead grammar or unparseable corpus would still clear a `>= n` bar and
+        // time nothing meaningful; a healthy corpus yields ~11 anchors/file, so a
+        // `5 * n` threshold sits well above the floor and well below the expected
+        // count, failing loudly on broken extraction. Mirrors grammar_loader's
+        // native/wasm guard.
         let data = indexer::build(&root, &index_path).unwrap();
         assert!(
-            data.forward.len() >= n,
-            "corpus at scale {n} extracted only {} anchors (< {n}); generator is broken",
-            data.forward.len()
+            data.forward.len() >= n * 5,
+            "corpus at scale {n} extracted only {} anchors (< {}); language extraction is broken",
+            data.forward.len(),
+            n * 5
         );
 
         group.throughput(Throughput::Elements(n as u64));
