@@ -20,8 +20,12 @@
 //! Linux. Defender interference on Windows is left in, since that is what a Windows
 //! user actually pays.
 //!
-//! Four operations are measured:
+//! Five operations are measured, in read-path order:
 //!
+//!   query/open_mmap           - `File::open` then `Mmap::map`: the syscalls every
+//!                               reader pays to establish the mapping before a byte
+//!                               is read, timed alone so parse below (which faults
+//!                               pages in) is not conflated with the mapping cost.
 //!   query/parse               - [`ripref::refidx::Reader::parse`]: header plus
 //!                               section table. It UTF-8-validates the whole image
 //!                               first (`str::from_utf8` over every byte), so its
@@ -134,6 +138,19 @@ fn bench_query(c: &mut Criterion) {
             depth >= 3,
             "nest at {cover_file}:{cover_line} must cover depth >= 3, got {depth} at scale {files}"
         );
+
+        // open + mmap: the first phase of any read, File::open then Mmap::map, the
+        // syscalls every reader pays to establish the mapping before reading a
+        // byte. Timed alone so it is not folded into parse (which faults the pages
+        // in via its UTF-8 validation).
+        group.bench_with_input(BenchmarkId::new("open_mmap", files), &idx_path, |b, p| {
+            b.iter(|| {
+                let file = File::open(black_box(p)).unwrap();
+                // SAFETY: same as write_and_map, the file is ours and unmodified.
+                let mmap = unsafe { Mmap::map(&file) }.unwrap();
+                black_box(mmap);
+            });
+        });
 
         // parse: header plus section table, over the mmap of the real file (the
         // same &[u8] the binary sees from disk).

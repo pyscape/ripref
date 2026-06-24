@@ -70,3 +70,68 @@ jobs:
             echo 'error: non-ASCII characters found in Markdown (replace em dashes, curly quotes, etc. with ASCII)'
             exit 1
           fi
+
+  # Benchmark-regression gate: fail a PR only on a GROSS performance regression.
+  #
+  # HONEST CAVEAT: CI microbench numbers are noisy. Shared GitHub runners have no
+  # perf isolation, so the SAME code commonly varies 10-30% run to run. This gate
+  # is therefore a smoke alarm for order-of-magnitude / algorithmic regressions
+  # (e.g. an O(n) that became O(n^2)), NOT a precise performance ratchet. The
+  # threshold below (50%) sits clearly above the noise band so ordinary variance
+  # does not flake the build; a real, repeatable ~2x slowdown still trips it.
+  # scripts/bench_regression.py compares the MEDIAN estimate (robust to outliers),
+  # reports each point's standard deviation as a CV%, and is noise-aware: it fails
+  # only when a slowdown clears the threshold AND exceeds the measured jitter, so a
+  # noisy bench's swing is reported, not failed. It never fails on an improvement.
+  #
+  # If this still proves flaky, make it non-blocking by adding
+  #   continue-on-error: true
+  # to this job (it then reports without failing the PR) BEFORE raising the
+  # threshold. To loosen instead, pass a larger --threshold, or --min-ns 100000
+  # to skip the sub-100us points (the noisiest in relative terms) on the final
+  # step.
+  #
+  # ONLY the STABLE benches are gated: `freshness` and `query` are pure
+  # in-process microbenches (no multi-second points, no per-iteration disk
+  # writes), so they are reproducible enough to compare. `index` is NOT gated --
+  # its build points take SECONDS each and write a fresh tree per iteration, so
+  # on a shared runner its wall-clock swings far more than any usable threshold.
+  # `grammar_loader` (WASM/heavy) is excluded for the same robustness reason.
+  # Running freshness + query twice is a few minutes, which is fine; index would
+  # be too slow and too noisy, which is exactly why it is left out.
+  #
+  # PR-only: the comparison needs the PR base commit, which a push build has no
+  # equivalent of, so the job no-ops outside pull_request.
+  bench-regression:
+    name: bench-regression (freshness + query)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 so the PR base commit is reachable for the base-baseline
+      # checkout below.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Bench PR head (save baseline 'pr')
+        run: cargo bench --bench freshness --bench query -- --save-baseline pr
+      - name: Bench PR base (save baseline 'base')
+        # Build and bench the merge base, saving it as 'base', then return to the
+        # PR head. git stash guards the (normally clean) tree so the checkout
+        # cannot fail on a stray file; target/criterion (gitignored) carries both
+        # saved baselines across the two checkouts.
+        run: |
+          git stash --include-untracked || true
+          git checkout --detach ${{ github.event.pull_request.base.sha }}
+          cargo bench --bench freshness --bench query -- --save-baseline base
+          git checkout --force ${{ github.sha }}
+          git stash pop || true
+      - name: Compare baselines (gate on gross regression only)
+        # Gate ONLY the stable benches. 50% threshold: conservative on purpose
+        # (see the job comment above) so shared-runner noise does not flake.
+        run: |
+          python scripts/bench_regression.py \
+            --base base --new pr \
+            --bench freshness --bench query \
+            --threshold 50
