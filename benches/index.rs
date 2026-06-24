@@ -31,7 +31,9 @@ use std::hint::black_box;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, SamplingMode, Throughput};
+use criterion::{
+    criterion_group, criterion_main, BenchmarkId, Criterion, SamplingMode, Throughput,
+};
 use ripref::indexer;
 use ripref::refidx::{self, IndexData};
 
