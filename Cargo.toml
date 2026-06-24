@@ -25,6 +25,10 @@ name = "freshness"
 harness = false
 
 [[bench]]
+name = "freshness_scaling"
+harness = false
+
+[[bench]]
 name = "index"
 harness = false
 
