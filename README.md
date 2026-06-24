@@ -82,7 +82,7 @@ Find every reference to an anchor (across documentation and code) before you
 change or delete it:
 
 ```
-$ rr search my_module::handler
+$ rr search my_module::handler   # planned, not yet implemented
 docs/architecture.md:14
 docs/api/handlers.md:7
 tests/features/requests.feature:22
@@ -92,7 +92,7 @@ src/handlers.py:8
 Flag drift and dangling references, for a pre-commit hook or CI:
 
 ```
-$ rr enforce --changed
+$ rr enforce --changed   # planned, not yet implemented
 docs/data-model.md:51: dangling reference: legacy.Account (no such anchor)
 README.md:88: line-number reference: parser.go:42 (use an anchor)
 ```
@@ -100,7 +100,7 @@ README.md:88: line-number reference: parser.go:42 (use an anchor)
 Emit JSON instead of text for piping into other tools:
 
 ```
-$ rr search my_module::handler --format json
+$ rr search my_module::handler --format json   # planned, not yet implemented
 ```
 
 ### Why should I use ripref?
@@ -112,7 +112,7 @@ That is the gap ripref fills. It indexes prose and code into one anchor
 namespace, so a single
 
 ```
-$ rr search my_module::handler
+$ rr search my_module::handler   # planned, not yet implemented
 ```
 
 lists every citation in documentation, specs and code at once, and runs in a
@@ -124,10 +124,12 @@ The rest follows from that:
 - ripref references code by _meaning_, not by line number, so your docs,
   comments and specs keep pointing at the right thing across edits and
   refactors.
-- ripref is fast. Every read memory-maps a single prebuilt index and
-  binary-searches it (no rescan, no deserialization, no allocation) so a
-  lookup costs microseconds and the thousands of lookups a build fans out share
-  one page-cached copy.
+- ripref reads are cheap. Every read memory-maps a single prebuilt index (one
+  page-cached copy shared across all readers) and resolves the anchor against
+  the sorted forward section. The mapping and header parse are microseconds;
+  the lookup itself currently materializes that section on every call (an O(n)
+  allocation; see [BENCHMARKS.md](BENCHMARKS.md)), with an in-place bisect
+  planned.
 - ripref checks freshness with a single `stat` per in-scope file. There is no
   content hashing and no `git` on the read path, and when the index is stale
   ripref tells you (exit code 3) instead of returning a stale answer.
@@ -174,8 +176,9 @@ accepts the same grammar:
 | API operation | `createUser`                                    |
 
 A bare line number such as `http.go:42` is never an anchor, it is exactly the
-thing `rr enforce` flags. Which concrete patterns map to which kind is set by
-configuration, not hardcoded; see [Configuration](#configuration).
+kind of reference `rr enforce` (planned) is designed to flag. Which concrete
+patterns map to which kind is set by configuration, not hardcoded; see
+[Configuration](#configuration).
 
 ### How it works
 
@@ -187,11 +190,12 @@ flat, sorted, memory-mappable file (by default `.ref-cache/index`). It is the
 only part of ripref that runs `git`, which it uses once to stamp the index. Keep
 it running with `rr index --watch` to rebuild as files change.
 
-`read`, `at`, `search` and `enforce` are readers. They memory-map the index and
-binary-search it: no per-call rescan, no deserialization, no allocation, and a
-single page-cached copy shared across every concurrent reader. This is why a
-lookup costs microseconds and a build that fans out thousands of them doesn't
-fall over.
+`read` and `at` are the readers today; `search` and `enforce` are planned (not
+yet implemented). A reader memory-maps the index, keeping one page-cached copy
+shared across every concurrent reader, and answers each query from the forward
+section. The mapping and header parse are microseconds; the lookup currently
+scans and materializes the forward records on every call (an O(n) allocation
+today; see [BENCHMARKS.md](BENCHMARKS.md)), with an in-place bisect planned.
 
 #### Freshness
 
@@ -279,8 +283,9 @@ Every command accepts:
 Exit codes are consistent across commands:
 
 - `0`: success.
-- `1`: findings: `enforce` saw violations, `read`/`search` found nothing or an
-  ambiguous match, or `at` found no anchor covering the line.
+- `1`: findings: `read` found nothing or an ambiguous match, or `at` found no
+  anchor covering the line (the planned `enforce` will also use `1` for
+  violations, and `search` for no matches).
 - `2`: usage error.
 - `3`: the index is stale; rebuild with `rr index`, or fall back to ripgrep.
 

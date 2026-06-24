@@ -207,7 +207,8 @@ impl<'a> Reader<'a> {
     /// inside the location text there, and that section is sorted by anchor —
     /// not by file — so there is no binary-search shortcut for the inverse
     /// query. A position-keyed section could replace this with a bisect later
-    /// (see FORMAT.md); the scan keeps the walking skeleton format-compatible.
+    /// (see this module's format docs); the scan keeps the walking skeleton
+    /// format-compatible.
     ///
     /// # Examples
     ///
