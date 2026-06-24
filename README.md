@@ -18,9 +18,15 @@ ripref makes that the cheap default and turns reference rot into a build-time
 
 Dual-licensed under MIT or the [UNLICENSE](https://unlicense.org).
 
-> **Status: pre-release, in active design.** Reference docs are generated from
-> the code (rustdoc and `rr --help`). The commands below describe intended
-> behavior.
+> [!IMPORTANT]
+> **Status: pre-release, in active design.** The commands below describe intended
+> behavior, and not all of it is implemented yet:
+>
+> - Working today: `rr index`, `rr read`, `rr at`.
+> - Planned, not yet implemented: `rr search`, `rr enforce`, and the
+>   `rr index --watch` mode.
+>
+> Reference docs are generated from the code (rustdoc and `rr --help`).
 
 ## Documentation
 
@@ -77,6 +83,11 @@ my_module::handler
 The text output is anchor names only, never line numbers (the fragile coordinate
 ripref replaces); `--format json` carries the full list with spans, for editors
 and agents citing the code under a cursor.
+
+> [!NOTE]
+> The examples from here down (`rr search`, `rr enforce`) are planned and not yet
+> implemented; they show intended behavior. Everything above (`rr index`,
+> `rr read`, `rr at`) works today.
 
 Find every reference to an anchor (across documentation and code) before you
 change or delete it:
@@ -187,8 +198,9 @@ ripref splits cleanly into one writer and many readers.
 `rr index` is the single writer. It scans the working tree (respecting
 `.gitignore` by default), extracts every anchor and its location, and writes one
 flat, sorted, memory-mappable file (by default `.ref-cache/index`). It is the
-only part of ripref that runs `git`, which it uses once to stamp the index. Keep
-it running with `rr index --watch` to rebuild as files change.
+only part of ripref that runs `git`, which it uses once to stamp the index. A
+planned `rr index --watch` mode (not yet implemented) will keep it running to
+rebuild as files change.
 
 `read` and `at` are the readers today; `search` and `enforce` are planned (not
 yet implemented). A reader memory-maps the index, keeping one page-cached copy
