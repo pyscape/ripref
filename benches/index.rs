@@ -31,7 +31,7 @@ use std::hint::black_box;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, SamplingMode, Throughput};
 use ripref::indexer;
 use ripref::refidx::{self, IndexData};
 
@@ -120,13 +120,15 @@ fn index_path_for(root: &Path) -> PathBuf {
 
 fn bench_build(c: &mut Criterion) {
     let mut group = c.benchmark_group("index");
-    // build does real I/O + parsing per file, so it is slow; cap at criterion's
-    // minimum sample count so the run stays in minutes. serialize (a separate
-    // group below) is cheap and keeps the default sample size. The 512 scale needs
-    // ~15 s to collect 10 samples, so widen the measurement window past criterion's
-    // 5 s default (otherwise it warns and the slow estimate gets noisy).
+    // build does real I/O + parsing per file, so it is slow. Cap at criterion's
+    // minimum sample count and use flat sampling (its mode for long-running
+    // benchmarks): the default linear ramp cannot fit 10 samples of a multi-second
+    // build into the window and warns. measurement_time is sized to clear 10 flat
+    // samples of the slowest (512-file) scale. serialize (a separate group below)
+    // is cheap and keeps criterion's defaults.
     group.sample_size(10);
-    group.measurement_time(Duration::from_secs(16));
+    group.sampling_mode(SamplingMode::Flat);
+    group.measurement_time(Duration::from_secs(20));
 
     for &n in SCALES {
         let root = make_corpus(n);
