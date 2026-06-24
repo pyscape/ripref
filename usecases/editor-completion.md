@@ -2,11 +2,12 @@
 
 > [!NOTE]
 > The headline command here, `rr complete`, is a proposal: it is not implemented
-> and not in the planned command set. Unlike `rr search` and `rr enforce` (which
-> are planned and specified), no command enumerates anchors by prefix today, and
-> none emits the anchor namespace for a plugin to filter on its own.
-> `rr index --format json` reports counts, not anchor names. This document is the
-> guiding spec for that work: it describes the intended workflow and, in
+> and not in the current command set. The implemented and in-progress commands
+> resolve and pin references (`rr read`, `rr at`, and the new `rr cite` /
+> `rr track` / `rr verify`), but none enumerates anchors by prefix, and none emits
+> the anchor namespace for a plugin to filter on its own; `rr index --format json`
+> reports counts, not anchor names. This document is the guiding spec for that
+> work: it describes the intended workflow and, in
 > [What rr must provide](#what-rr-must-provide), the exact capabilities rr needs
 > to support it well, each tagged with its status.
 
@@ -45,7 +46,12 @@ rr read <anchor> --locate           # today: just file:start-end, no body
   returns its location and body, so the detail pane shows the code a citation
   points at before you commit to it.
 - What you insert is the anchor, the durable handle, never a line number;
-  `rr read` reverses it to a location when a reader later follows it.
+  `rr read` reverses it to a location when a reader later follows it. The anchor
+  you complete is a live reference by default; when a citation needs to freeze the
+  exact version you saw (the evidence behind a decision) or to warn you when its
+  target changes, promote it with `rr cite` (a frozen `anchor@<commit>` snapshot)
+  or `rr track` (a `anchor~<commit>` that `rr verify` flags on drift). Completion
+  supplies the anchor; `cite` and `track` add the pin.
 
 Worked example: writing a design doc, you type the start of the handler's
 anchor.
@@ -64,8 +70,9 @@ that exists and keeps pointing at the handler after the code around it shifts.
 
 This use case is the contract it puts on rr. Each capability below is what a
 good completion integration needs, why it needs it, and where rr stands.
-Status tags: `[today]` ships now, `[planned]` is in the CLI spec but
-unimplemented, `[proposed]` is new and specified here.
+Status tags: `[today]` ships now, `[in progress]` is being built with the
+snapshot/tracking work, `[planned]` is in the CLI spec but unimplemented,
+`[proposed]` is new and specified here.
 
 - **Prefix enumeration, `rr complete <prefix>` `[proposed]`.** The core query:
   take the partial anchor under the cursor, return the anchors that start with
@@ -79,8 +86,9 @@ unimplemented, `[proposed]` is new and specified here.
   carry the anchor name (the token the editor inserts), its kind (symbol,
   heading, record, scenario, operation, path: for an icon, for grouping, for the
   kind filter below), and its location (`file:start-end`, for the preview and a
-  jump). `rr read` and `rr search` already define a `kind` field in their JSON;
-  completion needs the same on each candidate.
+  jump). rr's JSON envelopes should all carry `kind` (the `at` envelope ships
+  today; `read`, `cite`, `track`, `verify`, and `complete` should match), so
+  completion has it on each candidate.
 - **A result bound and a stable order, `--limit <N>` `[proposed]`.** A one- or
   two-character prefix can match thousands of anchors; a popup wants the top N,
   not the tree. `forward` is a deterministic total order (sorted by name), so
@@ -99,12 +107,14 @@ unimplemented, `[proposed]` is new and specified here.
   the popup must still answer. `rr read` and `rr at` already take `--no-freshness`
   to answer from the index as-is; `rr complete` needs the same, so a stale index
   degrades to slightly-old candidates rather than an error.
-- **Inline preview, `rr read <anchor>` and `--locate` `[today]`.** For the
-  highlighted candidate the detail pane shows the target: `--locate` gives the
-  `file:start-end`, the body shows the code, bounded by `-C`/`--context` so the
-  pane is a snippet, not a 500-line function. This resolve side works today; only
-  the candidate list it previews is missing. Pass `--no-freshness` here too so
-  the preview does not error while you type.
+- **Inline preview, `rr read <anchor>` `[--locate today; body in progress]`.**
+  For the highlighted candidate the detail pane shows the target. `--locate`
+  gives the `file:start-end` and works today; the source body (bounded by
+  `-C`/`--context` so the pane is a snippet, not a 500-line function) is the
+  same source-body print being built for `rr read <anchor>@<commit>`, so the
+  live-anchor preview lands with it. Only the candidate list it previews is
+  missing. Pass `--no-freshness` here too so the preview does not error while
+  you type.
 - **Current candidates without a manual rebuild, `rr index --watch`
   `[planned]`.** Completion is only as fresh as the last `rr index`, and the
   writer is the expensive path, so rebuilding on every save is the wrong shape.
@@ -120,8 +130,9 @@ unimplemented, `[proposed]` is new and specified here.
   keystrokes is the plugin's half.
 - **Plumbing that already exists `[today]`.** `--index <path>` (or `REF_INDEX`)
   points at the index when the editor's working directory is not the repository
-  root; `--no-color` keeps escape codes out of the buffer; exit codes stay `0`
-  match, `1` none, `2` usage, `3` stale, as everywhere else in rr.
+  root; `--no-color` keeps escape codes out of the buffer; exit codes for this live
+  reader stay `0` match, `1` none, `2` usage, `3` stale (the pinned and tracked
+  reads add `4` drifted and `5` broken, which do not apply to completion).
 
 ### The proposed `rr complete` interface
 
@@ -244,9 +255,10 @@ agent-facing map and the source a plugin can hold for its own fuzzy matching.
 $ rr complete '' --limit 1000 --format json   # every anchor, up to the cap
 ```
 
-**The preview the detail pane shows comes from `rr read`, which exists today.**
-`--locate` gives the location; the body (bounded by `-C`/`--context`) gives the
-snippet; `--format json` gives both in the `read` envelope.
+**The preview the detail pane shows comes from `rr read`.** `--locate` gives the
+location and works today; the body (bounded by `-C`/`--context`) and the `read`
+JSON envelope below land with the source-body print being built for snapshot
+recovery.
 
 ```
 $ rr read my_module::handler --locate
@@ -286,7 +298,10 @@ anchor from the cursor to paste elsewhere.
 - Vim / Neovim: an `omnifunc` or `completefunc`, or an `nvim-cmp` / `blink.cmp`
   source, that shells out to `rr complete` for the current word. Trigger on the
   anchor grammar (`::` for a symbol, `#` for a heading or scenario) so it fires
-  mid-citation rather than on every word.
+  mid-citation rather than on every word. The reserved `@` and `~` that begin a
+  snapshot or tracking pin come after the anchor, so anchor completion fires
+  before them; completing the commit half is a separate source (git revisions,
+  or `rr cite` / `rr track` writing it for you).
 - VSCode: a `CompletionItemProvider` registered for the languages the built-in
   provider skips (`markdown`, `plaintext`, `gherkin`, `toml`). Map each match to
   a `CompletionItem` whose `detail` is its `location` and whose `documentation`
@@ -304,11 +319,12 @@ anchor from the cursor to paste elsewhere.
   planned command set, and no command emits the namespace to filter client-side,
   so a plugin has nothing to complete against until the work in
   [What rr must provide](#what-rr-must-provide) lands.
-- Completion only produces references; auditing them is separate, planned work.
-  `rr search` (find every citation of an anchor) and `rr enforce` (flag a
-  dangling or line-number reference) are planned, so rr would offer correct
-  anchors as you type but not check the ones already written; see
-  [Reference lint in CI](reference-lint-ci.md).
+- Completion only produces references; auditing them is separate work. `rr verify`
+  (the nearer-term gate) checks the snapshot and tracking references you have
+  pinned, flagging drift and broken pins; `rr search` (find every citation of an
+  anchor) is planned; broad prose enforcement is deferred. So rr would offer the
+  correct anchors as you type and check the pinned references you committed, but
+  not yet audit every hand-written citation.
 
 ## Why it is worth it
 
