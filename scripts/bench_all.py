@@ -219,6 +219,40 @@ def av_status():
     return 'Defender status: unknown'
 
 
+def virt_status():
+    '''
+    Virtualization: the hypervisor name, "bare metal", or "unknown".
+
+    This labels a run so a same-hardware VM comparison (a Windows guest and a
+    Linux guest on one host) is unambiguous in the summary. Linux uses
+    systemd-detect-virt (purpose-built). Windows matches the SMBIOS
+    manufacturer/model against known hypervisor signatures, because
+    HypervisorPresent reads true on ordinary bare-metal Windows (Hyper-V/VBS) and
+    would false-positive.
+    '''
+    if IS_WINDOWS:
+        text = _powershell(
+            'Get-CimInstance Win32_ComputerSystem | '
+            'Select Manufacturer,Model | ConvertTo-Json')
+        try:
+            data = json.loads(text)
+        except ValueError:
+            return 'unknown'
+        blob = ('%s %s' % (data.get('Manufacturer', ''),
+                           data.get('Model', ''))).lower()
+        for sig in ('vmware', 'virtualbox', 'kvm', 'qemu', 'hyper-v',
+                    'virtual machine', 'xen', 'parallels', 'bochs'):
+            if sig in blob:
+                return 'VM (%s)' % sig
+        return 'bare metal (no known hypervisor signature)'
+    text = _run_text(['systemd-detect-virt']).strip()
+    if text == 'none':
+        return 'bare metal'
+    if text:
+        return 'VM (%s)' % text
+    return 'unknown'
+
+
 def os_specs():
     'OS/kernel string; on Linux append /etc/os-release PRETTY_NAME.'
     base = '%s %s (%s)' % (platform.system(), platform.release(),
@@ -262,6 +296,7 @@ def gather_specs():
         'ram': ram_total(),
         'fs': filesystem_specs(),
         'av': av_status(),
+        'virt': virt_status(),
         'os': os_specs(),
         'toolchain': toolchain_specs(),
     }
@@ -288,6 +323,7 @@ def specs_block(specs):
     lines.append('| temp filesystem | %s%s |' % (
         fs['temp_fs'], ' (tmpfs, RAM-backed)' if fs['temp_is_tmpfs'] else ''))
     lines.append('| anti-virus | %s |' % specs['av'])
+    lines.append('| virtualization | %s |' % specs['virt'])
     lines.append('| rustc | %s |' % specs['toolchain']['rustc'])
     lines.append('| cargo | %s |' % specs['toolchain']['cargo'])
     if fs['note']:
