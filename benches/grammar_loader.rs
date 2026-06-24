@@ -41,7 +41,12 @@ Content here.
 More content.
 ";
 
-const LARGE_DOC: &str = include_str!("../README.md");
+// A fixed, committed markdown fixture rather than the live README: parsing a
+// moving document would move the parse number every time that document was
+// edited, so the "large" parse input is pinned to a file that changes only on
+// purpose. Heading-dense on purpose, since the query extracts ATX headings. The
+// "readme" benchmark label is kept for output continuity despite the new source.
+const LARGE_DOC: &str = include_str!("../tests/data/grammar_bench.md");
 
 // Both sides use the same grammar — the `tree-sitter-md` crate — so only the
 // loading path differs. Native: the crate grammar linked in as a function
