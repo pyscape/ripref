@@ -28,6 +28,10 @@ harness = false
 name = "index"
 harness = false
 
+[[bench]]
+name = "query"
+harness = false
+
 [features]
 # Off by default so `cargo build`, `cargo test`, and the native benchmark stay
 # toolchain-light. Enabling it turns on tree-sitter's WASM runtime (which pulls
