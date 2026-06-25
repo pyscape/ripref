@@ -277,6 +277,771 @@ rrtest!(
     }
 );
 
+// --- Phase 1: writer/reader hardening ---------------------------------------
+
+/// The default index path within a test [`Dir`].
+fn index_file(dir: &Dir) -> std::path::PathBuf {
+    dir.path().join(".ref-cache").join("index")
+}
+
+/// The bytes of an index after its header (everything from the blank line that
+/// terminates the section table onward): the `forward`/`reverse`/`paths` bodies,
+/// with the build-time `mtime` stamp in the header excluded.
+fn index_body(dir: &Dir) -> Vec<u8> {
+    let bytes = std::fs::read(index_file(dir)).expect("index file exists");
+    let header_end = bytes
+        .windows(2)
+        .position(|w| w == b"\n\n")
+        .map(|p| p + 2)
+        .expect("index header ends in a blank line");
+    bytes[header_end..].to_vec()
+}
+
+// The on-disk format is unchanged by the snapshot/tracking feature: the magic is
+// still `refidx v1` and the header carries no content hash / blob OID / pin
+// field. Locks "no format change" so the index stays a pure locations file.
+rrtest!(
+    index_is_refidx_v1_after_feature,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file("src/main.rs", "fn main() {}\n")
+            .file("README.md", "# title\n\nbody\n");
+        cmd.arg("index").assert_exit_code(0);
+
+        let bytes = std::fs::read(index_file(&dir)).unwrap();
+        let header_end = bytes.windows(2).position(|w| w == b"\n\n").unwrap();
+        let header = String::from_utf8(bytes[..header_end].to_vec()).unwrap();
+
+        assert!(header.starts_with("refidx v1\n"), "magic line: {header:?}");
+        for section in ["section:forward:", "section:reverse:", "section:paths:"] {
+            assert!(header.contains(section), "missing {section} in {header:?}");
+        }
+        // No content-addressing leaked into the index format.
+        for forbidden in ["blob", "oid", "pin", "sha", "snapshot", "track"] {
+            assert!(
+                !header.contains(forbidden),
+                "header must not carry a {forbidden:?} field: {header:?}"
+            );
+        }
+    }
+);
+
+// Indexing the same tree twice yields a byte-identical body. The parallel walk
+// hands records back in a scheduling-dependent order, so this only holds because
+// serialize sorts to a total order; a non-total sort (anchor only, with colliding
+// anchors) would let the two builds differ. Stamp (mtime) aside, the bodies match.
+rrtest!(
+    index_unchanged_tree_is_byte_stable,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        // Several files, several anchors each, so the parallel walk has real
+        // freedom to reorder between the two builds.
+        for i in 0..12 {
+            dir.file(
+                &format!("src/mod{i}.rs"),
+                &format!("pub fn f{i}() {{}}\npub struct S{i};\n"),
+            );
+        }
+        dir.file("a.md", "# Alpha\n\n## Beta\n");
+
+        cmd.arg("index").assert_exit_code(0);
+        let first = index_body(&dir);
+        cmd.arg("index").assert_exit_code(0);
+        let second = index_body(&dir);
+
+        assert_eq!(
+            first, second,
+            "index body must be deterministic across builds"
+        );
+        assert!(
+            !first.is_empty(),
+            "body should carry the forward/paths records"
+        );
+    }
+);
+
+// A truncated index whose header still parses but whose section bytes are gone
+// must be reported as a corrupt index, never crash with an out-of-bounds panic
+// (the historical refidx slicing bug). Reads the built index, cuts it to the end
+// of the header, and confirms a clean usage error (exit 2), not a panic (101).
+rrtest!(
+    truncated_index_is_corrupt_not_panic,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file("a.txt", "one\ntwo\nthree\n");
+        cmd.arg("index").assert_exit_code(0);
+
+        let path = index_file(&dir);
+        let bytes = std::fs::read(&path).unwrap();
+        let header_end = bytes
+            .windows(2)
+            .position(|w| w == b"\n\n")
+            .map(|p| p + 2)
+            .unwrap();
+        assert!(
+            header_end < bytes.len(),
+            "the built index has a non-empty body"
+        );
+        std::fs::write(&path, &bytes[..header_end]).unwrap();
+
+        let out = cmd
+            .args(["read", "a.txt", "--locate", "--no-freshness"])
+            .run();
+        assert_eq!(
+            code(&out),
+            2,
+            "truncated index should be a clean usage error, not a panic: {out:?}"
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("corrupt index"),
+            "stderr should name the corrupt index: {:?}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+);
+
+// --- Phase 2: cite / track producers + .rr/ sidecar -------------------------
+
+// `rr cite` writes the committed sidecar (`.rr/objects/<oid>` + a `.rr/refs`
+// snapshot line) and leaves the index untouched; the stored object re-hashes to
+// the recorded oid (self-verifying, git-blob addressed).
+rrtest!(
+    cite_writes_sidecar_not_index,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        if !git_available() {
+            eprintln!("skipping: git not available");
+            return;
+        }
+        dir.file("src/main.rs", "fn main() {}\n");
+        init_repo(&dir);
+        commit_all(&dir, "init");
+        cmd.arg("index").assert_exit_code(0);
+
+        let index_before = std::fs::read(index_file(&dir)).unwrap();
+
+        let out = cmd.args(["cite", "src/main.rs"]).stdout();
+        assert!(
+            out.trim().starts_with("src/main.rs@"),
+            "cite prints anchor@<short>: {out:?}"
+        );
+
+        // The manifest records the snapshot, and the object exists + round-trips.
+        let fields = pin_fields(&dir, "snapshot");
+        assert_eq!(fields[1], "src/main.rs", "anchor field");
+        assert_eq!(fields[3], "src/main.rs", "path-at-pin field");
+        assert_eq!(fields[4], "1-1", "span field");
+        let oid = &fields[5];
+        let obj = object_path(&dir, oid);
+        assert!(obj.exists(), "object {obj:?} should exist");
+        assert_eq!(std::fs::read(&obj).unwrap(), b"fn main() {}\n");
+        assert_eq!(
+            git_hash_object(&dir, &obj),
+            *oid,
+            "stored object must re-hash to its recorded oid"
+        );
+
+        // cite never touches the index.
+        let index_after = std::fs::read(index_file(&dir)).unwrap();
+        assert_eq!(index_before, index_after, "cite must not modify the index");
+    }
+);
+
+// An anchor whose file is not committed as-is cannot be cited (exit 2): there is
+// no durable commit for the frozen evidence to correspond to.
+rrtest!(
+    cite_refuses_uncommitted_file,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        if !git_available() {
+            eprintln!("skipping: git not available");
+            return;
+        }
+        init_repo(&dir);
+        commit_all(&dir, "init"); // commit .gitignore so HEAD exists
+        dir.file("new.txt", "uncommitted\n"); // untracked, never committed
+        cmd.arg("index").assert_exit_code(0);
+
+        let out = cmd.args(["cite", "new.txt"]).run();
+        assert_eq!(code(&out), 2, "uncommitted cite should exit 2: {out:?}");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("not committed"),
+            "stderr: {:?}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            !manifest(&dir).contains("new.txt"),
+            "a refused cite writes no pin"
+        );
+    }
+);
+
+// The commit gate is content-based (`git hash-object` vs `HEAD:<path>`), so it
+// catches an edit hidden from `git status` by `--skip-worktree`. Locks GITGATE-1.
+rrtest!(
+    cite_gate_is_content_based_under_skip_worktree,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        if !git_available() {
+            eprintln!("skipping: git not available");
+            return;
+        }
+        dir.file("f.txt", "good\n");
+        init_repo(&dir);
+        commit_all(&dir, "init");
+        cmd.arg("index").assert_exit_code(0); // stamps a clean tree
+
+        // Weaken the file, then hide it from git's index view. `git status` now
+        // reports clean (so freshness short-circuits), but the content differs.
+        dir.write("f.txt", "weakened!\n");
+        git(&dir, &["update-index", "--skip-worktree", "f.txt"]);
+
+        let out = cmd.args(["cite", "f.txt"]).run();
+        assert_eq!(
+            code(&out),
+            2,
+            "a skip-worktree edit must still be refused by the content gate: {out:?}"
+        );
+        assert!(String::from_utf8_lossy(&out.stderr).contains("not committed"));
+    }
+);
+
+// A clean-filter / Git-LFS path is refused (exit 2): LFS content is off-repo and
+// a clean filter's pre-clean bytes can re-leak secrets, so neither is safe to
+// freeze verbatim. Locks N2-LFS / N2-CLEAN-FILTER.
+rrtest!(
+    cite_refuses_lfs_or_clean_filter_path,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        if !git_available() {
+            eprintln!("skipping: git not available");
+            return;
+        }
+        dir.file(".gitattributes", "secret.txt filter=lfs\n");
+        dir.file("secret.txt", "data\n");
+        init_repo(&dir);
+        commit_all(&dir, "init");
+        cmd.arg("index").assert_exit_code(0);
+
+        let out = cmd.args(["cite", "secret.txt"]).run();
+        assert_eq!(
+            code(&out),
+            2,
+            "an LFS / clean-filter path must be refused: {out:?}"
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("filter")
+                || String::from_utf8_lossy(&out.stderr).contains("LFS"),
+            "stderr: {:?}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            !manifest(&dir).contains("secret.txt"),
+            "a refused cite writes no pin"
+        );
+    }
+);
+
+// --- Phase 3: grammar / known-anchor-wins -----------------------------------
+
+// An anchor that legitimately contains `@` (an email heading) reads literally:
+// known-anchor-wins resolves the whole token before any `@` split. Green today.
+rrtest!(
+    email_anchor_reads_literally,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file("README.md", "## support@example.com\n\nbody\n");
+        cmd.arg("index").assert_exit_code(0);
+        let out = cmd.args(["read", "support@example.com", "--locate"]).run();
+        assert_eq!(code(&out), 0, "email anchor should read literally: {out:?}");
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("README.md:1-1"),
+            "stdout: {:?}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+    }
+);
+
+// A path anchor containing `@scope` reads literally, too (the `@` is not a pin).
+rrtest!(
+    scope_path_anchor_reads_literally,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file("node_modules/@scope/p.js", "export const x = 1;\n");
+        cmd.arg("index").assert_exit_code(0);
+        let out = cmd
+            .args(["read", "node_modules/@scope/p.js", "--locate"])
+            .run();
+        assert_eq!(code(&out), 0, "@scope path should read literally: {out:?}");
+        assert!(String::from_utf8_lossy(&out.stdout).contains("node_modules/@scope/p.js:1-1"));
+    }
+);
+
+// `support@example.com@<short>` is NOT a live anchor, so it splits on the LAST
+// sigil: a snapshot of the `support@example.com` anchor at <short>.
+rrtest!(
+    email_anchor_snapshot_splits_on_last_sigil,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        if !git_available() {
+            eprintln!("skipping: git not available");
+            return;
+        }
+        dir.file("README.md", "## support@example.com\n\nbody\n");
+        init_repo(&dir);
+        commit_all(&dir, "init");
+        cmd.arg("index").assert_exit_code(0);
+
+        let pin_ref = cmd.args(["cite", "support@example.com"]).stdout();
+        let pin_ref = pin_ref.trim();
+        assert!(pin_ref.starts_with("support@example.com@"), "{pin_ref:?}");
+
+        let out = cmd.args(["read", pin_ref]).run();
+        assert_eq!(code(&out), 0, "snapshot of the email anchor: {out:?}");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("README.md@") && stdout.contains("## support@example.com"),
+            "snapshot output should be the frozen email-heading line: {stdout:?}"
+        );
+    }
+);
+
+// A pinned reference whose commit cannot be resolved is BROKEN (exit 5), not a
+// plain not-found: the token names a pin, but no such pin exists.
+rrtest!(
+    missing_or_ambiguous_commit_is_broken,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file("README.md", "# Title\n");
+        cmd.arg("index").assert_exit_code(0);
+        let out = cmd.args(["read", "README.md@zzzzzzz"]).run();
+        assert_eq!(code(&out), 5, "unresolvable pin should be BROKEN: {out:?}");
+        assert!(String::from_utf8_lossy(&out.stderr).contains("broken reference"));
+    }
+);
+
+// --- Phase 3: snapshot (cite + read @) --------------------------------------
+
+// After citing then rewriting + committing, `rr read anchor@<short>` prints the
+// OLD frozen source from `.rr/objects`, under a `path@<short>:<range>` header.
+rrtest!(
+    snapshot_read_prints_frozen_source,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        if !git_available() {
+            eprintln!("skipping: git not available");
+            return;
+        }
+        dir.file("doc.md", "# Title\n\noriginal line\n");
+        init_repo(&dir);
+        commit_all(&dir, "init");
+        cmd.arg("index").assert_exit_code(0);
+
+        let pin_ref = cmd.args(["cite", "doc.md"]).stdout().trim().to_string();
+
+        // Rewrite and commit, so the live content diverges from the snapshot.
+        dir.write("doc.md", "# Title\n\nREWRITTEN\n");
+        commit_all(&dir, "rewrite");
+
+        let out = cmd.args(["read", &pin_ref]).run();
+        assert_eq!(code(&out), 0, "snapshot read should succeed: {out:?}");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("original line"),
+            "frozen source: {stdout:?}"
+        );
+        assert!(
+            !stdout.contains("REWRITTEN"),
+            "must not show live content: {stdout:?}"
+        );
+        assert!(stdout.contains("doc.md@"), "header present: {stdout:?}");
+    }
+);
+
+// A snapshot recovers even after its commit is pruned from git (rewrite history,
+// expire reflog, gc). The recovery reads `.rr/objects`, never git. Locks GC-independence.
+rrtest!(
+    snapshot_recovers_after_commit_pruned,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        if !git_available() {
+            eprintln!("skipping: git not available");
+            return;
+        }
+        dir.file("doc.md", "frozen evidence\n");
+        init_repo(&dir);
+        commit_all(&dir, "init");
+        cmd.arg("index").assert_exit_code(0);
+
+        let pin_ref = cmd.args(["cite", "doc.md"]).stdout().trim().to_string();
+        let short = pin_ref.rsplit('@').next().unwrap().to_string();
+
+        // Orphan the cited commit and prune it from the object store.
+        dir.write("doc.md", "different now\n");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-q", "--amend", "-m", "rewritten"]);
+        git(
+            &dir,
+            &["reflog", "expire", "--expire-unreachable=now", "--all"],
+        );
+        git(&dir, &["gc", "-q", "--prune=now"]);
+
+        // The original commit is genuinely gone from git...
+        let gone = Command::new("git")
+            .args(["cat-file", "-e", &short])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(!gone.status.success(), "commit {short} should be pruned");
+
+        // ...yet the snapshot still recovers the frozen bytes.
+        let out = cmd.args(["read", &pin_ref]).run();
+        assert_eq!(
+            code(&out),
+            0,
+            "pruned-commit snapshot must still read: {out:?}"
+        );
+        assert!(String::from_utf8_lossy(&out.stdout).contains("frozen evidence"));
+    }
+);
+
+// A snapshot survives a rename of its file: recovery reads the stored bytes, so
+// `git mv` of the cited path does not break it. Locks GIT-1.
+rrtest!(
+    snapshot_survives_rename,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        if !git_available() {
+            eprintln!("skipping: git not available");
+            return;
+        }
+        dir.file("old.md", "frozen\n");
+        init_repo(&dir);
+        commit_all(&dir, "init");
+        cmd.arg("index").assert_exit_code(0);
+
+        let pin_ref = cmd.args(["cite", "old.md"]).stdout().trim().to_string();
+
+        git(&dir, &["mv", "old.md", "new.md"]);
+        commit_all(&dir, "rename");
+
+        let out = cmd.args(["read", &pin_ref]).run();
+        assert_eq!(
+            code(&out),
+            0,
+            "renamed-file snapshot must still read: {out:?}"
+        );
+        assert!(String::from_utf8_lossy(&out.stdout).contains("frozen"));
+    }
+);
+
+// CRLF is recovered faithfully: a `-text` file stored with CRLF comes back as
+// CRLF (the working-tree form), not normalized to LF. Locks N2-EOL.
+rrtest!(
+    snapshot_recovers_crlf_faithfully,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        if !git_available() {
+            eprintln!("skipping: git not available");
+            return;
+        }
+        dir.file(".gitattributes", "crlf.txt -text\n");
+        dir.write("crlf.txt", "alpha\r\nbeta\r\ngamma\r\n");
+        init_repo(&dir);
+        commit_all(&dir, "init");
+        cmd.arg("index").assert_exit_code(0);
+
+        let pin_ref = cmd.args(["cite", "crlf.txt"]).stdout().trim().to_string();
+        let out = cmd.args(["read", &pin_ref]).run();
+        assert_eq!(code(&out), 0, "crlf snapshot read: {out:?}");
+        // The recovered body preserves CRLF terminators verbatim.
+        assert!(
+            out.stdout.windows(2).any(|w| w == b"\r\n"),
+            "CRLF must be preserved, got: {:?}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        assert!(String::from_utf8_lossy(&out.stdout).contains("alpha"));
+    }
+);
+
+// --- Phase 3: tracking (track + read ~) -------------------------------------
+
+// A tracked anchor whose file is unchanged reads OK (exit 0).
+rrtest!(
+    tracking_clean_is_ok,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        if !git_available() {
+            eprintln!("skipping: git not available");
+            return;
+        }
+        dir.file("t.txt", "baseline\n");
+        init_repo(&dir);
+        commit_all(&dir, "init");
+        cmd.arg("index").assert_exit_code(0);
+
+        let pin_ref = cmd.args(["track", "t.txt"]).stdout().trim().to_string();
+        assert!(pin_ref.starts_with("t.txt~"), "{pin_ref:?}");
+        let out = cmd.args(["read", &pin_ref]).run();
+        assert_eq!(code(&out), 0, "clean tracked ref is OK: {out:?}");
+    }
+);
+
+// A tracked anchor whose content changed reads DRIFTED (exit 4).
+rrtest!(
+    tracking_drift_exits_4,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        if !git_available() {
+            eprintln!("skipping: git not available");
+            return;
+        }
+        dir.file("t.txt", "baseline\n");
+        init_repo(&dir);
+        commit_all(&dir, "init");
+        cmd.arg("index").assert_exit_code(0);
+        let pin_ref = cmd.args(["track", "t.txt"]).stdout().trim().to_string();
+
+        dir.write("t.txt", "changed substantially\n");
+        let out = cmd.args(["read", &pin_ref]).run();
+        assert_eq!(code(&out), 4, "drifted tracked ref exits 4: {out:?}");
+        assert!(String::from_utf8_lossy(&out.stderr).contains("DRIFTED"));
+    }
+);
+
+// Drift is content-based, so a same-length, same-second edit is still caught
+// (exit 4) where a size/mtime or `git diff` check would miss it. Locks GIT-2/CI-3.
+rrtest!(
+    tracking_detects_same_size_same_second_edit,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        if !git_available() {
+            eprintln!("skipping: git not available");
+            return;
+        }
+        dir.file("t.txt", "baseline\n");
+        init_repo(&dir);
+        commit_all(&dir, "init");
+        cmd.arg("index").assert_exit_code(0);
+        let pin_ref = cmd.args(["track", "t.txt"]).stdout().trim().to_string();
+
+        // Same byte length (9), no sleep (same second): only a content hash sees it.
+        dir.write("t.txt", "baseLine\n");
+        let out = cmd.args(["read", &pin_ref]).run();
+        assert_eq!(
+            code(&out),
+            4,
+            "same-size same-second edit must drift: {out:?}"
+        );
+    }
+);
+
+// Drift is read from the working tree, so an edit hidden by `--skip-worktree` is
+// still caught (exit 4). Locks GITGATE-1 on the tracking side.
+rrtest!(
+    tracking_detects_skip_worktree_edit,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        if !git_available() {
+            eprintln!("skipping: git not available");
+            return;
+        }
+        dir.file("t.txt", "baseline\n");
+        init_repo(&dir);
+        commit_all(&dir, "init");
+        cmd.arg("index").assert_exit_code(0);
+        let pin_ref = cmd.args(["track", "t.txt"]).stdout().trim().to_string();
+
+        dir.write("t.txt", "secretly changed\n");
+        git(&dir, &["update-index", "--skip-worktree", "t.txt"]);
+        let out = cmd.args(["read", &pin_ref]).run();
+        assert_eq!(
+            code(&out),
+            4,
+            "skip-worktree edit must still drift: {out:?}"
+        );
+    }
+);
+
+// A renamed-but-identical file is moved, not drifted: tracking re-finds it by
+// content. Locks GIT-1 on the tracking side.
+rrtest!(
+    tracking_rename_unchanged_is_moved_not_drift,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        if !git_available() {
+            eprintln!("skipping: git not available");
+            return;
+        }
+        dir.file("old.txt", "stable content\n");
+        init_repo(&dir);
+        commit_all(&dir, "init");
+        cmd.arg("index").assert_exit_code(0);
+        let pin_ref = cmd.args(["track", "old.txt"]).stdout().trim().to_string();
+
+        git(&dir, &["mv", "old.txt", "new.txt"]);
+        commit_all(&dir, "rename");
+        let out = cmd.args(["read", &pin_ref]).run();
+        assert_eq!(
+            code(&out),
+            0,
+            "rename of identical content is OK (moved): {out:?}"
+        );
+        assert!(String::from_utf8_lossy(&out.stdout).contains("moved"));
+    }
+);
+
+// --- Phase 4: verify + durability -------------------------------------------
+
+// A committed manifest line silently removed (no tomb) is tampering: `rr verify`
+// cross-checks the working `.rr/refs` against its committed form and fails
+// closed. Locks sec-LEDGER-1.
+rrtest!(
+    verify_fails_closed_on_manifest_deletion,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        if !git_available() {
+            eprintln!("skipping: git not available");
+            return;
+        }
+        dir.file("src/main.rs", "fn main() {}\n");
+        init_repo(&dir);
+        commit_all(&dir, "init");
+        cmd.arg("index").assert_exit_code(0);
+        cmd.args(["cite", "src/main.rs"]).assert_exit_code(0);
+
+        // Commit the sidecar, then hand-delete the snapshot line from the working
+        // copy without adding a tomb.
+        commit_all(&dir, "add sidecar");
+        delete_manifest_lines(&dir, "snapshot\t");
+
+        let out = cmd.arg("verify").run();
+        assert!(
+            !out.status.success(),
+            "a silent manifest deletion must fail verify: {out:?}"
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("tampered"),
+            "stderr: {:?}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+);
+
+// `rr verify` is manifest-scoped, not a prose scanner: pin-like text in the
+// README is never treated as a reference, so a repo whose README shows example
+// refs still verifies clean (the real pin is OK).
+rrtest!(
+    verify_over_own_readme_exits_zero,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        if !git_available() {
+            eprintln!("skipping: git not available");
+            return;
+        }
+        dir.file("src/main.rs", "fn main() {}\n");
+        // Prose that *looks* like a broken pin but is just documentation.
+        dir.file(
+            "README.md",
+            "Example: read `src/main.rs@deadbee` (this is prose, not a real pin).\n",
+        );
+        init_repo(&dir);
+        commit_all(&dir, "init");
+        cmd.arg("index").assert_exit_code(0);
+        cmd.args(["cite", "src/main.rs"]).assert_exit_code(0);
+
+        // The real pin is OK and the README example is ignored.
+        cmd.arg("verify").assert_exit_code(0);
+    }
+);
+
+// `rr verify` over K refs issues O(refs) git calls (one content hash per tracked
+// ref plus the tamper-check), not a fan-out of forks per ref. Counted with
+// GIT_TRACE2. Locks PERF/NOVEL4.
+rrtest!(
+    verify_git_calls_are_bounded,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        if !git_available() {
+            eprintln!("skipping: git not available");
+            return;
+        }
+        const K: usize = 4;
+        for i in 0..K {
+            dir.file(&format!("f{i}.txt"), &format!("content {i}\n"));
+        }
+        init_repo(&dir);
+        commit_all(&dir, "init");
+        cmd.arg("index").assert_exit_code(0);
+        for i in 0..K {
+            cmd.args(["track", &format!("f{i}.txt")])
+                .assert_exit_code(0);
+        }
+
+        let (out, git_calls) = run_rr_counting_git(&dir, &["verify"]);
+        assert_eq!(code(&out), 0, "all tracked refs clean: {out:?}");
+        // One hash per tracked ref, plus a single tamper-check git call; certainly
+        // not several forks per ref.
+        assert!(
+            (K..=K + 2).contains(&git_calls),
+            "expected ~{K} git calls (one per tracked ref), got {git_calls}"
+        );
+    }
+);
+
+// --- Phase 5: exit codes + truthfulness -------------------------------------
+
+// The four non-trivial outcomes are each reachable and use distinct codes:
+// 1 not-found, 3 stale, 4 drifted, 5 broken.
+rrtest!(
+    exit_codes_are_distinct,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        if !git_available() {
+            eprintln!("skipping: git not available");
+            return;
+        }
+        dir.file("a.txt", "baseline\n");
+        init_repo(&dir);
+        commit_all(&dir, "init");
+        cmd.arg("index").assert_exit_code(0);
+
+        // 1: a plain unknown anchor (fresh index).
+        let c1 = code(&cmd.args(["read", "nope-no-such-anchor"]).run());
+        // 5: a pinned reference whose commit cannot be resolved (fresh index).
+        let c5 = code(&cmd.args(["read", "a.txt@zzzzzzz"]).run());
+
+        // 4: track, then edit the file -> drift (works even as the index goes stale).
+        let pin = cmd.args(["track", "a.txt"]).stdout().trim().to_string();
+
+        // Cross the second boundary so the edit also makes a plain read stale.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        dir.write("a.txt", "changed\n");
+        let c4 = code(&cmd.args(["read", &pin]).run());
+        // 3: a plain live read of the now-stale index.
+        let c3 = code(&cmd.args(["read", "a.txt"]).run());
+
+        let mut codes = [c1, c3, c4, c5];
+        codes.sort_unstable();
+        assert_eq!(
+            codes,
+            [1, 3, 4, 5],
+            "expected distinct codes 1/3/4/5, got 1={c1} 3={c3} 4={c4} 5={c5}"
+        );
+    }
+);
+
+// A live read on a clean tree DOES run git (the freshness short-circuit), so the
+// docs must not claim "no git on the read path". Locks GITREAD-1.
+rrtest!(
+    live_read_clean_tree_invokes_git,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        if !git_available() {
+            eprintln!("skipping: git not available");
+            return;
+        }
+        dir.file("a.txt", "hello\n");
+        init_repo(&dir);
+        commit_all(&dir, "init");
+        cmd.arg("index").assert_exit_code(0);
+
+        // A bare clean-tree read invokes git at least once (status / rev-parse).
+        let (out, git_calls) = run_rr_counting_git(&dir, &["read", "a.txt", "--locate"]);
+        assert_eq!(code(&out), 0, "clean-tree read should succeed: {out:?}");
+        assert!(
+            git_calls >= 1,
+            "a clean-tree read must invoke git for the freshness short-circuit, got {git_calls}"
+        );
+
+        // And the documentation must not contain the false "no git" claim.
+        let readme = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md"),
+        )
+        .unwrap();
+        assert!(
+            !readme.contains("no `git` on the read path")
+                && !readme.contains("no git on the read path"),
+            "README must not claim there is no git on the read path"
+        );
+    }
+);
+
 rrtest!(version_exits_zero, |_dir: Dir, mut cmd: TestCommand| {
     let v = cmd.arg("--version").run();
     assert_eq!(code(&v), 0);
@@ -378,4 +1143,97 @@ fn git(dir: &Dir, args: &[&str]) {
         "git {args:?} failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+}
+
+/// Initialize a git repo in the test dir with a deterministic identity, and
+/// gitignore the index dir so `rr index` never dirties the tree it stamps.
+fn init_repo(dir: &Dir) {
+    dir.write(".gitignore", ".ref-cache/\n");
+    git(dir, &["init", "-q"]);
+    git(dir, &["config", "user.email", "t@example.com"]);
+    git(dir, &["config", "user.name", "t"]);
+}
+
+/// `git add . && git commit -m <msg>` in the test dir.
+fn commit_all(dir: &Dir, msg: &str) {
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-q", "-m", msg]);
+}
+
+/// The `.rr/refs` manifest text, or empty when the sidecar does not exist.
+fn manifest(dir: &Dir) -> String {
+    std::fs::read_to_string(dir.path().join(".rr").join("refs")).unwrap_or_default()
+}
+
+/// The first manifest line of the given record kind (`"snapshot"` / `"track"`),
+/// split into its TAB fields.
+fn pin_fields(dir: &Dir, kind: &str) -> Vec<String> {
+    let refs = manifest(dir);
+    let prefix = format!("{kind}\t");
+    let line = refs
+        .lines()
+        .find(|l| l.starts_with(&prefix))
+        .unwrap_or_else(|| panic!("no {kind} line in manifest:\n{refs}"));
+    line.split('\t').map(str::to_string).collect()
+}
+
+/// The sharded sidecar object path for an oid.
+fn object_path(dir: &Dir, oid: &str) -> std::path::PathBuf {
+    dir.path()
+        .join(".rr")
+        .join("objects")
+        .join(&oid[..2])
+        .join(&oid[2..])
+}
+
+/// `git hash-object <path>` run in the test dir (the self-verifying re-hash).
+fn git_hash_object(dir: &Dir, path: &std::path::Path) -> String {
+    let out = Command::new("git")
+        .arg("hash-object")
+        .arg(path)
+        .current_dir(dir.path())
+        .output()
+        .expect("failed to spawn git");
+    assert!(out.status.success(), "git hash-object failed");
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// Run `rr <args>` in `dir` while counting the top-level git processes it spawns,
+/// via `GIT_TRACE2_EVENT` (each git process emits exactly one `version` event).
+/// The test repos disable git's own fan-out (no hooks, and rr's git calls never
+/// trigger gc/maintenance), so the `version` count equals rr's direct git calls.
+/// The trace lands outside the repo so it is never walked.
+fn run_rr_counting_git(dir: &Dir, args: &[&str]) -> (Output, usize) {
+    let tag = dir
+        .path()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let trace = std::env::temp_dir().join(format!("rr-trace-{tag}.json"));
+    std::fs::remove_file(&trace).ok();
+    let out = Command::new(env!("CARGO_BIN_EXE_rr"))
+        .args(args)
+        .current_dir(dir.path())
+        .env("GIT_TRACE2_EVENT", &trace)
+        .output()
+        .expect("failed to spawn rr");
+    let count = std::fs::read_to_string(&trace)
+        .map(|t| t.matches(r#""event":"version""#).count())
+        .unwrap_or(0);
+    std::fs::remove_file(&trace).ok();
+    (out, count)
+}
+
+/// Rewrite `.rr/refs`, dropping every line that begins with `prefix` (used to
+/// simulate a hand-deletion of a manifest record).
+fn delete_manifest_lines(dir: &Dir, prefix: &str) {
+    let path = dir.path().join(".rr").join("refs");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let kept: String = text
+        .lines()
+        .filter(|l| !l.starts_with(prefix))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    std::fs::write(&path, kept).unwrap();
 }
