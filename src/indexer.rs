@@ -9,58 +9,95 @@ and the [`crate::languages`] registry; the walker itself is type-blind.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::mpsc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ignore::WalkBuilder;
+use ignore::{WalkBuilder, WalkState};
 
 use crate::extractors::Extractor as _;
 use crate::extractors::PathExtractor;
 use crate::languages;
-use crate::refidx::IndexData;
+use crate::refidx::{ForwardEntry, IndexData};
+
+/// What one worker produces for one file: its anchors and its repo-relative path.
+type FileAnchors = (Vec<ForwardEntry>, String);
 
 /// Walk `root` and build the index contents. `index_path` is excluded so the
 /// index never indexes (or freshness-checks against) itself.
+///
+/// The walk runs in parallel: reading and tree-sitter-parsing each file is the
+/// bulk of `rr index`, and the files are independent, so it fans them across
+/// cores with `ignore`'s `build_parallel` and collects per-file results over an
+/// `mpsc` channel. Order is not preserved (workers finish in scheduling order),
+/// but it need not be: [`crate::refidx::serialize`] sorts to a total order, so
+/// the on-disk image is identical regardless of the order records arrive in.
 pub fn build(root: &Path, index_path: &Path) -> std::io::Result<IndexData> {
     let index_rel = index_path
         .strip_prefix(root)
         .unwrap_or(index_path)
         .to_path_buf();
 
-    let mut forward = Vec::new();
-    let mut paths = Vec::new();
+    let (tx, rx) = mpsc::channel::<FileAnchors>();
 
     // Defaults mirror rr.toml: respect ignore files, skip hidden (which also
-    // skips `.git/` and a dot-prefixed index dir like `.ref-cache/`).
+    // skips `.git/` and a dot-prefixed index dir like `.ref-cache/`). Note:
+    // `ignore`'s own `sort_by_file_path` is serial-only and would defeat the
+    // point; ordering is recovered by serialize's sort, not the walk.
     let walker = WalkBuilder::new(root)
         .hidden(true)
         .git_ignore(true)
         .git_exclude(true)
         .parents(true)
-        .build();
+        .build_parallel();
 
-    for result in walker {
-        let dent = match result {
-            Ok(d) => d,
-            Err(_) => continue, // skip unreadable entries rather than aborting the whole walk
-        };
-        if !dent.file_type().is_some_and(|t| t.is_file()) {
-            continue;
-        }
-        let rel = dent.path().strip_prefix(root).unwrap_or(dent.path());
-        if rel == index_rel {
-            continue;
-        }
-        let rel_path = to_unix(rel);
-        forward.extend(PathExtractor.extract(&rel_path, dent.path()));
-        let ext = rel.extension().and_then(|e| e.to_str());
-        if let Some(language) = languages::for_extension(ext) {
-            forward.extend(language.extract(&rel_path, dent.path()));
-        }
+    let index_rel: &Path = &index_rel;
+    walker.run(|| {
+        let tx = tx.clone();
+        Box::new(move |result| {
+            let dent = match result {
+                Ok(d) => d,
+                Err(_) => return WalkState::Continue, // skip unreadable entries, don't abort
+            };
+            if !dent.file_type().is_some_and(|t| t.is_file()) {
+                return WalkState::Continue;
+            }
+            let rel = dent.path().strip_prefix(root).unwrap_or(dent.path());
+            if rel == index_rel {
+                return WalkState::Continue;
+            }
+            let rel_path = to_unix(rel);
+            let mut anchors = PathExtractor.extract(&rel_path, dent.path());
+            let ext = rel.extension().and_then(|e| e.to_str());
+            if let Some(language) = languages::for_extension(ext) {
+                anchors.extend(language.extract(&rel_path, dent.path()));
+            }
+            // The receiver outlives the walk, so this only errs if it panicked;
+            // dropping the file's work is the right thing to do in that case.
+            let _ = tx.send((anchors, rel_path));
+            WalkState::Continue
+        })
+    });
+    // Close the channel so the drain below terminates: every worker's clone is
+    // dropped when `run` returns, leaving only this original sender.
+    drop(tx);
+
+    let mut forward = Vec::new();
+    let mut paths = Vec::new();
+    for (anchors, rel_path) in rx {
+        forward.extend(anchors);
         paths.push(rel_path);
     }
 
-    // Sort forward for the reader's binary search; sort paths for deterministic output.
-    forward.sort_by(|a, b| a.anchor.cmp(&b.anchor));
+    // Sort into the canonical total order here, so the returned `IndexData` is
+    // deterministic regardless of the scheduling-dependent order the parallel
+    // walk produced. `serialize` re-asserts this order (the on-disk image must be
+    // canonical even for a hand-built `IndexData`), but on already-sorted input
+    // its adaptive sort is ~O(n), so the work is done once, not twice.
+    forward.sort_by(|a, b| {
+        a.anchor
+            .cmp(&b.anchor)
+            .then_with(|| a.location.cmp(&b.location))
+    });
     paths.sort();
 
     let mtime = SystemTime::now()
