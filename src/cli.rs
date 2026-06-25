@@ -136,6 +136,9 @@ pub struct LowArgs {
     pub no_freshness: bool,
     /// `rr at --all`: list every covering anchor, not just the tightest.
     pub all: bool,
+    /// `rr at --cite`: emit the document citation marker `[[rr:anchor]]` instead
+    /// of the bare anchor (text output only; JSON always carries `citation`).
+    pub cite: bool,
     /// Positional arguments (e.g. the anchor for `read`).
     pub positional: Vec<OsString>,
 }
@@ -151,6 +154,7 @@ impl LowArgs {
             quiet: false,
             no_freshness: false,
             all: false,
+            cite: false,
             positional: Vec::new(),
         }
     }
@@ -376,6 +380,26 @@ impl Flag for AllFlag {
     }
 }
 
+struct CiteFlag;
+impl Flag for CiteFlag {
+    fn is_switch(&self) -> bool {
+        true
+    }
+    fn name_long(&self) -> &'static str {
+        "cite"
+    }
+    fn doc_category(&self) -> &'static str {
+        "output"
+    }
+    fn doc_short(&self) -> &'static str {
+        "rr at: emit the citation marker [[rr:anchor]] instead of the bare anchor."
+    }
+    fn update(&self, _value: FlagValue, args: &mut LowArgs) -> Result<(), String> {
+        args.cite = true;
+        Ok(())
+    }
+}
+
 /// The global flag registry: every optional flag, as a trait object.
 static FLAGS: &[&dyn Flag] = &[
     &IndexFlag,
@@ -386,6 +410,7 @@ static FLAGS: &[&dyn Flag] = &[
     &QuietFlag,
     &NoFreshnessFlag,
     &AllFlag,
+    &CiteFlag,
 ];
 
 fn lookup_long(name: &str) -> Option<&'static dyn Flag> {

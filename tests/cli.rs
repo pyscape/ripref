@@ -192,6 +192,229 @@ rrtest!(at_json_envelope, |mut dir: Dir, mut cmd: TestCommand| {
     assert!(out.contains(r#""start_line":1"#), "{out}");
 });
 
+// --- AD-1 citation markers: emit (`--cite`) and accept (readers strip) --------
+
+// `rr at --cite` emits the document citation marker instead of the bare address;
+// the bare form stays the default so `rr read "$(rr at f:l)"` keeps working.
+rrtest!(
+    at_cite_emits_marker,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file("src/main.rs", "fn main() {\n    let x = 1;\n}\n");
+        cmd.arg("index").assert_exit_code(0);
+
+        let bare = cmd.args(["at", "src/main.rs:1"]).stdout();
+        assert_eq!(bare.trim(), "main", "default stays bare: {bare:?}");
+
+        let cited = cmd.args(["at", "src/main.rs:1", "--cite"]).stdout();
+        assert_eq!(cited.trim(), "[[rr:main]]", "{cited:?}");
+
+        let all = cmd
+            .args(["at", "src/main.rs:1", "--all", "--cite"])
+            .stdout();
+        assert_eq!(
+            all.lines().collect::<Vec<_>>(),
+            ["[[rr:src/main.rs]]", "[[rr:main]]"],
+            "{all:?}"
+        );
+    }
+);
+
+// The JSON envelope always carries the pre-composed `citation` marker beside the
+// bare `anchor`, at envelope version 1 (an additive field, not a breaking bump).
+rrtest!(
+    at_json_carries_citation_field,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file("src/main.rs", "fn main() {\n    let x = 1;\n}\n");
+        cmd.arg("index").assert_exit_code(0);
+        let out = cmd
+            .args(["at", "src/main.rs:1", "--format", "json"])
+            .stdout();
+        assert!(out.contains(r#""version":1"#), "envelope stays v1: {out}");
+        assert!(out.contains(r#""anchor":"main""#), "{out}");
+        assert!(out.contains(r#""citation":"[[rr:main]]""#), "{out}");
+    }
+);
+
+// A reader strips a pasted `[[rr:...]]` marker before resolving, so a copied
+// citation works as a CLI argument (single-quoted in a shell because `[` globs).
+rrtest!(
+    read_strips_pasted_marker,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file("src/main.rs", "fn main() {\n    let x = 1;\n}\n");
+        cmd.arg("index").assert_exit_code(0);
+        let loc = cmd.args(["read", "[[rr:main]]", "--locate"]).stdout();
+        assert_eq!(loc.trim(), "src/main.rs:1-1", "{loc:?}");
+    }
+);
+
+// A `[[rr:` token that is not a well-formed citation (here, a non-hex pin) is a
+// usage error (exit 2), never a silent fall-through to bare parsing. Rejected up
+// front, so no index is consulted.
+rrtest!(
+    read_malformed_marker_exits_two,
+    |_dir: Dir, mut cmd: TestCommand| {
+        let out = cmd.args(["read", "[[rr:a]]@zzz"]).run();
+        assert_eq!(code(&out), 2, "malformed marker is a usage error: {out:?}");
+    }
+);
+
+// A marker pin that resolves to no snapshot is BROKEN (exit 5). With a fresh
+// index this matches the bare path too; the offline-dispatch distinction is
+// proven separately under a stale index by the test below.
+rrtest!(
+    read_broken_marker_pin_exits_five,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file("src/main.rs", "fn main() {\n    let x = 1;\n}\n");
+        cmd.arg("index").assert_exit_code(0);
+        let out = cmd.args(["read", "[[rr:main]]@deadbeef"]).run();
+        assert_eq!(code(&out), 5, "missing marker pin is BROKEN: {out:?}");
+    }
+);
+
+// THE offline-dispatch regression guard. Under a STALE index the two forms must
+// diverge: a marker pin resolves offline (no index consulted) so a missing pin is
+// honestly BROKEN (5), while the bare `anchor@commit` form reports STALE (3)
+// because a stale index cannot confirm whether the whole token is a live anchor.
+// The v1 bug (re-dispatching markers through run_read_pinned) would make the
+// marker also report STALE here — this pair is what catches it.
+rrtest!(
+    marker_pin_is_offline_even_when_index_is_stale,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file("a.txt", "v1\n");
+        cmd.arg("index").assert_exit_code(0);
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        dir.write("a.txt", "v2 changed\n"); // index is now provably stale
+
+        let marker = cmd.args(["read", "[[rr:a.txt]]@deadbeef"]).run();
+        assert_eq!(
+            code(&marker),
+            5,
+            "marker pin resolves offline -> BROKEN even when stale: {marker:?}"
+        );
+
+        let bare = cmd.args(["read", "a.txt@deadbeef"]).run();
+        assert_eq!(
+            code(&bare),
+            3,
+            "bare pin under a stale index -> STALE: {bare:?}"
+        );
+    }
+);
+
+// The BARE `anchor@<short>` form still resolves a snapshot through the
+// known-anchor-wins-then-pin path (run_read_pinned), now that producers emit
+// markers. Guards the unchanged bare-token path (v2 plan Constraints).
+rrtest!(
+    bare_pinned_read_still_resolves_snapshot,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        if !git_available() {
+            eprintln!("skipping: git not available");
+            return;
+        }
+        dir.file("doc.md", "# Title\n\nbody\n");
+        init_repo(&dir);
+        commit_all(&dir, "init");
+        cmd.arg("index").assert_exit_code(0);
+
+        let marker = cmd.args(["cite", "doc.md"]).stdout().trim().to_string();
+        let short = marker.rsplit('@').next().unwrap();
+        let bare = format!("doc.md@{short}");
+
+        let out = cmd.args(["read", &bare]).run();
+        assert_eq!(code(&out), 0, "bare anchor@short snapshot read: {out:?}");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("doc.md@") && stdout.contains("# Title"),
+            "frozen snapshot via the bare pinned form: {stdout:?}"
+        );
+    }
+);
+
+// `require_pin` decodes a pasted pinned marker for verify / uncite / untrack: a
+// real `[[rr:anchor]]@<short>` from `rr cite` round-trips through verify and
+// uncite, a cross-kind marker is rejected (exit 2), and a malformed marker is a
+// usage error (exit 2).
+rrtest!(
+    pinned_marker_round_trips_through_verify_and_tomb,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        if !git_available() {
+            eprintln!("skipping: git not available");
+            return;
+        }
+        dir.file("src/main.rs", "fn main() {}\n");
+        init_repo(&dir);
+        commit_all(&dir, "init");
+        cmd.arg("index").assert_exit_code(0);
+
+        let marker = cmd
+            .args(["cite", "src/main.rs"])
+            .stdout()
+            .trim()
+            .to_string();
+        assert!(marker.starts_with("[[rr:src/main.rs]]@"), "{marker:?}");
+
+        // verify accepts the pasted marker.
+        let v = cmd.args(["verify", &marker]).run();
+        assert_eq!(code(&v), 0, "verify of a pasted marker: {v:?}");
+
+        // Cross-kind: untrack of a snapshot (`@`) marker is a usage error.
+        let xk = cmd.args(["untrack", &marker]).run();
+        assert_eq!(code(&xk), 2, "untrack of an @ marker is cross-kind: {xk:?}");
+
+        // A malformed marker is a usage error, not a silent miss.
+        let bad = cmd.args(["uncite", "[[rr:src/main.rs]]@zzz"]).run();
+        assert_eq!(code(&bad), 2, "malformed marker to uncite: {bad:?}");
+
+        // uncite retires the snapshot via the pasted marker.
+        let u = cmd.args(["uncite", &marker]).run();
+        assert_eq!(code(&u), 0, "uncite of a pasted marker: {u:?}");
+    }
+);
+
+// `rr cite` accepts a pasted bare `[[rr:anchor]]` (stripping it to the anchor) and
+// emits the same pinned marker as the bare form; a pinned or malformed marker is
+// a usage error.
+rrtest!(
+    cite_accepts_bare_marker_rejects_pinned,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        if !git_available() {
+            eprintln!("skipping: git not available");
+            return;
+        }
+        dir.file("src/main.rs", "fn main() {}\n");
+        init_repo(&dir);
+        commit_all(&dir, "init");
+        cmd.arg("index").assert_exit_code(0);
+
+        let from_bare = cmd
+            .args(["cite", "src/main.rs"])
+            .stdout()
+            .trim()
+            .to_string();
+        let from_marker = cmd
+            .args(["cite", "[[rr:src/main.rs]]"])
+            .stdout()
+            .trim()
+            .to_string();
+        assert_eq!(
+            from_bare, from_marker,
+            "bare and [[rr:...]] cite the same anchor"
+        );
+
+        // A pinned marker is nonsensical for cite -> usage error.
+        let pinned = cmd.args(["cite", "[[rr:src/main.rs]]@a1b2c3d"]).run();
+        assert_eq!(code(&pinned), 2, "cite of a pinned citation: {pinned:?}");
+        assert!(
+            String::from_utf8_lossy(&pinned.stderr).contains("pinned citation"),
+            "{pinned:?}"
+        );
+
+        // A malformed marker is a usage error.
+        let bad = cmd.args(["cite", "[[rr:a]]@zzz"]).run();
+        assert_eq!(code(&bad), 2, "malformed marker to cite: {bad:?}");
+    }
+);
+
 rrtest!(
     at_json_not_found_still_emits_envelope,
     |mut dir: Dir, mut cmd: TestCommand| {
@@ -418,8 +641,8 @@ rrtest!(
 
         let out = cmd.args(["cite", "src/main.rs"]).stdout();
         assert!(
-            out.trim().starts_with("src/main.rs@"),
-            "cite prints anchor@<short>: {out:?}"
+            out.trim().starts_with("[[rr:src/main.rs]]@"),
+            "cite prints the citation marker [[rr:anchor]]@<short>: {out:?}"
         );
 
         // The manifest records the snapshot, and the object exists + round-trips.
@@ -568,10 +791,13 @@ rrtest!(
     }
 );
 
-// `support@example.com@<short>` is NOT a live anchor, so it splits on the LAST
-// sigil: a snapshot of the `support@example.com` anchor at <short>.
+// `cite` emits a pinned citation marker `[[rr:support@example.com]]@<short>`.
+// Reading it back resolves the *snapshot* offline: the marker delimits the
+// anchor and the pin sits outside `]]`, so known-anchor-wins never fires even
+// though `support@example.com` is itself a live anchor. This is AD-1's payoff,
+// and the regression guard against routing a marker pin through the bare path.
 rrtest!(
-    email_anchor_snapshot_splits_on_last_sigil,
+    email_anchor_snapshot_resolves_offline_from_marker,
     |mut dir: Dir, mut cmd: TestCommand| {
         if !git_available() {
             eprintln!("skipping: git not available");
@@ -584,7 +810,10 @@ rrtest!(
 
         let pin_ref = cmd.args(["cite", "support@example.com"]).stdout();
         let pin_ref = pin_ref.trim();
-        assert!(pin_ref.starts_with("support@example.com@"), "{pin_ref:?}");
+        assert!(
+            pin_ref.starts_with("[[rr:support@example.com]]@"),
+            "cite emits the pinned marker: {pin_ref:?}"
+        );
 
         let out = cmd.args(["read", pin_ref]).run();
         assert_eq!(code(&out), 0, "snapshot of the email anchor: {out:?}");
@@ -765,7 +994,7 @@ rrtest!(
         cmd.arg("index").assert_exit_code(0);
 
         let pin_ref = cmd.args(["track", "t.txt"]).stdout().trim().to_string();
-        assert!(pin_ref.starts_with("t.txt~"), "{pin_ref:?}");
+        assert!(pin_ref.starts_with("[[rr:t.txt]]~"), "{pin_ref:?}");
         let out = cmd.args(["read", &pin_ref]).run();
         assert_eq!(code(&out), 0, "clean tracked ref is OK: {out:?}");
     }
