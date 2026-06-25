@@ -57,9 +57,10 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
-/// A temp file removed on drop unless [`TempFile::path`] was renamed away first.
-/// Only the path is retained; we reopen for writing so the handle's lifetime is
-/// scoped to the write.
+/// A created temp file, held only by its `path`. There is no `Drop` guard, so
+/// cleanup on the error path is explicit in [`atomic_write`] and a successful
+/// rename consumes it. We reopen for writing so the handle's lifetime is scoped
+/// to the write.
 struct TempFile {
     path: PathBuf,
 }
