@@ -44,17 +44,39 @@ pub struct IndexData {
     pub mtime: u64,
     /// Git tree SHA, or empty when the tree is dirty / not a git repo.
     pub tree: String,
-    /// Forward map, MUST be sorted by `anchor` so [`Reader::forward_lookup`] can
-    /// binary-search it.
+    /// Forward map. [`serialize`] sorts it (total order: anchor, then location)
+    /// before writing, so [`Reader::forward_lookup`] can binary-search the
+    /// on-disk image; callers need not pre-sort.
     pub forward: Vec<ForwardEntry>,
-    /// Every in-scope path, MUST be sorted; backs the dangling/freshness checks.
+    /// Every in-scope path; backs the dangling/freshness checks. [`serialize`]
+    /// sorts it before writing, like `forward`.
     pub paths: Vec<String>,
 }
 
 /// Serialize an [`IndexData`] into the `refidx v1` byte layout.
+///
+/// The order of records on disk is canonicalized here, not trusted from the
+/// caller: `forward` is sorted by a **total** order (anchor, then the full
+/// `location`) and `paths` lexicographically. This makes the image a pure
+/// function of the logical contents, so two builds of the same tree are
+/// byte-identical even though the parallel walk hands records back in a
+/// scheduling-dependent order, and colliding anchors (same anchor, different
+/// location) serialize identically across input permutations — an anchor-only
+/// sort would leave their relative order input-defined. The total order is a
+/// refinement of the anchor order [`Reader::forward_lookup`] binary-searches, so
+/// the search invariant is preserved.
 pub fn serialize(data: &IndexData) -> Vec<u8> {
+    let mut forward: Vec<&ForwardEntry> = data.forward.iter().collect();
+    forward.sort_by(|a, b| {
+        a.anchor
+            .cmp(&b.anchor)
+            .then_with(|| a.location.cmp(&b.location))
+    });
+    let mut paths: Vec<&String> = data.paths.iter().collect();
+    paths.sort();
+
     let mut forward_body = String::new();
-    for e in &data.forward {
+    for e in forward {
         forward_body.push_str("fwd:");
         forward_body.push_str(&e.anchor);
         forward_body.push('\t');
@@ -63,7 +85,7 @@ pub fn serialize(data: &IndexData) -> Vec<u8> {
     }
     let reverse_body = String::new(); // no reverse entries yet; section stays present but empty
     let mut paths_body = String::new();
-    for p in &data.paths {
+    for p in paths {
         paths_body.push_str(p);
         paths_body.push('\n');
     }
@@ -161,6 +183,22 @@ impl<'a> Reader<'a> {
             sections.insert(name, (off, len));
         }
 
+        // Bounds-check every section against the actual image length, so a torn
+        // or truncated index is rejected here as a corrupt index rather than
+        // panicking later when `section` slices past the end (the offsets are
+        // taken from the header, but the bytes behind them may not exist).
+        for (name, &(off, len)) in &sections {
+            let end = off
+                .checked_add(len)
+                .ok_or_else(|| format!("section {name:?} offset+length overflows"))?;
+            if end > bytes.len() {
+                return Err(format!(
+                    "section {name:?} extends past end of index ({end} > {})",
+                    bytes.len()
+                ));
+            }
+        }
+
         Ok(Reader {
             bytes,
             sections,
@@ -171,7 +209,10 @@ impl<'a> Reader<'a> {
 
     fn section(&self, name: &str) -> &'a [u8] {
         match self.sections.get(name) {
-            Some(&(off, len)) => &self.bytes[off..off + len],
+            // `parse` already bounds-checked every section, so the slice is in
+            // range; `get(..).unwrap_or(&[])` keeps this total even if a future
+            // caller builds a `Reader` by hand without that check.
+            Some(&(off, len)) => self.bytes.get(off..off.saturating_add(len)).unwrap_or(&[]),
             None => &[],
         }
     }
@@ -394,6 +435,89 @@ mod tests {
     fn rejects_unknown_magic() {
         let bad = b"refidx v999\nmtime:0\ntree:\n\n";
         assert!(Reader::parse(bad).is_err());
+    }
+
+    /// `serialize` must be a pure function of the logical contents: feeding the
+    /// same records in two different input orders (including colliding anchors,
+    /// where an anchor-only sort would leave their order input-defined) must
+    /// produce byte-identical images. This is what lets the parallel walk hand
+    /// records back in any order and still yield a deterministic index, and it
+    /// catches the false-confidence in a build-twice test that would also pass
+    /// on a non-total sort.
+    #[test]
+    fn serialize_is_order_independent_for_collisions() {
+        let mtime = 7;
+        let one = IndexData {
+            mtime,
+            tree: "t".into(),
+            forward: vec![
+                ForwardEntry {
+                    anchor: "dup".into(),
+                    location: "z.rs:9-9".into(),
+                },
+                ForwardEntry {
+                    anchor: "alpha".into(),
+                    location: "a.rs:1-2".into(),
+                },
+                ForwardEntry {
+                    anchor: "dup".into(),
+                    location: "a.rs:1-1".into(),
+                },
+            ],
+            paths: vec!["z.rs".into(), "a.rs".into()],
+        };
+        // The exact same records, permuted (the two `dup` collisions swapped,
+        // `alpha` moved) and `paths` reversed.
+        let two = IndexData {
+            mtime,
+            tree: "t".into(),
+            forward: vec![
+                ForwardEntry {
+                    anchor: "dup".into(),
+                    location: "a.rs:1-1".into(),
+                },
+                ForwardEntry {
+                    anchor: "dup".into(),
+                    location: "z.rs:9-9".into(),
+                },
+                ForwardEntry {
+                    anchor: "alpha".into(),
+                    location: "a.rs:1-2".into(),
+                },
+            ],
+            paths: vec!["a.rs".into(), "z.rs".into()],
+        };
+        assert_eq!(serialize(&one), serialize(&two));
+
+        // And the canonical order is by anchor, then location, so the colliding
+        // `dup` records come out in location order regardless of input.
+        let bytes = serialize(&one);
+        let r = Reader::parse(&bytes).unwrap();
+        assert_eq!(r.forward_lookup("dup"), vec!["a.rs:1-1", "z.rs:9-9"]);
+    }
+
+    /// A truncated image whose header still parses but whose section bytes are
+    /// gone must be rejected as corrupt, never sliced out of bounds (the
+    /// historical `refidx.rs` panic). `parse` bounds-checks, so the error
+    /// surfaces here instead of as an OOB panic in `section`.
+    #[test]
+    fn parse_rejects_truncated_section_bytes() {
+        let full = serialize(&sample());
+        // Cut the body off but keep the whole header (through the blank line).
+        let header_end = full
+            .windows(2)
+            .position(|w| w == b"\n\n")
+            .map(|p| p + 2)
+            .expect("header has a terminating blank line");
+        assert!(header_end < full.len(), "sample has a non-empty body");
+        let truncated = &full[..header_end];
+        let err = Reader::parse(truncated)
+            .err()
+            .expect("truncated index must be rejected");
+        assert!(
+            err.contains("past end") || err.contains("overflow"),
+            "expected a bounds error, got {err:?}"
+        );
     }
 
     /// The names of the covering anchors, in returned order.
