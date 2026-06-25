@@ -19,6 +19,7 @@ machinery exercised here.
 
 pub mod atomic;
 pub mod blobhash;
+pub mod citation;
 pub mod cli;
 pub mod commands;
 pub mod extractors;
