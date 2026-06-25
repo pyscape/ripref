@@ -28,7 +28,7 @@ As you type an anchor, the editor queries the index for anchors that share your
 prefix and offers them; resolving the highlighted one fills a preview pane:
 
 ```
-rr complete <prefix>                # proposed: anchors whose name starts so
+rr complete <prefix>                # proposed: anchors with this name prefix
 rr complete <prefix> --format json  # proposed: matches with kind + location
 rr read <anchor>                    # today: resolve a candidate for the preview
 rr read <anchor> --locate           # today: just file:start-end, no body
@@ -88,7 +88,8 @@ snapshot/tracking work, `[planned]` is in the CLI spec but unimplemented,
   kind filter below), and its location (`file:start-end`, for the preview and a
   jump). rr's JSON envelopes should all carry `kind` (the `at` envelope ships
   today; `read`, `cite`, `track`, `verify`, and `complete` should match), so
-  completion has it on each candidate.
+  completion has it on each candidate. The `forward` record stores no kind, so
+  derive it from the anchor grammar at query time: no new index field needed.
 - **A result bound and a stable order, `--limit <N>` `[proposed]`.** A one- or
   two-character prefix can match thousands of anchors; a popup wants the top N,
   not the tree. `forward` is a deterministic total order (sorted by name), so
@@ -315,9 +316,9 @@ anchor from the cursor to paste elsewhere.
 ## Limits to know today
 
 - Nothing here runs end-to-end yet. The resolve side (`rr read`, `rr at`) works,
-  but the candidate query (`rr complete`) does not exist and is not in the
-  planned command set, and no command emits the namespace to filter client-side,
-  so a plugin has nothing to complete against until the work in
+  but the candidate query (`rr complete`) is specified provisionally and not yet
+  built, and no command emits the namespace to filter client-side, so a plugin
+  has nothing to complete against until the work in
   [What rr must provide](#what-rr-must-provide) lands.
 - Completion only produces references; auditing them is separate work. `rr verify`
   (the nearer-term gate) checks the snapshot and tracking references you have
