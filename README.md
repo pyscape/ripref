@@ -64,9 +64,11 @@ def handler(request):
     ...
 ```
 
-Go the other way: ask which anchor to cite for a line you are looking at. `rr at`
-takes a `file:line` and prints the one anchor you would write, the tightest
-(innermost) one covering that line, which feeds straight back into `rr read`:
+Go the other way: ask which anchor covers a line you are looking at. `rr at`
+takes a `file:line` and prints the anchor identity (the address) of the tightest
+(innermost) anchor covering that line. Pass that identity to `rr read` to resolve
+it. To cite the anchor inside a document, write the marker form `[[rr:anchor]]`;
+`rr at --cite` to emit that form directly is planned:
 
 ```
 $ rr at src/handlers.py:15
@@ -92,7 +94,8 @@ and agents citing the code under a cursor.
 > `rr read`, `rr at`) works today.
 
 Find every reference to an anchor (across documentation and code) before you
-change or delete it:
+change or delete it. `rr search` finds the `[[rr:...]]` citation markers written
+in prose, comments, and commit messages; the anchor argument itself stays bare:
 
 ```
 $ rr search my_module::handler   # planned, not yet implemented
@@ -102,7 +105,8 @@ tests/features/requests.feature:22
 src/handlers.py:8
 ```
 
-Flag drift and dangling references, for a pre-commit hook or CI:
+Flag drift and dangling references, for a pre-commit hook or CI. `rr enforce`
+scans for `[[rr:...]]` markers and reports those that are dangling or stale:
 
 ```
 $ rr enforce --changed   # planned, not yet implemented
@@ -195,6 +199,16 @@ A bare line number such as `http.go:42` is never an anchor, it is exactly the
 kind of reference `rr enforce` (planned) is designed to flag. Which concrete
 patterns map to which kind is set by configuration, not hardcoded; see
 [Configuration](#configuration).
+
+An anchor plays two distinct roles. As an **address** it is the bare identity
+you pass to `rr read`, `rr at`, or `rr cite` on the CLI; it stays bare.
+As a **citation** it is the delimited form `[[rr:anchor]]` that you write INTO
+a document (prose, comment, commit message) so that `rr search` and `rr enforce`
+can find it by scanning. The kinds table above shows address forms; that is how
+you refer to an anchor on the command line. When you write a reference into a
+document, wrap it: `[[rr:my_module::handler]]`, `[[rr:AD-42]]`. See
+`doc/adr/0001-citation-syntax.md` (AD-1) for the full rationale and marker
+grammar.
 
 ### How it works
 

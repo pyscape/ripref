@@ -19,7 +19,8 @@ rr read <anchor>              # an anchor -> its current location, when you need
 ```
 
 - To *write* a citation: run `rr at <file>:<line>`, take the anchor it prints,
-  and put that anchor in your doc, comment, or message, never the `file:line`.
+  wrap it as `[[rr:anchor]]` and write that marker into your doc, comment, or
+  message, never a bare anchor or `file:line`.
 - To *follow* a citation: `rr read <anchor>` resolves it; add `--locate` for the
   current `file:start-end` to hand to an editor.
 - The anchor is the durable reference; a line number is only ever a transient
@@ -32,7 +33,8 @@ $ rr at BENCHMARKS.md:112
 Index build: the writer
 ```
 
-You then cite `Index build: the writer`, not `BENCHMARKS.md:112`.
+You then cite `[[rr:Index build: the writer]]` in your doc, not the bare
+anchor or `BENCHMARKS.md:112`.
 
 ## Enforcing it with Claude Code
 
@@ -47,10 +49,17 @@ two layers.
 
    ```
    # ~/.claude/hooks/block-line-refs.py   (PreToolUse: Edit, Write)
-   # Read the tool input, scan the new content. If it contains a
-   # filename.ext:line outside a fenced code block, and the line is not an
-   # `rr at` / `rr read` command, exit non-zero with:
-   #   "cite the rr anchor (run: rr at <file>:<line>), not a line number".
+   # Read the tool input, scan the new content outside fenced code blocks.
+   #
+   # Negative case (always block): a raw filename.ext:line pattern that is not
+   # part of an `rr at` / `rr read` / `rr enforce` command line. Exit non-zero:
+   #   "cite as [[rr:anchor]] (run: rr at <file>:<line> to get the anchor),
+   #    never bare or as a file:line".
+   #
+   # Positive case (AD-1): a [[rr:...]] marker is the valid citation form;
+   # pass it through without complaint. During the grace period, also flag a
+   # bare token that exactly matches a live index anchor and tell the agent to
+   # wrap it: "cite as [[rr:<anchor>]], not the bare form".
    ```
 
    ```
@@ -66,8 +75,9 @@ two layers.
 
 2. Shape the agent's chat citations. No hook can intercept the model's
    natural-language output, so put a standing instruction in the agent's memory
-   or project rules: "never cite code by file:line; resolve via `rr at` and cite
-   the anchor." That is what governs what the agent prints to the screen.
+   or project rules: "cite as `[[rr:anchor]]`, never bare or as `file:line`;
+   resolve via `rr at` to get the anchor, then wrap it." That is what governs
+   what the agent prints to the screen.
 
 ## Limits to know today
 
@@ -76,9 +86,11 @@ two layers.
 - Heading anchors are line-scoped, so `rr at` on a body line resolves to the
   file anchor, not the enclosing section. Cite a prose section by its heading
   anchor. (Section-spanning heading anchors are a planned improvement.)
-- `rr search` (find everywhere an anchor is cited) is planned, not yet
-  implemented, so today rr generates and resolves citations but does not yet
-  find existing ones to audit.
+- `rr search` and `rr enforce` (find and audit every citation) are planned, not
+  yet implemented. The `[[rr:...]]` marker is precisely what makes them
+  implementable: one deterministic scan locates every citation without false
+  positives. Today rr generates and resolves citations but does not yet find
+  existing ones to audit.
 
 ## Why it is worth it
 

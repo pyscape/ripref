@@ -19,8 +19,8 @@ guessed anchor is a reference that resolves to nothing. The editor cannot help
 here: it does not know rr's anchor namespace, and its completion does not even
 fire in Markdown, TOML, or gherkin. This use case feeds rr's index to the editor
 as a completion source, so typing the start of an anchor offers the real anchors
-that exist (across code and prose), and the citation you insert is correct the
-moment you write it.
+that exist (across code and prose), and the `[[rr:...]]` marker the plugin writes
+is correct the moment you insert it.
 
 ## The pattern
 
@@ -45,13 +45,15 @@ rr read <anchor> --locate           # today: just file:start-end, no body
 - Preview the target inline. For the highlighted candidate, `rr read <anchor>`
   returns its location and body, so the detail pane shows the code a citation
   points at before you commit to it.
-- What you insert is the anchor, the durable handle, never a line number;
-  `rr read` reverses it to a location when a reader later follows it. The anchor
-  you complete is a live reference by default; when a citation needs to freeze the
-  exact version you saw (the evidence behind a decision) or to warn you when its
-  target changes, promote it with `rr cite` (a frozen `anchor@<commit>` snapshot)
-  or `rr track` (a `anchor~<commit>` that `rr verify` flags on drift). Completion
-  supplies the anchor; `cite` and `track` add the pin.
+- What the plugin inserts is the marker `[[rr:anchor]]`, the durable embedded
+  citation, never the bare anchor and never a line number; `rr read` reverses it
+  to a location when a reader later follows it. The live marker is the default
+  insertion; when a citation needs to freeze the exact version you saw (the
+  evidence behind a decision) or to warn you when its target changes, the pin
+  attaches outside the closing `]]`: `[[rr:anchor]]@<commit>` (frozen snapshot
+  via `rr cite`) or `[[rr:anchor]]~<commit>` (tracking pin via `rr track` that
+  `rr verify` flags on drift). Completion supplies the anchor; `cite` and `track`
+  compose the marker with its pin.
 
 Worked example: writing a design doc, you type the start of the handler's
 anchor.
@@ -63,8 +65,9 @@ docs/architecture.md
 
 `rr complete my_module::han` returns `my_module::handle_retry` and
 `my_module::handler`; the plugin offers both, and the detail pane shows the
-picked anchor's body from `rr read my_module::handler`. The doc cites an anchor
-that exists and keeps pointing at the handler after the code around it shifts.
+picked anchor's body from `rr read my_module::handler`. The doc then carries
+`[[rr:my_module::handler]]`, the marker that cites an anchor that exists and
+keeps pointing at the handler after the code around it shifts.
 
 ## What rr must provide
 
@@ -145,11 +148,13 @@ rr complete [--limit <N>] [--kind <KIND>] [--no-freshness] <prefix>
 ```
 
 Each match is an object `{ "anchor", "kind", "location", "ambiguous" }`: the
-`anchor` is the token the editor inserts, `kind` drives the icon and the
-`--kind` filter, `location` feeds the preview and a jump, and `ambiguous` is
-`true` when the anchor has more than one definition (the plugin then calls
-`rr search` to show which). The cases a plugin must handle, request and response
-written out in full:
+`anchor` is the bare address, `kind` drives the icon and the `--kind` filter,
+`location` feeds the preview and a jump, and `ambiguous` is `true` when the
+anchor has more than one definition (the plugin then calls `rr search` to show
+which). The envelope should also carry a `"citation"` field holding the
+pre-composed `[[rr:...]]` marker for that anchor (AD-1 section 3.1), so plugins
+insert it directly without re-deriving the delimited form. The cases a plugin
+must handle, request and response written out in full:
 
 **Default (text): one insertable anchor per line.**
 
@@ -174,12 +179,14 @@ $ rr complete my_module::han --format json
     "matches": [
       {
         "anchor": "my_module::handle_retry",
+        "citation": "[[rr:my_module::handle_retry]]",
         "kind": "symbol",
         "location": { "file": "src/handlers.py", "start_line": 31, "end_line": 40 },
         "ambiguous": false
       },
       {
         "anchor": "my_module::handler",
+        "citation": "[[rr:my_module::handler]]",
         "kind": "symbol",
         "location": { "file": "src/handlers.py", "start_line": 8, "end_line": 26 },
         "ambiguous": false
@@ -203,6 +210,7 @@ $ rr complete --kind heading docs/guide --format json
     "matches": [
       {
         "anchor": "docs/guide.md#configuration",
+        "citation": "[[rr:docs/guide.md#configuration]]",
         "kind": "heading",
         "location": { "file": "docs/guide.md", "start_line": 42, "end_line": 42 },
         "ambiguous": false
@@ -240,6 +248,7 @@ $ rr complete AD-90 --format json
     "matches": [
       {
         "anchor": "AD-9001",
+        "citation": "[[rr:AD-9001]]",
         "kind": "record",
         "location": { "file": "plan-a.md", "start_line": 5, "end_line": 5 },
         "ambiguous": true
@@ -299,19 +308,23 @@ anchor from the cursor to paste elsewhere.
 - Vim / Neovim: an `omnifunc` or `completefunc`, or an `nvim-cmp` / `blink.cmp`
   source, that shells out to `rr complete` for the current word. Trigger on the
   anchor grammar (`::` for a symbol, `#` for a heading or scenario) so it fires
-  mid-citation rather than on every word. The reserved `@` and `~` that begin a
-  snapshot or tracking pin come after the anchor, so anchor completion fires
-  before them; completing the commit half is a separate source (git revisions,
-  or `rr cite` / `rr track` writing it for you).
+  mid-citation rather than on every word. The `@` and `~` pins attach outside
+  the closing `]]` of the marker (`[[rr:anchor]]@<commit>` and
+  `[[rr:anchor]]~<commit>`), so anchor completion fires before them and they
+  parse offline without a fresh index; completing the commit half is a separate
+  source (git revisions, or `rr cite` / `rr track` composing the full marker for
+  you).
 - VSCode: a `CompletionItemProvider` registered for the languages the built-in
   provider skips (`markdown`, `plaintext`, `gherkin`, `toml`). Map each match to
   a `CompletionItem` whose `detail` is its `location` and whose `documentation`
   is the `rr read` body.
 - Point the plugin at the index with `--index <path>` (or `REF_INDEX`) when the
   editor's working directory is not the repository root, pass `--no-color` so
-  nothing but the anchor reaches the buffer, and pass `--no-freshness` so a query
+  escape codes stay out of the buffer, and pass `--no-freshness` so a query
   answers from the index as-is instead of refusing with exit `3` mid-keystroke.
-  Re-run `rr index` on save (or rely on `--watch`, once it lands) to refresh.
+  The plugin wraps the chosen bare anchor as `[[rr:anchor]]` before inserting it
+  into the buffer. Re-run `rr index` on save (or rely on `--watch`, once it
+  lands) to refresh.
 
 ## Limits to know today
 
