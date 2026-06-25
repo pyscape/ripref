@@ -17,12 +17,16 @@ machinery exercised here.
 #![warn(unsafe_code)]
 #![warn(clippy::all)]
 
+pub mod atomic;
+pub mod blobhash;
 pub mod cli;
 pub mod commands;
 pub mod extractors;
+pub mod git;
 pub mod indexer;
 pub mod languages;
 pub mod refidx;
+pub mod sidecar;
 
 use cli::{ParseOutcome, Special, Subcommand};
 
@@ -36,6 +40,12 @@ pub mod exit {
     pub const USAGE: u8 = 2;
     /// The index is stale — rebuild with `rr index`, or fall back to ripgrep.
     pub const STALE: u8 = 3;
+    /// A tracked reference has drifted: the current content differs from the
+    /// baseline it was pinned at (`rr read ~` / `rr verify`).
+    pub const DRIFTED: u8 = 4;
+    /// A reference is broken: a snapshot/commit that cannot be resolved or
+    /// recovered, or an ambiguous pin (`rr read @` / `rr verify`).
+    pub const BROKEN: u8 = 5;
 }
 
 /// Parse argv, dispatch to the chosen command, and return the process exit code.
@@ -62,6 +72,11 @@ pub fn run() -> u8 {
         Subcommand::Index => commands::run_index(&args),
         Subcommand::Read => commands::run_read(&args),
         Subcommand::At => commands::run_at(&args),
+        Subcommand::Cite => commands::run_cite(&args),
+        Subcommand::Track => commands::run_track(&args),
+        Subcommand::Verify => commands::run_verify(&args),
+        Subcommand::Uncite => commands::run_uncite(&args),
+        Subcommand::Untrack => commands::run_untrack(&args),
     };
 
     match result {
