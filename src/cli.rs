@@ -17,10 +17,20 @@ use std::ffi::{OsStr, OsString};
 pub enum Subcommand {
     /// `rr index` — the sole writer.
     Index,
-    /// `rr read` — dereference one anchor.
+    /// `rr read` — dereference one anchor (or a pinned `anchor@commit` / `anchor~commit`).
     Read,
     /// `rr at` — list the anchors whose span covers a `file:line` position.
     At,
+    /// `rr cite` — freeze an anchor's current content as a recoverable snapshot.
+    Cite,
+    /// `rr track` — baseline an anchor so drift from it can be flagged.
+    Track,
+    /// `rr verify` — classify pinned references ok / drifted / moved / broken.
+    Verify,
+    /// `rr uncite` — retire a snapshot with a tomb record.
+    Uncite,
+    /// `rr untrack` — retire a tracking baseline with a tomb record.
+    Untrack,
 }
 
 impl Subcommand {
@@ -29,8 +39,60 @@ impl Subcommand {
             "index" => Some(Subcommand::Index),
             "read" => Some(Subcommand::Read),
             "at" => Some(Subcommand::At),
+            "cite" => Some(Subcommand::Cite),
+            "track" => Some(Subcommand::Track),
+            "verify" => Some(Subcommand::Verify),
+            "uncite" => Some(Subcommand::Uncite),
+            "untrack" => Some(Subcommand::Untrack),
             _ => None,
         }
+    }
+}
+
+/// Which pin a `@`/`~` reference names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sigil {
+    /// `anchor@commit`: a frozen snapshot.
+    Snapshot,
+    /// `anchor~commit`: a tracking baseline.
+    Tracking,
+}
+
+/// The structural parse of a reference token: either a plain anchor, or an anchor
+/// pinned at a commit. This is purely syntactic (split on the last `@`/`~`); the
+/// caller applies **known-anchor-wins** by checking whether the whole token is a
+/// live anchor *before* trusting a split, so an anchor that legitimately contains
+/// `@`/`~` (an email heading, an `@scope` path, a `~/path` heading) still reads
+/// literally.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reference<'a> {
+    Plain(&'a str),
+    Pinned {
+        anchor: &'a str,
+        sigil: Sigil,
+        commit: &'a str,
+    },
+}
+
+/// Split a reference token on its **last** `@`/`~` into `(anchor, sigil, commit)`,
+/// or [`Reference::Plain`] when there is no such split (no sigil, or an empty side).
+/// Splitting on the last sigil is what lets `support@example.com@a1b2c3d` mean a
+/// snapshot of the `support@example.com` anchor.
+pub fn parse_reference(token: &str) -> Reference<'_> {
+    match token.rfind(['@', '~']) {
+        Some(i) if i > 0 && i + 1 < token.len() => {
+            let sigil = if token.as_bytes()[i] == b'@' {
+                Sigil::Snapshot
+            } else {
+                Sigil::Tracking
+            };
+            Reference::Pinned {
+                anchor: &token[..i],
+                sigil,
+                commit: &token[i + 1..],
+            }
+        }
+        _ => Reference::Plain(token),
     }
 }
 
@@ -433,6 +495,29 @@ fn validate(args: &LowArgs) -> Result<(), String> {
                 Err("index takes no positional arguments".to_string())
             }
         }
+        Subcommand::Cite => match args.positional.len() {
+            1 => Ok(()),
+            0 => Err("cite requires an <anchor> argument".to_string()),
+            _ => Err("cite takes exactly one <anchor>".to_string()),
+        },
+        Subcommand::Track => match args.positional.len() {
+            1 => Ok(()),
+            0 => Err("track requires an <anchor> argument".to_string()),
+            _ => Err("track takes exactly one <anchor>".to_string()),
+        },
+        // verify with no refs checks every pin in the manifest; with refs, just
+        // those. Either arity is valid.
+        Subcommand::Verify => Ok(()),
+        Subcommand::Uncite => match args.positional.len() {
+            1 => Ok(()),
+            0 => Err("uncite requires an <anchor@commit> argument".to_string()),
+            _ => Err("uncite takes exactly one <anchor@commit>".to_string()),
+        },
+        Subcommand::Untrack => match args.positional.len() {
+            1 => Ok(()),
+            0 => Err("untrack requires an <anchor~commit> argument".to_string()),
+            _ => Err("untrack takes exactly one <anchor~commit>".to_string()),
+        },
     }
 }
 
@@ -473,10 +558,15 @@ pub fn help_text() -> String {
     out.push_str("USAGE:\n    rr <command> [options] [args]\n\n");
     out.push_str("COMMANDS:\n");
     out.push_str("    index    Build / refresh the index from the working tree (writer)\n");
-    out.push_str("    read     Dereference an anchor to the chunk it points at\n");
+    out.push_str("    read     Dereference an anchor, or a pinned anchor@commit / anchor~commit\n");
     out.push_str(
-        "    at       Name the anchor to cite for a file:line position (--all: full nest)\n\n",
+        "    at       Name the anchor to cite for a file:line position (--all: full nest)\n",
     );
+    out.push_str("    cite     Freeze an anchor's current content as a recoverable snapshot\n");
+    out.push_str("    track    Baseline an anchor so later drift from it can be flagged\n");
+    out.push_str("    verify   Classify pinned references ok / drifted / moved / broken\n");
+    out.push_str("    uncite   Retire a snapshot (tomb record)\n");
+    out.push_str("    untrack  Retire a tracking baseline (tomb record)\n\n");
     out.push_str("OPTIONS:\n");
     for flag in FLAGS {
         let short = match flag.name_short() {
@@ -620,5 +710,59 @@ mod tests {
                 flag.name_long()
             );
         }
+    }
+
+    #[test]
+    fn parse_reference_splits_on_the_last_sigil() {
+        // No sigil: a plain anchor.
+        assert_eq!(parse_reference("README.md"), Reference::Plain("README.md"));
+        // Snapshot and tracking pins.
+        assert_eq!(
+            parse_reference("README.md@abc1234"),
+            Reference::Pinned {
+                anchor: "README.md",
+                sigil: Sigil::Snapshot,
+                commit: "abc1234"
+            }
+        );
+        assert_eq!(
+            parse_reference("src/app.py~deadbee"),
+            Reference::Pinned {
+                anchor: "src/app.py",
+                sigil: Sigil::Tracking,
+                commit: "deadbee"
+            }
+        );
+        // An anchor that itself contains `@` splits only on the LAST `@`, so the
+        // email heading stays intact as the anchor.
+        assert_eq!(
+            parse_reference("support@example.com@abc1234"),
+            Reference::Pinned {
+                anchor: "support@example.com",
+                sigil: Sigil::Snapshot,
+                commit: "abc1234"
+            }
+        );
+        // A leading `~` (e.g. a `~/path` heading) has an empty left side, so it is
+        // not a pin split; it stays Plain for known-anchor-wins to read literally.
+        assert_eq!(parse_reference("~/path"), Reference::Plain("~/path"));
+        // A trailing sigil with no commit is also not a split.
+        assert_eq!(parse_reference("a@"), Reference::Plain("a@"));
+    }
+
+    #[test]
+    fn new_subcommands_parse_and_check_arity() {
+        assert_eq!(parse_run(&["cite", "a"]).command, Subcommand::Cite);
+        assert_eq!(parse_run(&["track", "a"]).command, Subcommand::Track);
+        assert_eq!(parse_run(&["verify"]).command, Subcommand::Verify);
+        assert_eq!(
+            parse_run(&["verify", "a@b", "c~d"]).command,
+            Subcommand::Verify
+        );
+        assert_eq!(parse_run(&["uncite", "a@b"]).command, Subcommand::Uncite);
+        assert_eq!(parse_run(&["untrack", "a~b"]).command, Subcommand::Untrack);
+        assert!(parse_err(&["cite"]).contains("requires an <anchor>"));
+        assert!(parse_err(&["cite", "a", "b"]).contains("exactly one"));
+        assert!(parse_err(&["track"]).contains("requires an <anchor>"));
     }
 }
