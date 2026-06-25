@@ -2,6 +2,14 @@
 name = "ripref"
 version = "0.0.1"
 edition = "2021"
+# MSRV policy: track a stable release roughly 4-7 months old rather than the
+# bare floor a feature needs, giving distros and downstreams time to catch up
+# (the cadence ripgrep follows). 1.93.0 shipped 2026-01-22; revisit once it
+# ages past ~7 months.
+# Hard floor independent of the policy: src/atomic.rs needs std::fs::rename's
+# POSIX-semantics replace on Windows (stabilized in 1.85), so the MSRV can never
+# drop below 1.85 without breaking atomic cross-platform replacement.
+rust-version = "1.93"
 description = "Cite code by stable anchors instead of fragile line numbers."
 license = "MIT OR Unlicense"
 repository = "https://github.com/pyscape/ripref"
