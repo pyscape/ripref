@@ -68,9 +68,10 @@ commands author every kind of cross-reference.
 
 ## Limits to know today
 
-- rr writes and follows the marker one anchor at a time. The readers do not strip
-  a pasted `[[rr:...]]` wrapper yet, so pass the bare anchor on the CLI
-  (`rr read AD-42`, not `rr read [[rr:AD-42]]`) for now.
+- rr writes and follows the marker one anchor at a time. The readers strip a
+  pasted `[[rr:...]]` wrapper before resolving, so either form works on the CLI
+  (`rr read AD-42` or `rr read '[[rr:AD-42]]'`); single-quote the marker in a
+  shell because `[` is a glob.
 - rr does not yet list all the places `AD-42` is cited, or check that every
   "implemented by" marker in an ADR still resolves. `rr search AD-42` (find every
   citation of a record) is planned, not yet implemented.

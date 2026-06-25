@@ -22,9 +22,10 @@ Dual-licensed under MIT or the [UNLICENSE](https://unlicense.org).
 > **Status: pre-release, in active design.** The commands below describe intended
 > behavior, and not all of it is implemented yet:
 >
-> - Working today: `rr index`, `rr read` (including pinned `anchor@commit` /
->   `anchor~commit` references), `rr at`, `rr cite`, `rr track`, `rr verify`,
->   `rr uncite`, `rr untrack`.
+> - Working today: `rr index`, `rr read` (a bare anchor, a pinned
+>   `anchor@commit` / `anchor~commit`, or a pasted `[[rr:...]]` citation marker),
+>   `rr at` (with `--cite` to emit the marker), `rr cite`, `rr track`,
+>   `rr verify`, `rr uncite`, `rr untrack`.
 > - Planned, not yet implemented: `rr search`, `rr enforce`, and the
 >   `rr index --watch` mode.
 >
@@ -67,12 +68,15 @@ def handler(request):
 Go the other way: ask which anchor covers a line you are looking at. `rr at`
 takes a `file:line` and prints the anchor identity (the address) of the tightest
 (innermost) anchor covering that line. Pass that identity to `rr read` to resolve
-it. To cite the anchor inside a document, write the marker form `[[rr:anchor]]`;
-`rr at --cite` to emit that form directly is planned:
+it; add `--cite` to emit the document citation marker `[[rr:anchor]]` (the form
+you paste into prose) instead of the bare address:
 
 ```
 $ rr at src/handlers.py:15
 my_module::handler
+
+$ rr at src/handlers.py:15 --cite
+[[rr:my_module::handler]]
 ```
 
 Add `--all` to see the whole nest the line sits in, outermost (whole file) first,
@@ -291,19 +295,21 @@ reference depend on a _version_ of an anchor:
 
 - A **snapshot** freezes an anchor's content so you can recover it later, even
   after history is rewritten. `rr cite <anchor>` stores the anchor's file as it
-  is at `HEAD` and prints a pinned reference `anchor@<short-commit>`. `rr read
-  anchor@<short-commit>` then prints that frozen source.
+  is at `HEAD` and prints a pinned citation marker `[[rr:anchor]]@<short-commit>`.
+  `rr read [[rr:anchor]]@<short-commit>` (or the bare `anchor@<short-commit>`)
+  then prints that frozen source.
 - A **tracking** reference baselines an anchor so you are told when it drifts.
-  `rr track <anchor>` records the current content and prints `anchor~<short-commit>`.
-  `rr read anchor~<short-commit>` (and `rr verify`) report whether the anchor's
-  file still matches that baseline: `OK`, `OK (moved)` if it was renamed but is
-  unchanged, or `DRIFTED` (exit 4) if its content changed.
+  `rr track <anchor>` records the current content and prints
+  `[[rr:anchor]]~<short-commit>`. `rr read [[rr:anchor]]~<short-commit>` (and
+  `rr verify`) report whether the anchor's file still matches that baseline: `OK`,
+  `OK (moved)` if it was renamed but is unchanged, or `DRIFTED` (exit 4) if its
+  content changed.
 
 ```
 $ rr cite docs/guide.md#configuration
-docs/guide.md#configuration@a1b2c3d
+[[rr:docs/guide.md#configuration]]@a1b2c3d
 
-$ rr read docs/guide.md#configuration@a1b2c3d
+$ rr read '[[rr:docs/guide.md#configuration]]@a1b2c3d'
 docs/guide.md@a1b2c3d:40-83
 ## Configuration
 ...the frozen section...
