@@ -22,7 +22,9 @@ Dual-licensed under MIT or the [UNLICENSE](https://unlicense.org).
 > **Status: pre-release, in active design.** The commands below describe intended
 > behavior, and not all of it is implemented yet:
 >
-> - Working today: `rr index`, `rr read`, `rr at`.
+> - Working today: `rr index`, `rr read` (including pinned `anchor@commit` /
+>   `anchor~commit` references), `rr at`, `rr cite`, `rr track`, `rr verify`,
+>   `rr uncite`, `rr untrack`.
 > - Planned, not yet implemented: `rr search`, `rr enforce`, and the
 >   `rr index --watch` mode.
 >
@@ -141,9 +143,12 @@ The rest follows from that:
   the lookup itself currently materializes that section on every call (an O(n)
   allocation; see [BENCHMARKS.md](BENCHMARKS.md)), with an in-place bisect
   planned.
-- ripref checks freshness with a single `stat` per in-scope file. There is no
-  content hashing and no `git` on the read path, and when the index is stale
-  ripref tells you (exit code 3) instead of returning a stale answer.
+- ripref checks freshness cheaply and without ever hashing file contents: a
+  single `stat` per in-scope file, or, on a clean working tree, one `git status`
+  plus a `rev-parse` to confirm `HEAD` still matches the index stamp (which
+  short-circuits the stat walk). So a live read does run `git` for the freshness
+  check; what it never does is hash file contents. When the index is stale ripref
+  tells you (exit code 3) instead of returning a stale answer.
 - ripref is language agnostic. Out of the box it resolves file paths, document
   headings, scenarios, decision records, manifest keys and API operations;
   language-specific symbols come from per-language Tree-sitter grammars paired
@@ -265,6 +270,50 @@ So ripref keeps its built-in languages native and treats the WebAssembly path as
 opt-in extensibility; making it cheap enough for routine use means teaching the
 loader to cache compiled modules, which `WasmStore` would first need to expose.
 
+### Snapshots and tracking references
+
+A live anchor always resolves to current content. Two further intents let a
+reference depend on a _version_ of an anchor:
+
+- A **snapshot** freezes an anchor's content so you can recover it later, even
+  after history is rewritten. `rr cite <anchor>` stores the anchor's file as it
+  is at `HEAD` and prints a pinned reference `anchor@<short-commit>`. `rr read
+  anchor@<short-commit>` then prints that frozen source.
+- A **tracking** reference baselines an anchor so you are told when it drifts.
+  `rr track <anchor>` records the current content and prints `anchor~<short-commit>`.
+  `rr read anchor~<short-commit>` (and `rr verify`) report whether the anchor's
+  file still matches that baseline: `OK`, `OK (moved)` if it was renamed but is
+  unchanged, or `DRIFTED` (exit 4) if its content changed.
+
+```
+$ rr cite docs/guide.md#configuration
+docs/guide.md#configuration@a1b2c3d
+
+$ rr read docs/guide.md#configuration@a1b2c3d
+docs/guide.md@a1b2c3d:40-83
+## Configuration
+...the frozen section...
+```
+
+The evidence is durable and lives in a committed, content-addressed sidecar
+under `.rr/` (a manifest `.rr/refs` plus an object store `.rr/objects/`), not in
+the derived index. Because the bytes are stored (not a git pointer), a snapshot
+recovers even after the commit it was taken at is rebased or force-pushed away
+and garbage-collected, and after the file is renamed. Each object is named by its
+git blob id, so recovery re-hashes the bytes and verifies them against that name;
+a corrupt or missing object is reported broken (exit 5) rather than shown as
+evidence. `rr cite` writes `.rr/` into your working tree for you to commit; it
+refuses a path that is not committed as-is, or that uses a clean filter or
+Git-LFS (whose stored bytes would not be what you saw).
+
+`rr verify` classifies pinned references as ok / drifted / moved / broken,
+returning the worst exit code, and fails closed if a committed manifest line was
+removed without an explicit `rr uncite` / `rr untrack` tomb. It is a good fit for
+a pre-commit hook or a CI job. Drift is always a content comparison
+(`git hash-object` against the stored baseline), so it catches an edit even when
+the file's size and modification time are unchanged or the edit is hidden from
+`git status` by `--skip-worktree`.
+
 ### Configuration
 
 ripref ships language-agnostic defaults( it respects `.gitignore` and indexes
@@ -300,6 +349,11 @@ Exit codes are consistent across commands:
   violations, and `search` for no matches).
 - `2`: usage error.
 - `3`: the index is stale; rebuild with `rr index`, or fall back to ripgrep.
+- `4`: drifted: a tracked reference's current content differs from the baseline
+  it was pinned at (`rr read anchor~commit`, `rr verify`).
+- `5`: broken: a snapshot or commit that cannot be resolved or recovered, or an
+  ambiguous pin (`rr read anchor@commit`, `rr verify`). `verify` returns the
+  worst code across the references it checked.
 
 ### Installation
 
