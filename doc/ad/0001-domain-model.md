@@ -104,3 +104,32 @@ the end of its region; a symbol spans its whole definition; a key or
 operation spans its entry. The innermost span covering a line is that line's
 tightest anchor.
 
+### Consequences
+
+- Any format joins by configuration; this record never amends for one.
+- A file move dangles no unqualified reference, because no kind may name a
+  path. A path qualifier, written by hand or emitted for an ambiguous
+  identity (AD-4), trades move-stability for precision: the
+  qualified anchor dangles if the qualifying file moves, and the gate
+  reports it (AD-3).
+- Identical titles are legal and ambiguous, not errors; the qualifier
+  resolves them. A cross-kind collision (a heading and a symbol sharing an
+  identity) is the same ambiguity.
+- Comparison is unforgiving by design: a marker that differs from its
+  definition by case dangles, and the gate reports it (AD-3).
+  Forgiveness would make resolution nondeterministic across profiles.
+
+Extension seams: a future record may add kinds through configuration, and
+may introduce a kind qualifier for cross-kind ambiguity, without
+contradicting this record.
+
+## Dogfooding
+
+- This record's title defines the record anchor `AD-1`, and `[[rr:AD-1]]`
+  resolves to it.
+- The qualified anchor `src/cli.rs#parse_reference` narrows the symbol
+  `parse_reference` to one file; unqualified, `[[rr:parse_reference]]`
+  resolves the same symbol while its name is unique.
+- Each sibling record titles a region "Decision outcome"; the unqualified
+  identity is ambiguous across them, exactly as this record requires, and
+  the qualifier picks one.
