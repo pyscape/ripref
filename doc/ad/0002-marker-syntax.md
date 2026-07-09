@@ -103,3 +103,26 @@ beside its implementation):
   and autolink rendering; the span rule above means the wrapping costs no
   findability.
 
+### Consequences
+
+- One scan, no lookahead past the terminator, no index required to locate
+  markers; the form is greppable in every host (`rg '\[\[rr:'`).
+- The wrapper makes a marker findable, not rename-stable: when an anchor's
+  identity changes, every marker of it dangles until edited. The gate
+  reports the dangle (AD-3), and the mention table of
+  AD-5 gives a future rename workflow the occurrence data it
+  needs.
+- A malformed token is a defect, not a mystery: an unpaired opener outside
+  a fence is findable by the same scan that finds markers, so a typo
+  demotes loudly rather than silently becoming prose.
+
+Extension seams: a host format with its own structure, and its own way to
+fence an example, joins by declaring its scan regions in configuration; the
+grammar itself never changes for a host.
+
+## Dogfooding
+
+- The grammar and regex blocks above are fenced and therefore invisible to
+  the scanners; every marker this record writes in prose resolves.
+- This record's title defines `AD-2` under the record kind of
+  `[[rr:AD-1]]`.
