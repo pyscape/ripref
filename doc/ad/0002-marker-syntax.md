@@ -52,3 +52,54 @@ AI-agent author, adoption cost). Aggregate scores in parentheses.
 6. **Restricted anchor grammar, no wrapper (19).** Cannot close the leak for
    bare grammar-bearing tokens.
 
+## Decision outcome
+
+A **marker** is the anchor between a fixed opener and terminator:
+
+```text
+[[rr:<escaped-anchor>]]
+```
+
+Load-bearing rules (the exact scanner grammar lives in the module docs
+beside its implementation):
+
+- The opener is the five fixed bytes the grammar block above opens with;
+  the terminator is `]]`; nothing follows the terminator. A marker resolves
+  or it dangles, carrying no other state, and rr stores no file content
+  (`[[rr:AD-1]]` fixes both), so a suffix would name behavior rr cannot
+  deliver.
+- Writers escape every literal `[`, `]`, and `\` in the anchor as `\[`,
+  `\]`, and `\\`. Uniform per-byte escaping, not an escape for a `]]` run
+  alone, is what lets an anchor containing `]`, such as the key identity
+  `[tool.poetry] name`, round-trip instead of silently truncating. Escaping
+  the backslash itself is equally load-bearing: unescaped, an anchor ending
+  in `\` would emit a `\]]` tail whose first two bytes parse as an escaped
+  bracket, leaving the marker unterminated. These three escapes are the
+  whole set; a `\` before any other byte makes the token malformed, and the
+  gate reports it (AD-3).
+- The canonical extraction regex, run per line, is:
+
+```text
+\[\[rr:(?:\\[\\\[\]]|[^\\\]\[\t\n\r])*?\]\]
+```
+
+  The `rr:` sentinel after `[[` is what gives it no false positives in
+  ordinary prose. Tab, CR, and newline cannot occur in an anchor, and the
+  index never mints one, so a marker always sits on one line.
+
+- The readers strip the wrapper and then unescape `\[`, `\]`, and `\\`. The
+  unescape step is normative: stripping alone would leave escape bytes in
+  the anchor and dangle every bracket-bearing lookup. Comparison then
+  follows the invariant of `[[rr:AD-1]]`: byte-for-byte after NFC.
+- Scan regions are declared per host in the profile's configuration, beside
+  the kinds of `[[rr:AD-1]]`. The default profile declares: in a Markdown
+  host, the scanners read prose and inline code spans whose content begins
+  with the opener; fenced code blocks are invisible, and a match never
+  crosses a region boundary. In a host with no declared structure (a
+  comment, a commit message), the regex runs per raw line. A document that
+  needs to show an illustrative marker without writing one puts it in a
+  region its host does not scan, as the fenced grammar block above does.
+- House style backtick-wraps a marker in Markdown to neutralize wiki-link
+  and autolink rendering; the span rule above means the wrapping costs no
+  findability.
+
