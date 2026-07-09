@@ -26,6 +26,7 @@ pub mod extractors;
 pub mod git;
 pub mod indexer;
 pub mod languages;
+pub mod marker;
 pub mod refidx;
 pub mod sidecar;
 
