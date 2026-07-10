@@ -73,3 +73,25 @@ Load-bearing rules:
   occurrence input a rename workflow needs: when a file moves, the table
   names every document that wrote the old path.
 
+### Consequences
+
+- A document names a file in plain prose with no ceremony, and rr keeps the
+  name honest: one finding when the path goes stale.
+- The fragile `path:line` form becomes mechanically detectable, so the gate
+  retires it instead of hoping writers remember the rule.
+- `index`'s summary line and envelope carry the mention count
+  (`[[rr:AD-4]]`).
+- An illustrative path inside a fenced block is invisible by the region rule
+  of `[[rr:AD-2]]`, so an example cannot go stale by construction.
+- Conservative by the grammar and quiet by the guard: two segments plus an
+  existing first segment trade recall for precision, the right trade for a
+  gate.
+
+Extension seams: the rename workflow that consumes the mention table is a
+future record's; this record guarantees only that its input exists.
+
+## Dogfooding
+
+- This record's title defines `AD-5`; `[[rr:AD-5]]` resolves to it.
+- The mention scanner records this record's src/refidx.rs, and `verify`
+  flags that sentence first if the file ever moves.
