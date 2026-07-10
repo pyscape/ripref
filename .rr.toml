@@ -1,0 +1,6 @@
+# This repository's profile, merged over the rr.toml defaults.
+
+[verify]
+# tests/data holds fixture corpora with deliberate reference violations;
+# the gate must not judge fixtures.
+exclude = ["tests/data/**"]
