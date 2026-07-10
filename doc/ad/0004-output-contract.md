@@ -91,3 +91,21 @@ answered, identically under text and JSON.
   mid-keystroke prefers to an error. `search` reads no index
   (`[[rr:AD-3]]`) and never returns 3.
 
+### Consequences
+
+- A person runs a verb and pastes what `at` prints; a tool parses one
+  envelope and survives added fields; a CI step gates on `verify`'s exit
+  code without parsing any output.
+- The exit model is uniform, so a script learns one branch: nothing-found,
+  ambiguity, no-match, and findings are all the same adverse shape.
+- rr names two output shapes and one flag that selects them.
+
+## Dogfooding
+
+- The text and JSON writers for `at` are `[[rr:at_text]]` and
+  `[[rr:at_json]]`, and `--format` parses into `[[rr:OutputFormat]]`; each
+  marker names an identity, not a path (`[[rr:AD-1]]`), so each survives its
+  file moving.
+- Run against this record's opening line, `at` prints `[[rr:AD-4]]`, and its
+  JSON data carries the bare anchor `AD-4`; the path under doc/ad is `at`'s
+  input, never the anchor (`[[rr:AD-1]]`).
