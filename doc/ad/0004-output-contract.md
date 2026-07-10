@@ -31,3 +31,63 @@ what it prints as JSON, and how every result reaches the exit code.
 - **Per-verb output flags.** Every verb grows its own shape switches and a
   tool learns five contracts. Rejected: one flag, every verb.
 
+## Decision outcome
+
+`--format text|json` is global. `text` is the default; any other value is a
+usage error.
+
+Text, the default:
+
+- `index` prints `indexed N anchors and P path mentions across M files`.
+- `read` prints one definition location per line, `file:start-end`; an
+  ambiguous anchor prints each.
+- `at` prints its answer (`[[rr:AD-3]]` fixes which anchor answers) as a
+  marker in the anchor's minimal unambiguous form: unqualified while the
+  identity resolves uniquely, path-qualified when it does not. Anchors tied
+  on the same innermost span print one marker per line; `--all` prints the
+  whole nest of `[[rr:AD-3]]`, outermost first.
+- `search` prints one line per marker (the file, the line, the marker) and a
+  closing summary; under `--mentions`, the same shape for mentions.
+- `verify` prints one line per finding (the file, the line, the rule) and a
+  closing summary.
+
+`at` prints the bracketed marker because that is what a person pastes. The
+brackets are shell glob metacharacters, so a shell consumer quotes the marker
+(single quotes usually, double when the anchor itself carries a single
+quote); `read` accepts the bracketed form (`[[rr:AD-3]]`), so
+`rr read "$(rr at file:line)"` resolves; a tool that wants a glob-free token
+reads the `anchor` field under JSON.
+
+JSON, under `--format json`: every verb prints one envelope,
+
+```json
+{"format":"rr-json","version":1,"command":"<verb>","data":{}}
+```
+
+- `version` is the contract version: a field may be added without a bump; a
+  field that changes meaning or departs bumps it. A tool checks `format` and
+  `version`, then reads `data`.
+- `data`, per verb. `at` carries `anchors`, always a list (one entry
+  normally, more on a tie or under `--all`), each entry an `anchor` (bare),
+  a `marker` (composed), and the `location` of that definition. `read`
+  carries the `anchor` and its `locations`. `index` carries the `anchors`,
+  `mentions`, and `files` counts. `search` carries `matches`, each a `file`,
+  `line`, `anchor`, and `marker`. `verify` carries `findings`, each a
+  `file`, `line`, and `rule`. Selection flags change list membership, never
+  shape. The field-level schema lives in the module docs beside the writers.
+
+Exit codes: every verb asks a question, and the code reports how it was
+answered, identically under text and JSON.
+
+- `0`: the question got its answer.
+- `1`: the adverse answer. A `read` or an `at` finds nothing or resolves
+  ambiguously; a `search` finds no matching marker (the convention of rg,
+  which scripts already assume of a search tool); a `verify` has findings.
+- `2`: usage error: a malformed argument, an unknown flag, a value
+  `--format` does not name.
+- `3`: the index is stale; a reading verb refuses to answer from stale data.
+  Rebuild with `rr index`, fall back to ripgrep (always fresh), or pass
+  `--no-freshness` to accept the index as-is, which a completion popup
+  mid-keystroke prefers to an error. `search` reads no index
+  (`[[rr:AD-3]]`) and never returns 3.
+
