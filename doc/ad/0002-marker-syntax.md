@@ -14,7 +14,7 @@ is byte-identical to ordinary writing, so no scan can reliably find it: a
 free-text title carries zero lexical signal, and a grammar-bearing token
 (`::`, `#`, `AD-`) over-matches every incidental mention and has no boundary
 rule. Everything that must find a written reference (the `search` and
-`verify` verbs of AD-3, an editor hook, a completion trigger)
+`verify` verbs of `[[rr:AD-3]]`, an editor hook, a completion trigger)
 depends on this record.
 
 ## Decision drivers
@@ -76,7 +76,7 @@ beside its implementation):
   in `\` would emit a `\]]` tail whose first two bytes parse as an escaped
   bracket, leaving the marker unterminated. These three escapes are the
   whole set; a `\` before any other byte makes the token malformed, and the
-  gate reports it (AD-3).
+  gate reports it (`[[rr:AD-3]]`).
 - The canonical extraction regex, run per line, is:
 
 ```text
@@ -109,8 +109,8 @@ beside its implementation):
   markers; the form is greppable in every host (`rg '\[\[rr:'`).
 - The wrapper makes a marker findable, not rename-stable: when an anchor's
   identity changes, every marker of it dangles until edited. The gate
-  reports the dangle (AD-3), and the mention table of
-  AD-5 gives a future rename workflow the occurrence data it
+  reports the dangle (`[[rr:AD-3]]`), and the mention table of
+  `[[rr:AD-5]]` gives a future rename workflow the occurrence data it
   needs.
 - A malformed token is a defect, not a mystery: an unpaired opener outside
   a fence is findable by the same scan that finds markers, so a typo

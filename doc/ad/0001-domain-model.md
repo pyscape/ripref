@@ -45,7 +45,7 @@ Five nouns.
   resolution to identities defined in that file. A bare path is never an
   anchor.
 - **marker**: the written use of an anchor, embedded in a document so that a
-  scan can find it. AD-2 fixes the grammar. A marker resolves or it
+  scan can find it. `[[rr:AD-2]]` fixes the grammar. A marker resolves or it
   dangles; it carries no other state.
 - **location**: a place in the tree: `file:start-end`, with 1-based inclusive
   line numbers, and `file:line` abbreviating a single-line span. The span is
@@ -55,7 +55,7 @@ Five nouns.
   marker, a path written as prose, or the fragile bare `path:line` form.
 - **index**: rr's one artifact, derived and rebuildable: the map from each
   anchor to its definition locations, beside which it records where prose
-  writes paths (AD-5). rr writes nothing else and stores no file
+  writes paths (`[[rr:AD-5]]`). rr writes nothing else and stores no file
   content.
 
 A **kind** is a named class of anchors declared in configuration. A kind
@@ -75,7 +75,7 @@ Invariants every kind obeys, fixed here and not configurable:
   in the source is the identity, exactly.
 - `/` is the path separator in every written form (qualifiers, locations,
   prose). A `\` separator is accepted as CLI input and is normalized to `/`
-  in everything rr prints; the escape bytes of AD-2 are not
+  in everything rr prints; the escape bytes of `[[rr:AD-2]]` are not
   separators.
 - An anchor resolves to zero, one, or many definitions. Many is ambiguity:
   resolution returns every definition, and the path qualifier is the
@@ -109,14 +109,14 @@ tightest anchor.
 - Any format joins by configuration; this record never amends for one.
 - A file move dangles no unqualified reference, because no kind may name a
   path. A path qualifier, written by hand or emitted for an ambiguous
-  identity (AD-4), trades move-stability for precision: the
+  identity (`[[rr:AD-4]]`), trades move-stability for precision: the
   qualified anchor dangles if the qualifying file moves, and the gate
-  reports it (AD-3).
+  reports it (`[[rr:AD-3]]`).
 - Identical titles are legal and ambiguous, not errors; the qualifier
   resolves them. A cross-kind collision (a heading and a symbol sharing an
   identity) is the same ambiguity.
 - Comparison is unforgiving by design: a marker that differs from its
-  definition by case dangles, and the gate reports it (AD-3).
+  definition by case dangles, and the gate reports it (`[[rr:AD-3]]`).
   Forgiveness would make resolution nondeterministic across profiles.
 
 Extension seams: a future record may add kinds through configuration, and

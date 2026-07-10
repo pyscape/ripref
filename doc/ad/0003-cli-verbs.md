@@ -41,7 +41,7 @@ storage, retention, and credential surface the index does not need.
 The verbs:
 
 - **`index`** builds or refreshes the index: every anchor's definitions and
-  every path mention (AD-5) in scoped text. It is the only verb
+  every path mention (`[[rr:AD-5]]`) in scoped text. It is the only verb
   that writes, and it writes only the one artifact of `[[rr:AD-1]]`.
   **Scoped text** is
   the working tree, honoring `.gitignore` when the project provides one and
@@ -51,13 +51,13 @@ The verbs:
   locations.
 - **`at`** takes a `file:line` location and answers with the innermost
   anchor whose definition covers that line (the span rule of `[[rr:AD-1]]`);
-  under `--all` it reports the whole nest. AD-4 fixes the printed
+  under `--all` it reports the whole nest. `[[rr:AD-4]]` fixes the printed
   form. `at` is the one verb that produces a marker; no flag duplicates it.
 - **`search`** lists the markers scoped text writes, each with the location
   it sits at. An optional anchor argument filters the listing: an
   unqualified argument matches every marker whose identity equals it,
   path-qualified or not; a qualified argument matches exactly. Under
-  `--mentions` it lists path mentions instead of markers (AD-5).
+  `--mentions` it lists path mentions instead of markers (`[[rr:AD-5]]`).
   `search` is purely lexical: it reads no index, so it also runs on text
   outside any project.
 - **`verify`** is the only gate. It judges the references scoped text
@@ -69,12 +69,12 @@ The verbs:
      qualifier of `[[rr:AD-1]]` is the writer's fix.
   4. **path-only marker**: wraps what is lexically a path and no identity. A
      marker that carries nothing beyond a path adds nothing over the path
-     written as prose, which AD-5 already keeps honest.
+     written as prose, which `[[rr:AD-5]]` already keeps honest.
   5. **bare `path:line` reference**: a line number rots faster than anything
      it points at; the marker is the fix.
   6. **stale path mention**: a prose path that names nothing in the tree.
      Detection and judgment grammar for this and for `path:line`:
-     AD-5.
+     `[[rr:AD-5]]`.
 
 Load-bearing rules:
 
@@ -84,7 +84,7 @@ Load-bearing rules:
   that document. rr has no inverse verb.
 - `search` locates, `verify` judges.
 - Many definitions make a read ambiguous (the adverse answer,
-  AD-4) and give `verify` a finding; they do not make the marker
+  `[[rr:AD-4]]`) and give `verify` a finding; they do not make the marker
   invalid (`[[rr:AD-1]]`).
 - `index` is deliberately both the artifact and the verb that builds it; the
   pair shares one name because the verb does nothing else.
@@ -106,12 +106,12 @@ Load-bearing rules:
 
 Extension seams: a future record may add a verb only by extending the job
 over the same nouns; the rename workflow over the mention table of
-AD-5 is the anticipated case.
+`[[rr:AD-5]]` is the anticipated case.
 
 ## Dogfooding
 
 - This record's title defines `AD-3`; `[[rr:AD-3]]` resolves to it.
-- The CLI lives across three files, each a path mention AD-5
+- The CLI lives across three files, each a path mention `[[rr:AD-5]]`
   tracks: flags in src/cli.rs, per-verb handlers in src/commands.rs,
   dispatch in src/lib.rs.
 - `[[rr:src/cli.rs#parse_reference]]` narrows the reference parser to its
