@@ -1,10 +1,12 @@
 /*!
-Lexical scanning for markers over structured hosts.
+Lexical scanners for markers and path mentions.
 
-`search` and `verify` (`[[rr:AD-3]]`) run this over scoped text. The region
-rules are `[[rr:AD-2]]`'s: in a Markdown host, prose and inline code spans whose
-content begins with the marker opener are read and fenced blocks are invisible;
-a structureless host is read per raw line.
+`search` and `verify` (`[[rr:AD-3]]`) run these over scoped text; `index`
+runs the mention half to fill the mention table (`[[rr:AD-5]]`). The region
+rules are `[[rr:AD-2]]`'s: in a Markdown host, prose and inline code spans
+whose content begins with the marker opener are read and fenced blocks are
+invisible; a structureless host is read per raw line. Mentions qualify only
+in prose, and marker interiors are excluded from the mention scan.
 */
 
 use crate::marker;
@@ -16,13 +18,16 @@ pub struct Found {
     pub what: What,
 }
 
-/// What the scanner finds.
+/// What the scanners find.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum What {
     /// A well-formed marker: the raw bytes as written and the decoded anchor.
     Marker { raw: String, anchor: String },
     /// A `[[rr:` opener with no well-formed marker behind it.
     Malformed { reason: String },
+    /// A path mention; `line_ref` is set when `:` and digits follow it (the
+    /// bare `path:line` form).
+    Mention { token: String, line_ref: bool },
 }
 
 /// The host structure a file exposes to the scan.
@@ -42,7 +47,8 @@ pub fn host_for(ext: Option<&str>) -> Host {
     }
 }
 
-/// Scan one file's content for markers across every scanned region.
+/// Scan one file's content. Markers and malformed openers come from every
+/// scanned region; mentions come from prose only.
 pub fn scan(content: &str, host: Host) -> Vec<Found> {
     let mut out = Vec::new();
     let mut fence: Option<&str> = None; // the delimiter that opened the fence
@@ -79,8 +85,8 @@ pub fn scan(content: &str, host: Host) -> Vec<Found> {
     out
 }
 
-/// Scan one region segment for markers. A code span is read only when its
-/// content begins with the marker opener.
+/// Scan one region segment. A code span is read only when its content begins
+/// with the marker opener, and never for mentions.
 fn scan_segment(text: &str, is_span: bool, lineno: u64, out: &mut Vec<Found>) {
     if is_span {
         if text.starts_with(marker::OPENER) {
@@ -101,6 +107,9 @@ fn scan_segment(text: &str, is_span: bool, lineno: u64, out: &mut Vec<Found>) {
         return;
     }
 
+    // Prose: find every marker occurrence, remembering the spans they cover
+    // so the mention pass skips marker interiors.
+    let mut covered: Vec<(usize, usize)> = Vec::new();
     let mut from = 0;
     while let Some(rel) = text[from..].find(marker::OPENER) {
         let start = from + rel;
@@ -113,6 +122,7 @@ fn scan_segment(text: &str, is_span: bool, lineno: u64, out: &mut Vec<Found>) {
                         anchor,
                     },
                 });
+                covered.push((start, start + len));
                 from = start + len;
             }
             marker::Token::Malformed(reason) => {
@@ -120,10 +130,67 @@ fn scan_segment(text: &str, is_span: bool, lineno: u64, out: &mut Vec<Found>) {
                     line: lineno,
                     what: What::Malformed { reason },
                 });
+                covered.push((start, text.len()));
                 from = start + marker::OPENER.len();
             }
         }
     }
+
+    mentions_in(text, &covered, lineno, out);
+}
+
+/// Tokenize `text` for path mentions, skipping any byte range in `covered`.
+fn mentions_in(text: &str, covered: &[(usize, usize)], lineno: u64, out: &mut Vec<Found>) {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if !is_token_byte(bytes[i]) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && is_token_byte(bytes[i]) {
+            i += 1;
+        }
+        if covered.iter().any(|&(s, e)| start < e && i > s) {
+            continue; // inside (or overlapping) a marker: excluded
+        }
+        let mut token = &text[start..i];
+        // A sentence-final dot is punctuation, not path text.
+        while let Some(t) = token.strip_suffix('.') {
+            token = t;
+        }
+        if !is_path_shaped(token) {
+            continue;
+        }
+        let line_ref =
+            bytes.get(i) == Some(&b':') && bytes.get(i + 1).is_some_and(|b| b.is_ascii_digit());
+        out.push(Found {
+            line: lineno,
+            what: What::Mention {
+                token: token.to_string(),
+                line_ref,
+            },
+        });
+    }
+}
+
+/// The mention token charset: path text plus `/` separators. Anything else
+/// delimits a token.
+fn is_token_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-' | b'/')
+}
+
+/// Whether a token is lexically a path: two or more nonempty `/`-separated
+/// segments (`[[rr:AD-5]]`). Root-relative only: a leading, trailing, or
+/// doubled separator disqualifies, and so does a `.` or `..` segment, since a
+/// mention never traverses out of the tree it is judged against.
+pub fn is_path_shaped(token: &str) -> bool {
+    token.contains('/')
+        && token.split('/').count() >= 2
+        && token
+            .split('/')
+            .all(|s| !s.is_empty() && s != "." && s != "..")
 }
 
 /// Split one Markdown line into prose and inline-code-span segments. Spans
@@ -144,6 +211,7 @@ fn split_inline(line: &str) -> Vec<(&str, bool)> {
             pos += 1;
         }
         let ticks = pos - open_start;
+        // Find the next run of exactly `ticks` backticks.
         let mut probe = pos;
         let mut close: Option<(usize, usize)> = None;
         while probe < bytes.len() {
@@ -160,6 +228,8 @@ fn split_inline(line: &str) -> Vec<(&str, bool)> {
                 break;
             }
         }
+        // An unclosed opener leaves `close` empty: the backticks are literal
+        // prose, and the scan just keeps going.
         if let Some((close_start, close_end)) = close {
             if prose_from < open_start {
                 parts.push((&line[prose_from..open_start], false));
@@ -185,6 +255,13 @@ mod tests {
             .map(|f| match f.what {
                 What::Marker { anchor, .. } => format!("{}:marker:{anchor}", f.line),
                 What::Malformed { .. } => format!("{}:malformed", f.line),
+                What::Mention { token, line_ref } => {
+                    format!(
+                        "{}:mention:{token}{}",
+                        f.line,
+                        if line_ref { ":line" } else { "" }
+                    )
+                }
             })
             .collect()
     }
@@ -207,6 +284,51 @@ mod tests {
     fn malformed_opener_is_reported() {
         let got = kinds("an unpaired [[rr:oops opener\n", Host::Markdown);
         assert_eq!(got, vec!["1:malformed"], "{got:?}");
+    }
+
+    #[test]
+    fn mentions_come_from_prose_only() {
+        let text = "the parser in src/cli.rs, not `src/other.rs`, and and/or aside\n";
+        let got = kinds(text, Host::Markdown);
+        assert_eq!(
+            got,
+            vec!["1:mention:src/cli.rs", "1:mention:and/or"],
+            "{got:?}"
+        );
+    }
+
+    #[test]
+    fn marker_interiors_are_not_mentions() {
+        let text = "[[rr:src/cli.rs#parse_reference]] narrows it\n";
+        let got = kinds(text, Host::Markdown);
+        assert_eq!(got, vec!["1:marker:src/cli.rs#parse_reference"], "{got:?}");
+    }
+
+    #[test]
+    fn path_line_lookahead_sets_line_ref() {
+        let got = kinds("broken at src/cli.rs:42 yesterday\n", Host::Plain);
+        assert_eq!(got, vec!["1:mention:src/cli.rs:line"], "{got:?}");
+    }
+
+    #[test]
+    fn sentence_final_dot_is_stripped() {
+        let got = kinds("it lives in doc/ad.\n", Host::Plain);
+        assert_eq!(got, vec!["1:mention:doc/ad"], "{got:?}");
+    }
+
+    #[test]
+    fn path_shape_rejects_urls_and_fragments() {
+        assert!(is_path_shaped("src/cli.rs"));
+        assert!(is_path_shaped("doc/ad"));
+        assert!(is_path_shaped("and/or"));
+        assert!(!is_path_shaped("README.md"));
+        assert!(!is_path_shaped("/abs/path"));
+        assert!(!is_path_shaped("dir/"));
+        assert!(!is_path_shaped("a//b"));
+        assert!(!is_path_shaped("//host/share"));
+        assert!(!is_path_shaped("../../README.md"));
+        assert!(!is_path_shaped("./relative/form"));
+        assert!(!is_path_shaped("src/../escape"));
     }
 
     #[test]
