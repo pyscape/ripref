@@ -1,93 +1,95 @@
 # Decision-record traceability
 
-An architecture decision record (ADR) explains why the code looks the way it
-does, but the link between the two rots fast. The ADR says "see the parser", the
-parser moves, and now the record points at nothing; and a bare `AD-42` written
-into the code carries no marker, so the next person rewriting it never learns
-there was a decision to honor, and no scan can list where the decision is relied
-on. This use case ties each record to the code that implements it in both
-directions: the ADR cites the symbol anchors it constrains, and the code (or its
-PR) cites the `AD-42` record back. Each citation is a findable marker,
-`[[rr:...]]`, around a stable anchor, so it survives the next refactor and a scan
-can always locate it.
+A decision record explains why the code looks the way it does, and the link
+between the two rots in both directions: the record names an implementation
+that moves out from under it, and the code drifts from a record nobody
+rereads. A bare `AD-42` dropped into a comment does not help, because it is
+byte-identical to ordinary prose: no scan can list where the decision is
+relied on, so nothing reports the break. rr makes each end of the link a
+resolvable marker and gates the pair in CI.
 
-## The pattern
+## The record anchor
 
-Author the two-way link with the readers, keep it fresh with the writer:
+The record kind of `[[rr:AD-1]]` gives every decision record a stable
+identity for free: a title opening with an ID of uppercase letters, one
+hyphen, and digits, immediately followed by the title's first colon, defines
+the record anchor. A title `AD-42: Hand-rolled record parser` defines
+`AD-42`. The record is keyed by that ID, not by its file's path, so the
+anchor survives the file moving or the directory renumbering; the records
+under doc/ad each define their own anchor exactly this way.
 
-```
-rr index                  # build / refresh the index
-rr at src/parser.rs:118   # a line -> the symbol anchor an ADR cites
-rr read AD-42             # the record id -> where the decision lives
-```
+## The two-way pattern
 
-- ADR -> code: in the record, cite the symbol anchors it governs as markers,
-  never a `file:line`. Get each anchor from `rr at <file>:<line>` on a line in
-  the implementation, then write `[[rr:<anchor>]]` into the ADR's "implemented
-  by" list.
-- code -> ADR: in the implementing code (or the PR description) cite the decision
-  as `[[rr:AD-42]]`. The marker is what a later scan finds and what tells the
-  next editor a reference exists; a bare `AD-42` is indistinguishable from prose.
-- The record anchor and the symbol anchor are the durable ends of the link, and
-  the `[[rr:...]]` wrapper is the marker that makes each end findable. A line
-  number is only ever a transient resolution of one of them.
+- Record to code: the record's "implemented by" list carries symbol markers.
+  Get each one from `rr at` on a line inside the implementation; `at` prints
+  the bracketed marker of the innermost anchor covering that line, ready to
+  paste.
+- Code to record: the implementing code, or the PR description that lands
+  it, carries the record marker in a comment. It comes from the same verb:
+  `rr at` on the record's title line prints the record's marker, ready to
+  paste.
 
-Worked example. You are editing the parser and want to record why it is
-hand-rolled rather than generated:
+Worked example: the parser is hand-rolled, and a record says why.
 
 ```
 $ rr at src/parser.rs:118
-parser::Parser::parse_record
+[[rr:Parser::parse_record]]
 ```
 
-The ADR's "implemented by" line then carries
-`[[rr:parser::Parser::parse_record]]`, not `src/parser.rs:118`. In the function
-itself (and in the PR that adds it) you cite `[[rr:AD-42]]`, and anyone who lands
-there resolves the decision with:
+That marker goes into the record's "implemented by" list. Anyone who lands
+on the comment in the parser resolves the decision:
 
 ```
 $ rr read AD-42
-docs/adr/0042-hand-rolled-parser.md:1-37
-# AD-42: Hand-rolled record parser
-...
+doc/ad/0042-hand-rolled-parser.md:1-37
 ```
 
-## What makes the link real
+`at` and `read` invert each other: a location in, a marker out; a marker in,
+the definition's location out.
 
-Both ends are anchors, so both move with the code. Rename `parse_record` and
-the ADR's `[[rr:parser::Parser::parse_record]]` marker still resolves; relocate
-the ADR file and the code's `[[rr:AD-42]]` reference still resolves, because a
-record anchor is keyed on its identifier, not its path. The marker adds the
-property the bare form lacked: the reference is locatable, so a scan finds every
-citation without mistaking an incidental mention of the id for one. Freshness is
-enforced on resolution: if the parser changed after the last `rr index`,
-`rr read` and `rr at` exit 3 rather than hand you a stale location, so a citation
-is either correct or loudly out of date, never quietly wrong. Record anchors live
-in the same namespace as symbols, headings and scenarios, so the same two
-commands author every kind of cross-reference.
+## Impact analysis
 
-## Limits to know today
+Before changing or superseding a decision, list everything that leans on it.
+`rr search AD-42` lists every marker of the record across docs, specs,
+comments, and commit messages, each with the location it sits at:
 
-- rr writes and follows the marker one anchor at a time. The readers strip a
-  pasted `[[rr:...]]` wrapper before resolving, so either form works on the CLI
-  (`rr read AD-42` or `rr read '[[rr:AD-42]]'`); single-quote the marker in a
-  shell because `[` is a glob.
-- rr does not yet list all the places `AD-42` is cited, or check that every
-  "implemented by" marker in an ADR still resolves. `rr search AD-42` (find every
-  citation of a record) is planned, not yet implemented.
-- The audit half of traceability is also planned: `rr enforce` would flag a
-  dangling `[[rr:AD-42]]` marker, an ADR marker to a symbol that no longer
-  exists, and a bare `file:line` used where a marker belongs. Today those checks
-  are manual.
-- `rr read AD-42` resolves the record to its file anchor span; the record must be
-  in a file rr is configured to scan as records (see Configuration in the
-  README). Which patterns count as a record is configuration, not hardcoded.
+```
+$ rr search AD-42
+src/parser.rs:114: [[rr:AD-42]]
+doc/spec/parsing.md:31: [[rr:AD-42]]
+tests/features/parse.feature:3: [[rr:AD-42]]
+3 markers
+```
+
+## The gate
+
+`rr verify` runs in CI and exits 1 on findings. For this pattern it reports:
+
+- A dangling record marker: the record was deleted, and every marker of
+  `AD-42` written into code resolves to nothing.
+- A dangling symbol marker: the symbol was renamed, and the record's
+  "implemented by" marker names an identity that no longer exists. A marker
+  is findable, not rename-stable; the gate turns the dangle into a build
+  failure instead of a quiet lie.
+- An ambiguous marker: two records claim one ID, and resolution returns both
+  definitions. The writer's fix is the path qualifier, `path#identity`,
+  which narrows the marker to the record defined in one file.
+
+## Both ends survive change
+
+Both ends of the link are identities. The symbol marker names the function,
+not the file, so the parser file moving changes nothing; the record marker
+names the ID, not the path, so the record file moving changes nothing
+either. rr stores no file content: a read resolves against the index of the
+live tree, and freshness is checked at resolution, so a stale index exits 3
+rather than answering wrong; `rr index` rebuilds it. The link is either
+correct, loudly stale, or a gate finding, never quietly broken.
 
 ## Why it is worth it
 
-A decision and its implementation stay connected through every rename, move and
-rewrite, in both directions, with no manual bookkeeping, and each connection is
-now a marker a scan can find rather than a bare id hiding in prose. The next
-person to touch `parse_record` can find `[[rr:AD-42]]` from the code, and the
-next person to read `AD-42` can find the code from the record, and neither link
-silently breaks the way a `file:line` would.
+A decision and its implementation stay attached through every rename, move,
+and rewrite, and the attachment is machine-checked on every commit. The next
+person to edit the parser finds the record from the comment; the next person
+to reread the record finds the code from its list; and when either end
+changes out from under the other, `rr verify` says so before the merge, in
+an exit code a CI job reads without parsing any output.
