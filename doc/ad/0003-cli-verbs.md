@@ -36,3 +36,56 @@ storage, retention, and credential surface the index does not need.
 - **Five verbs over one index.** Build the map, resolve a marker, produce a
   marker, list the markers written, judge them. Taken.
 
+## Decision outcome
+
+The verbs:
+
+- **`index`** builds or refreshes the index: every anchor's definitions and
+  every path mention (AD-5) in scoped text. It is the only verb
+  that writes, and it writes only the one artifact of `[[rr:AD-1]]`.
+  **Scoped text** is
+  the working tree, honoring `.gitignore` when the project provides one and
+  the scan configuration of the profile, or exactly the paths a caller
+  passes; `index`, `search`, and `verify` share this definition.
+- **`read`** resolves a marker, or a bare anchor, to the anchor's definition
+  locations.
+- **`at`** takes a `file:line` location and answers with the innermost
+  anchor whose definition covers that line (the span rule of `[[rr:AD-1]]`);
+  under `--all` it reports the whole nest. AD-4 fixes the printed
+  form. `at` is the one verb that produces a marker; no flag duplicates it.
+- **`search`** lists the markers scoped text writes, each with the location
+  it sits at. An optional anchor argument filters the listing: an
+  unqualified argument matches every marker whose identity equals it,
+  path-qualified or not; a qualified argument matches exactly. Under
+  `--mentions` it lists path mentions instead of markers (AD-5).
+  `search` is purely lexical: it reads no index, so it also runs on text
+  outside any project.
+- **`verify`** is the only gate. It judges the references scoped text
+  writes and reports findings of exactly six kinds:
+  1. **malformed marker**: an unpaired opener outside a fence, an undefined
+     escape, an unterminated token (`[[rr:AD-2]]`).
+  2. **dangling marker**: resolves to no definition.
+  3. **ambiguous marker**: resolves to more than one definition; the
+     qualifier of `[[rr:AD-1]]` is the writer's fix.
+  4. **path-only marker**: wraps what is lexically a path and no identity. A
+     marker that carries nothing beyond a path adds nothing over the path
+     written as prose, which AD-5 already keeps honest.
+  5. **bare `path:line` reference**: a line number rots faster than anything
+     it points at; the marker is the fix.
+  6. **stale path mention**: a prose path that names nothing in the tree.
+     Detection and judgment grammar for this and for `path:line`:
+     AD-5.
+
+Load-bearing rules:
+
+- `at` and `read` invert each other: `at` turns a location into a marker,
+  and `read` turns a marker back into locations.
+- A marker lives in the document that writes it; it is removed by editing
+  that document. rr has no inverse verb.
+- `search` locates, `verify` judges.
+- Many definitions make a read ambiguous (the adverse answer,
+  AD-4) and give `verify` a finding; they do not make the marker
+  invalid (`[[rr:AD-1]]`).
+- `index` is deliberately both the artifact and the verb that builds it; the
+  pair shares one name because the verb does nothing else.
+
