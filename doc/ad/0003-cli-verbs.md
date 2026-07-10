@@ -89,3 +89,30 @@ Load-bearing rules:
 - `index` is deliberately both the artifact and the verb that builds it; the
   pair shares one name because the verb does nothing else.
 
+### Consequences
+
+- `rr --help` reads as five verbs over one index, and a reader learns the
+  whole tool from it.
+- rr stores no content (`[[rr:AD-1]]`), so it raises no credential surface
+  and owns no retention or garbage-collection policy. rr does not preserve a
+  referenced definition against deletion and does not report when its
+  content changes: a marker resolves or it dangles (`[[rr:AD-1]]`). That is
+  the tool's identity, not a gap; content history belongs to version
+  control.
+- rr runs without git (`[[rr:AD-1]]`). It indexes the working tree; a
+  clean-tree freshness fast-path may consult git and falls back to an mtime
+  walk.
+- A CI job gates on `verify` alone; the other verbs never judge.
+
+Extension seams: a future record may add a verb only by extending the job
+over the same nouns; the rename workflow over the mention table of
+AD-5 is the anticipated case.
+
+## Dogfooding
+
+- This record's title defines `AD-3`; `[[rr:AD-3]]` resolves to it.
+- The CLI lives across three files, each a path mention AD-5
+  tracks: flags in src/cli.rs, per-verb handlers in src/commands.rs,
+  dispatch in src/lib.rs.
+- `[[rr:src/cli.rs#parse_reference]]` narrows the reference parser to its
+  file, the qualified form of `[[rr:AD-1]]`.
