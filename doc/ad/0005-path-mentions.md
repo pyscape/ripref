@@ -34,3 +34,42 @@ prose paths honest, it must also know where paths are written.
   forbids the form and `[[rr:AD-3]]` reports it. Rejected.
 - **Record mentions at index time, judge them at verify time.** Taken.
 
+## Decision outcome
+
+A **path mention** is a delimited token of two or more nonempty segments
+separated by `/`, containing no colon. src/cli.rs in this sentence is a
+mention; a lone filename or a bare separator is not. The exact token charset
+is pinned in the module docs beside the marker regex of `[[rr:AD-2]]`.
+
+Load-bearing rules:
+
+- Mention scanning reads the regions marker scanning reads (`[[rr:AD-2]]`),
+  over the scope of `[[rr:AD-3]]`; since an inline code span is read just
+  when its content begins with the marker opener, which no mention does, a
+  mention qualifies only in prose. The interior of a marker is excluded, so
+  a path-qualified marker never also counts as a mention, and a moved file
+  reports once, not twice.
+- `index` records every mention with the location it sits at, beside the
+  anchor map. The anchor map of `[[rr:AD-1]]` answers where an identity is
+  defined; the mention table answers where a path is written.
+- `index` records a mention whether or not the path exists. Existence is the
+  gate's judgment, at the gate's time, against the live tree.
+- `verify` judges a mention only when its first segment names a directory
+  that exists in the tree or a configured scope root; a judged mention whose
+  full path names nothing is the stale path finding of `[[rr:AD-3]]`. The
+  guard is what keeps the gate quiet: and/or, I/O, and 24/7 are two-segment
+  tokens, but "and", "I", and "24" name no directory, so prose compounds
+  never reach judgment. The cost is recall on a renamed top-level directory,
+  and a missed mention costs only a missed warning.
+- A judged mention immediately followed by `:` and digits is the bare
+  `path:line` finding of `[[rr:AD-3]]`.
+- `search --mentions` (`[[rr:AD-3]]`) lists mentions exactly as `search`
+  lists markers, by this record's grammar.
+- Consumers, stated exactly: `search` and `verify` scan live text
+  (`[[rr:AD-3]]`) and take nothing from the mention table. The table serves
+  completion (with the
+  anchor map: an editor reads the index, or any verb's JSON, to offer real
+  anchors and paths while a reference is being written), and it is the
+  occurrence input a rename workflow needs: when a file moves, the table
+  names every document that wrote the old path.
+
