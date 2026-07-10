@@ -1,99 +1,88 @@
 # Anchored references with Claude Code
 
-An AI coding agent (and people) constantly cite code by `file:line` in commit
-messages, PR comments, docs, and chat. Those coordinates are wrong the moment a
-line is inserted above them, and nothing flags the break. rr replaces that
-fragile coordinate with a stable anchor (a symbol, a heading, a record) that
-keeps pointing at the right thing across edits, moves, and refactors. This use
-case wires rr into a Claude Code workflow so the agent cites anchors, not line
-numbers.
+Agents and people reference code the same fragile way: `file:line` in a
+commit message, a PR comment, a doc, a chat reply. The coordinate is wrong
+the moment a line is inserted above it, and nothing reports the break. rr
+replaces the coordinate with a marker wrapping a stable anchor: the name the
+definition bears (a symbol, a heading, a record ID), which stays correct
+across edits, moves, and refactors. This use case wires rr into Claude Code
+so the agent writes markers, not line numbers.
 
-## The pattern
-
-Three commands, used as a loop:
+## The loop
 
 ```
-rr index                      # build / refresh the index
-rr at path/to/file.rs:42      # a line -> the anchor you should cite
-rr read <anchor>              # an anchor -> its current location, when you need it
+rr index                    # build or refresh the index
+rr at path/to/file.rs:42    # location -> marker, printed ready to paste
+rr read '[[rr:anchor]]'     # marker (or bare anchor) -> location
 ```
 
-- To *write* a citation: run `rr at <file>:<line>`, take the anchor it prints,
-  wrap it as `[[rr:anchor]]` and write that marker into your doc, comment, or
-  message, never a bare anchor or `file:line`.
-- To *follow* a citation: `rr read <anchor>` resolves it; add `--locate` for the
-  current `file:start-end` to hand to an editor.
-- The anchor is the durable reference; a line number is only ever a transient
-  resolution. That is the whole point.
+`rr at` takes the `file:line` you are looking at and prints the marker of
+the innermost anchor whose definition covers that line. Paste it exactly as
+printed, and quote it in a shell: the brackets are glob metacharacters.
+`rr read` inverts it, resolving the marker (or the bare anchor) back to the
+definition's current `file:start-end`. Nothing ever follows a marker's
+closing `]]`, and rr stores no file content: a marker resolves or it
+dangles, and the gate below reports the dangle.
 
-Worked example (this repo): cite a benchmark finding by anchor instead of line.
+A heading anchor spans its whole section, from the title line to the next
+title of the same or higher rank, so `rr at` answers from any body line
+inside the section. BENCHMARKS.md titles a section "Index build: the
+writer"; ask about a line in its table:
 
 ```
-$ rr at BENCHMARKS.md:112
-Index build: the writer
+$ rr at BENCHMARKS.md:118
+[[rr:Index build: the writer]]
 ```
 
-You then cite `[[rr:Index build: the writer]]` in your doc, not the bare
-anchor or `BENCHMARKS.md:112`.
+That marker goes into the commit message or doc as printed, and it still
+resolves after the table grows and every line number under it shifts.
 
-## Enforcing it with Claude Code
+## Two guardrails in Claude Code
 
-Claude Code hooks act on tool calls, not on the model's prose, so enforcement is
-two layers.
+Hooks act on tool calls, not on the model's prose, so the guardrails come
+in two layers.
 
-1. Block `file:line` from being written into files. A `PreToolUse` hook on
-   `Edit` and `Write` scans the new content and rejects a `name.ext:line`
-   pattern, returning a message that tells the agent to resolve the anchor with
-   `rr at` and cite that instead. Model it on a content-blocking hook you already
-   have. Sketch:
+**At write time.** A `PreToolUse` hook on `Edit` and `Write` scans the new
+content outside fenced code blocks and rejects a bare `name.ext:line`
+pattern, except on lines invoking `rr at` or `rr read`, which carry a
+`file:line` on purpose. The rejection tells the agent the fix. Condensed:
 
-   ```
-   # ~/.claude/hooks/block-line-refs.py   (PreToolUse: Edit, Write)
-   # Read the tool input, scan the new content outside fenced code blocks.
-   #
-   # Negative case (always block): a raw filename.ext:line pattern that is not
-   # part of an `rr at` / `rr read` / `rr enforce` command line. Exit non-zero:
-   #   "cite as [[rr:anchor]] (run: rr at <file>:<line> to get the anchor),
-   #    never bare or as a file:line".
-   #
-   # Positive case (AD-1): a [[rr:...]] marker is the valid citation form;
-   # pass it through without complaint. During the grace period, also flag a
-   # bare token that exactly matches a live index anchor and tell the agent to
-   # wrap it: "cite as [[rr:<anchor>]], not the bare form".
-   ```
+```
+# ~/.claude/hooks/block-line-refs.py   (PreToolUse: Edit, Write)
+# Scan the tool input's new content, skipping fenced code blocks.
+# Reject a bare name.ext:line token unless the line invokes rr at or
+# rr read (those carry a file:line on purpose). On rejection, exit
+# non-zero with:
+#   "run: rr at <file>:<line> and paste the marker it prints"
+```
 
-   ```
-   # settings.json
-   "hooks": { "PreToolUse": [ { "matcher": "Edit|Write",
-     "hooks": [ { "type": "command",
-       "command": "python ~/.claude/hooks/block-line-refs.py" } ] } ] }
-   ```
+```
+# settings.json
+"hooks": { "PreToolUse": [ { "matcher": "Edit|Write",
+  "hooks": [ { "type": "command",
+    "command": "python ~/.claude/hooks/block-line-refs.py" } ] } ] }
+```
 
-   Scope it conservatively or it will fire on legitimate `file:line`: exempt
-   fenced code blocks, lines that invoke `rr at` / `rr read` / `rr enforce`
-   (those carry a `file:line` query or output on purpose), and test fixtures.
+**In chat.** No hook intercepts what the model prints, so a standing memory
+rule shapes the prose side: reference with markers, never a bare anchor and
+never `file:line`; get the marker from `rr at` and paste it as printed.
 
-2. Shape the agent's chat citations. No hook can intercept the model's
-   natural-language output, so put a standing instruction in the agent's memory
-   or project rules: "cite as `[[rr:anchor]]`, never bare or as `file:line`;
-   resolve via `rr at` to get the anchor, then wrap it." That is what governs
-   what the agent prints to the screen.
+## The gate
 
-## Limits to know today
-
-- A hook can block file *writes* but not what the agent *prints*; the memory
-  rule covers the chat side, and only as guidance.
-- Heading anchors are line-scoped, so `rr at` on a body line resolves to the
-  file anchor, not the enclosing section. Cite a prose section by its heading
-  anchor. (Section-spanning heading anchors are a planned improvement.)
-- `rr search` and `rr enforce` (find and audit every citation) are planned, not
-  yet implemented. The `[[rr:...]]` marker is precisely what makes them
-  implementable: one deterministic scan locates every citation without false
-  positives. Today rr generates and resolves citations but does not yet find
-  existing ones to audit.
+`rr verify` runs in a pre-commit hook or CI and exits 1 on findings, so a
+bad reference fails the build instead of rotting. It judges every reference
+scoped text writes and reports findings of six kinds: malformed, dangling,
+and ambiguous markers, a marker wrapping a bare path, a bare `path:line`
+reference, and a stale path mention (`[[rr:AD-3]]`). Exit codes are uniform
+across the five verbs: 0 is the answer, 1 the adverse answer, 2 a usage
+error, and 3 a stale index, which `rr index` rebuilds.
 
 ## Why it is worth it
 
-The references in your docs, PRs, and agent output stay correct across change,
-and the check can run in a hook (or later in CI via `rr enforce`), not just
-interactively in one editor.
+A reference that names what it means outlives every edit that would have
+broken a line number, and the loop that produces it costs one command. The
+hook makes the marker the cheap default at write time, the memory rule
+carries the habit into chat, and `rr verify` turns whatever slips through
+into a failing check instead of silent rot: the references in your docs,
+commit messages, and agent output stay honest without anyone rereading
+them.
