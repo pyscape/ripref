@@ -1,7 +1,7 @@
 //! Benchmark for the index READER: the query work `rr read` and `rr at` do once
-//! the index exists on disk. (Those are the implemented readers; `rr search` and
-//! `rr enforce` are described in the README but not built yet, so there is nothing
-//! to bench for them.) The only end-to-end query numbers we have otherwise
+//! the index exists on disk. (`rr search` and `rr verify` are lexical scanners
+//! over text, not index readers, so they sit outside this bench's scope.) The
+//! only end-to-end query numbers we have otherwise
 //! come from spawning the `rr` binary under a shell timer, where roughly half of
 //! every sample is the Windows process spawn plus Defender scanning the ~3.9 MB
 //! exe, which drowns the actual lookup. This bench isolates the lookup, but
@@ -34,7 +34,7 @@
 //!                               cost grows with total index size, not just header
 //!                               size.
 //!   query/forward_lookup_hit  - [`Reader::forward_lookup`] of an anchor that
-//!                               exists. This is the README's microsecond claim,
+//!                               exists. This is the microsecond lookup target,
 //!                               and the bench exists to check it. The lookup IS a
 //!                               binary search (O(log n) comparisons), but today it
 //!                               first materializes a record index over the entire
@@ -58,7 +58,7 @@
 //!                               the whole forward section per query, so query cost
 //!                               grows with index size (covering by construction,
 //!                               forward_lookup via the index it rebuilds each
-//!                               call). The microsecond claim holds at small index
+//!                               call). The microsecond target holds at small index
 //!                               sizes but degrades as the corpus grows.
 //!
 //! The index is synthesized (no `indexer::build`, no tree-sitter): the query path
@@ -79,7 +79,7 @@ mod corpus;
 use corpus::{hit_anchor, make_index, miss_anchor};
 
 // File counts bracketing clam (~2,200 files / ~26k anchors). At ~12 anchors per
-// file (one path anchor plus ITEMS_PER_FILE symbol anchors) these land near ~3k
+// file (one module anchor plus ITEMS_PER_FILE symbol anchors) these land near ~3k
 // and ~25k anchors; the third, larger scale makes each operation's scaling with
 // index size unmistakable (see the module header: covering and forward_lookup
 // both grow with the corpus today).
@@ -160,7 +160,7 @@ fn bench_query(c: &mut Criterion) {
             b.iter(|| black_box(Reader::parse(black_box(&mmap[..])).unwrap()));
         });
 
-        // forward_lookup hit: the README's microsecond claim. A binary search,
+        // forward_lookup hit: the microsecond lookup target. A binary search,
         // but preceded by an O(n) rebuild of the record index on every call (see
         // the module header), so this is where the claim is checked against scale.
         group.bench_with_input(

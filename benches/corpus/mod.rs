@@ -27,9 +27,10 @@
 //!     `refidx::serialize` does NOT enforce this, and `Reader::forward_lookup`'s
 //!     binary search is wrong without it.
 //!   - The two anchor-density consts are intentionally different (the on-disk side
-//!     counts the per-file path anchor toward its total, the in-memory side adds it
-//!     on top), but both are tuned so each corpus averages ~12 anchors/file like
-//!     the real clam tree. Keep that ~12 average if you retune either.
+//!     counts every extracted item toward its total, the in-memory side adds a
+//!     file-spanning module anchor on top), but both are tuned so each corpus
+//!     averages ~12 anchors/file like the real clam tree. Keep that ~12 average
+//!     if you retune either.
 
 use std::path::{Path, PathBuf};
 
@@ -41,9 +42,8 @@ use ripref::refidx::{ForwardEntry, IndexData};
 
 // Each generated `.rs` file emits this many extractable items, spread across the
 // construct kinds the Rust anchors query matches (fn / struct / enum / trait /
-// const / type). With the per-file path anchor that the indexer always adds,
-// each Rust file yields roughly this many + 1 anchors; mixed with Markdown the
-// corpus averages close to clam's observed ~12 anchors/file.
+// const / type), so each Rust file yields roughly this many anchors; mixed with
+// Markdown the corpus averages close to clam's observed ~12 anchors/file.
 pub const ITEMS_PER_RS_FILE: usize = 12;
 
 /// One realistic, parseable Rust source file whose item names are derived from
@@ -121,20 +121,21 @@ pub fn index_path_for(root: &Path) -> PathBuf {
 // In-memory index corpus (the reader / query bench)
 // ---------------------------------------------------------------------------
 
-// Symbol anchors emitted per file, on top of the single whole-file path anchor.
+// Symbol anchors emitted per file, on top of one file-spanning module anchor.
 // Total anchors per file is therefore ITEMS_PER_FILE + 1, averaging ~12 like the
 // clam corpus.
 pub const ITEMS_PER_FILE: usize = 11;
 
 /// Build a synthesized-but-realistic [`IndexData`] for `files` files, fully in
-/// memory. Per file `i`: one whole-file path anchor spanning lines 1-200, plus
+/// memory. Per file `i`: one file-spanning module anchor (lines 1-200), plus
 /// `ITEMS_PER_FILE` symbol anchors with realistic-length names and locations in
 /// that same file. Byte length affects parse and scan cost, so the names are the
 /// length of real Rust paths and symbols, not `a0`/`a1`.
 ///
 /// File 0 is given a genuine NEST so [`ripref::refidx::Reader::covering`] on a
-/// mid-line returns depth >= 3: the wide path anchor (1-200), a struct/impl-width
-/// span (40-120), and an inner method span (60-80) all cover line 70.
+/// mid-line returns depth >= 3: the wide module anchor (1-200), a
+/// struct/impl-width span (40-120), and an inner method span (60-80) all cover
+/// line 70.
 ///
 /// `forward` is returned sorted by `anchor` (the writer's invariant, which
 /// `refidx::serialize` does NOT enforce) and `paths` sorted too.
@@ -143,18 +144,18 @@ pub fn make_index(files: usize) -> IndexData {
     let mut paths = Vec::with_capacity(files);
 
     for i in 0..files {
-        // The whole-file path anchor (and a corresponding entry in `paths`).
+        // A file-spanning module anchor (and the file's entry in `paths`).
         let path = format!("crates/c{i}/src/mod{i}.rs");
         forward.push(ForwardEntry {
-            anchor: path.clone(),
+            anchor: format!("mod{i}"),
             location: format!("{path}:1-200"),
         });
         paths.push(path.clone());
 
         if i == 0 {
-            // A genuine nest for `covering`: line 70 sits inside the path anchor
-            // (1-200), this struct/impl-width span (40-120), and the inner method
-            // span (60-80), so covering returns depth >= 3.
+            // A genuine nest for `covering`: line 70 sits inside the module
+            // anchor (1-200), this struct/impl-width span (40-120), and the
+            // inner method span (60-80), so covering returns depth >= 3.
             forward.push(ForwardEntry {
                 anchor: format!("mod{i}::Type{i}"),
                 location: format!("{path}:40-120"),
@@ -192,6 +193,7 @@ pub fn make_index(files: usize) -> IndexData {
         mtime: 1_718_660_000,
         tree: "0123456789abcdef0123456789abcdef01234567".to_string(),
         forward,
+        mentions: Vec::new(),
         paths,
     }
 }
