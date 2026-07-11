@@ -203,8 +203,8 @@ its spec block so a VM run self-documents.
 - **Standard deviation is reported as CV%** wherever a bench is jittery (the
   index build, the e2e harness, the parallel reductions). The regression gate
   (`scripts/bench_regression.py`) is noise-aware for the same reason.
-- **Scope.** `search` and `enforce` are documented in the README but not yet
-  implemented, so there is nothing to bench for them.
+- **Scope.** The reader benches cover the index path (`read`, `at`); the
+  lexical scanners behind `search` and `verify` are unbenched here.
 
 ## Reproducing
 
