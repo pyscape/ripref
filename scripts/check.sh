@@ -55,15 +55,15 @@ run "Format (cargo fmt-check)" cargo fmt-check
 run "Lint (cargo lint)" cargo lint
 run "Test (cargo test --all)" cargo test --all
 
-# The citation grammar's canonical regex (`[[rr:scripts/citation_regex_oracle.py]]`) is the
-# oracle the hand-rolled `citation::decode` is tested against. Re-assert its own
-# contract table (reader, scanner, no-false-positives) here so a regex edit cannot
-# silently change behavior. Skips cleanly when python3 is absent, like the
-# python3/git-gated tests, rather than recording a failure.
+# The marker grammar's canonical regex (scripts/marker_regex_oracle.py) is the
+# oracle the hand-rolled marker::decode is tested against. Re-assert its own
+# contract table (reader, scanner, no-false-positives) here so a regex edit
+# cannot silently change behavior. Skips cleanly when python3 is absent, like
+# the python3/git-gated tests, rather than recording a failure.
 if command -v python3 >/dev/null 2>&1; then
-  run "Citation regex oracle (selfcheck)" python3 scripts/citation_regex_oracle.py --selfcheck
+  run "Marker regex oracle (selfcheck)" python3 scripts/marker_regex_oracle.py --selfcheck
 else
-  printf '\nskip: Citation regex oracle (python3 not found)\n'
+  printf '\nskip: Marker regex oracle (python3 not found)\n'
 fi
 
 if require rumdl "cargo install rumdl --locked"; then

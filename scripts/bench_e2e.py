@@ -15,14 +15,14 @@ rr and rg do different things, so this frames ONE logical task: "locate the
 definition of a symbol S in the corpus."
 
   * rr's model:  one-time `rr index` build, then each query is a cheap indexed
-                 `rr read --locate S`.
+                 `rr read S`.
   * rg's model:  no index; each query is a full `rg` scan for S.
 
 It reports, benchsuite-style (a warmup primes the page cache, then N samples,
 min / mean / stdev over the FULL process wall-clock):
 
   1. `rr index` build: the one-time setup cost (rg has none; reported alone).
-  2. `rr read --locate S` per query vs `rg S` per query, on the same S.
+  2. `rr read S` per query vs `rg S` per query, on the same S.
   3. An equivalence guard (the benchsuite line-count analog): rg's matches must
      include the exact file:line that `rr read` resolves to. If they disagree
      the pair is FLAGGED and its comparison is not trusted.
@@ -255,7 +255,7 @@ def normalize_locations(text):
     '''
     Extract a set of normalized "file:line" tokens from tool output.
 
-    Both rr's `--locate` ("path:start-end") and rg's `-n` ("path:line:match")
+    Both rr's location output ("path:start-end") and rg's `-n` ("path:line:match")
     are reduced to {"path:line"} with forward slashes, so a Windows backslash
     path from rg compares equal to rr's forward-slash path. For an rr span
     "path:start-end" only the start line is kept: that is the line rg's scan is
@@ -293,7 +293,7 @@ def equivalence_guard(rr_cmd, rg_cmd):
     rg_cmd.run(capture=True)
     rr_locs = normalize_locations(rr_cmd.last_stdout.decode('utf-8', 'replace'))
     rg_locs = normalize_locations(rg_cmd.last_stdout.decode('utf-8', 'replace'))
-    # rr read --locate of a well-chosen S yields exactly one location.
+    # rr read of a well-chosen S yields exactly one location.
     if len(rr_locs) != 1:
         return False, ', '.join(sorted(rr_locs)) or '(none)', len(rg_locs)
     rr_loc = next(iter(rr_locs))
@@ -407,10 +407,10 @@ def main():
 
     s = args.symbol
     index_cmd = Command('rr index', [rr_bin, 'index'], cwd=corpus)
-    # --locate keeps rr's output to the bare resolved location, and --no-color
+    # rr read prints the bare resolved location; --no-color
     # keeps it parseable; this is the cheap indexed lookup rr is built for.
     rr_read_cmd = Command(
-        'rr read', [rr_bin, 'read', '--locate', '--no-color', s], cwd=corpus)
+        'rr read', [rr_bin, 'read', '--no-color', s], cwd=corpus)
     # rg's natural model: a plain recursive scan for S, no index. -n gives the
     # file:line the guard checks against rr's resolved location.
     rg_scan_cmd = Command('rg scan', [rg_bin, '-n', s], cwd=corpus)
