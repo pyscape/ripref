@@ -1,14 +1,14 @@
 /*!
-ripref (`rr`) — cite code and prose by stable *anchors* instead of fragile line
-numbers.
+ripref (`rr`) — reference code and prose by stable *anchors* instead of
+fragile line numbers.
 
-This is the **walking skeleton**: the thinnest end-to-end path through the real
-architecture (writer → on-disk index → mmap reader → freshness check), carrying
-only the `path` anchor kind. A file path is the degenerate anchor — it is its
-own stable identity — so this version proves the format, the binary search and
-the `stat`-only freshness signal without any extractor intelligence. Every other
-anchor kind (symbols, scenarios, records, …) layers additively on top of the
-machinery exercised here.
+One writer and many readers over one index. `index` maps each anchor to its
+definition locations and records where prose writes paths; `read` and `at`
+convert between markers and locations; `search` lists the markers a project
+writes; `verify` judges them. The records under doc/ad fix the design: the
+domain model (`[[rr:AD-1]]`), the marker grammar (`[[rr:AD-2]]`), the verbs
+(`[[rr:AD-3]]`), the output contract (`[[rr:AD-4]]`), and path mentions
+(`[[rr:AD-5]]`).
 */
 
 // Lint posture. `rr` mmaps its index, so `unsafe` is expected — but every use
@@ -18,39 +18,33 @@ machinery exercised here.
 #![warn(clippy::all)]
 
 pub mod atomic;
-pub mod blobhash;
-pub mod citation;
 pub mod cli;
 pub mod commands;
-pub mod extractors;
-pub mod git;
+pub mod config;
 pub mod indexer;
 pub mod languages;
 pub mod marker;
 pub mod refidx;
-pub mod sidecar;
+pub mod scan;
 
 use cli::{ParseOutcome, Special, Subcommand};
 
-/// Exit codes, consistent across commands.
+/// Exit codes, one model across the verbs (`[[rr:AD-4]]`): every verb asks a
+/// question, and the code reports how it was answered.
 pub mod exit {
-    /// Success.
+    /// The question got its answer.
     pub const OK: u8 = 0;
-    /// Findings: nothing found, or an ambiguous match.
-    pub const FINDINGS: u8 = 1;
-    /// Usage error (bad flags, bad anchor syntax).
+    /// The adverse answer: nothing found, an ambiguous resolution, no
+    /// matching marker, or `verify` findings.
+    pub const ADVERSE: u8 = 1;
+    /// Usage error (bad flags, bad reference syntax).
     pub const USAGE: u8 = 2;
     /// The index is stale — rebuild with `rr index`, or fall back to ripgrep.
     pub const STALE: u8 = 3;
-    /// A tracked reference has drifted: the current content differs from the
-    /// baseline it was pinned at (`rr read ~` / `rr verify`).
-    pub const DRIFTED: u8 = 4;
-    /// A reference is broken: a snapshot/commit that cannot be resolved or
-    /// recovered, or an ambiguous pin (`rr read @` / `rr verify`).
-    pub const BROKEN: u8 = 5;
 }
 
-/// Parse argv, dispatch to the chosen command, and return the process exit code.
+/// Parse argv, dispatch to the chosen command, and return the process exit
+/// code.
 pub fn run() -> u8 {
     let argv: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
     let args = match cli::parse(&argv) {
@@ -74,11 +68,8 @@ pub fn run() -> u8 {
         Subcommand::Index => commands::run_index(&args),
         Subcommand::Read => commands::run_read(&args),
         Subcommand::At => commands::run_at(&args),
-        Subcommand::Cite => commands::run_cite(&args),
-        Subcommand::Track => commands::run_track(&args),
+        Subcommand::Search => commands::run_search(&args),
         Subcommand::Verify => commands::run_verify(&args),
-        Subcommand::Uncite => commands::run_uncite(&args),
-        Subcommand::Untrack => commands::run_untrack(&args),
     };
 
     match result {

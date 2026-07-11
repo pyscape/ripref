@@ -1,31 +1,36 @@
 /*!
-Command implementations: the single writer (`index`) and one reader (`read`).
+Command implementations for the five verbs of `[[rr:AD-3]]`: the single
+writer (`index`), the index readers (`read`, `at`), the lexical lister
+(`search`), and the gate (`verify`).
 
-Each returns `Ok(exit_code)` for a normal outcome (including findings/stale,
-which are non-zero but not errors) or `Err(message)` for a usage-level failure
-the caller reports as exit `2`.
+Each returns `Ok(exit_code)` for a normal outcome (including adverse and
+stale, which are non-zero but not errors) or `Err(message)` for a
+usage-level failure the caller reports as exit `2`. Output shapes and exit
+codes follow `[[rr:AD-4]]`.
 */
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use memmap2::Mmap;
 
 use crate::atomic;
-use crate::citation::{self, Citation, Decoded};
-use crate::cli::{self, LowArgs, OutputFormat, Reference, Sigil};
+use crate::cli::{self, LowArgs, OutputFormat};
+use crate::config;
 use crate::exit;
-use crate::git;
 use crate::indexer;
+use crate::marker;
 use crate::refidx::{self, AnchorHit, Reader};
-use crate::sidecar::{self, Content, Kind, Manifest, Pin, Record, ResolveError, Sidecar, Tomb};
+use crate::scan::{self, What};
 
-/// `rr index` — build/refresh the index from the working tree.
+/// `rr index` — build/refresh the index from the working tree: anchors and
+/// path mentions.
 pub fn run_index(args: &LowArgs) -> Result<u8, String> {
     let root = Path::new(".");
     let index_path = PathBuf::from(cli::index_path(args));
+    let cfg = config::load(root);
+    let scope = config::scope_matcher(root, &cfg)?;
 
-    let data = indexer::build(root, &index_path)
+    let data = indexer::build(root, &index_path, &scope)
         .map_err(|e| format!("failed to walk the working tree: {e}"))?;
     let bytes = refidx::serialize(&data);
 
@@ -35,25 +40,39 @@ pub fn run_index(args: &LowArgs) -> Result<u8, String> {
                 .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
         }
     }
-    // Atomic replace, not a truncate-in-place: a reader (which mmaps this file)
-    // must see either the whole old index or the whole new one, never a torn
-    // half-write. See `crate::atomic`.
+    // Atomic replace, not a truncate-in-place: a reader (which mmaps this
+    // file) must see either the whole old index or the whole new one, never
+    // a torn half-write. See `crate::atomic`.
     atomic::atomic_write(&index_path, &bytes)
         .map_err(|e| format!("failed to write {}: {e}", index_path.display()))?;
 
-    if !args.quiet {
-        println!(
-            "indexed {} anchors across {} files",
+    match args.format {
+        OutputFormat::Json => println!(
+            "{}",
+            envelope(
+                "index",
+                &format!(
+                    r#"{{"anchors":{},"mentions":{},"files":{}}}"#,
+                    data.forward.len(),
+                    data.mentions.len(),
+                    data.paths.len()
+                ),
+            )
+        ),
+        OutputFormat::Text if args.quiet => {}
+        OutputFormat::Text => println!(
+            "indexed {} anchors and {} path mentions across {} files",
             data.forward.len(),
+            data.mentions.len(),
             data.paths.len()
-        );
+        ),
     }
     Ok(exit::OK)
 }
 
 /// Open the index, mmap it, parse the header, and gate on freshness before
-/// handing a [`Reader`] to `f`. This is the shared preamble of every reader
-/// command: a missing or stale index short-circuits to `exit::STALE` without
+/// handing a [`Reader`] to `f`. This is the shared preamble of every reading
+/// verb: a missing or stale index short-circuits to `exit::STALE` without
 /// ever calling `f`. The `Reader` borrows the mmap, so it cannot be returned
 /// past its backing buffer — a closure keeps both alive for the call.
 fn with_fresh_reader<F>(
@@ -93,14 +112,15 @@ enum IndexState {
 
 /// Open the index, copy it into owned bytes, and report whether it is fresh.
 /// A corrupt index is an error (mapped to `corrupt index` by the caller); a
-/// missing or stale one is a non-error state the caller maps to its own exit.
+/// missing or stale one is a non-error state the caller maps to its own
+/// exit.
 ///
-/// The mapping is released (copied into a `Vec`) before `fresh` runs, because
-/// `fresh` may spawn `git status` and, on Windows, a concurrent `rr index`
-/// replaces this file; holding a mapping across that is the fragile case. The
-/// atomic write in `rr index` is what actually prevents a torn read; copying out
-/// is defense in depth, plus an `fs::read` fallback for the rare platform where
-/// mmap of a valid file fails to open.
+/// The mapping is released (copied into a `Vec`) before `fresh` runs,
+/// because `fresh` may spawn `git status` and, on Windows, a concurrent
+/// `rr index` replaces this file; holding a mapping across that is the
+/// fragile case. The atomic write in `rr index` is what actually prevents a
+/// torn read; copying out is defense in depth, plus an `fs::read` fallback
+/// for the rare platform where mmap of a valid file fails to open.
 fn load_index(index_path: &Path, root: &Path, skip_freshness: bool) -> Result<IndexState, String> {
     let file = match std::fs::File::open(index_path) {
         Ok(f) => f,
@@ -108,8 +128,8 @@ fn load_index(index_path: &Path, root: &Path, skip_freshness: bool) -> Result<In
     };
     let bytes: Vec<u8> = {
         // SAFETY: the index is a regular file we just opened; `rr index`
-        // publishes new contents with an atomic rename, so the mapped inode is
-        // always a complete image and is never mutated under us.
+        // publishes new contents with an atomic rename, so the mapped inode
+        // is always a complete image and is never mutated under us.
         #[allow(unsafe_code)] // the one justified unsafe in the crate (posture: src/lib.rs)
         match unsafe { Mmap::map(&file) } {
             Ok(mmap) => mmap.to_vec(),
@@ -126,11 +146,12 @@ fn load_index(index_path: &Path, root: &Path, skip_freshness: bool) -> Result<In
     Ok(IndexState::Fresh(bytes))
 }
 
-/// Whether the index may answer this query. Cheap-first: (1) `--no-freshness`
-/// trusts unconditionally; (2) a clean tree whose HEAD SHA matches the stamp is
-/// provably what we indexed (no stat-walk needed); (3) else fall back to the
-/// (now parallel) mtime walk. The git probe spawns one `git status`, so it runs
-/// only after the free checks and only when a clean-tree stamp exists to match.
+/// Whether the index may answer this query. Cheap-first: (1)
+/// `--no-freshness` trusts unconditionally; (2) a clean tree whose HEAD SHA
+/// matches the stamp is provably what we indexed (no stat-walk needed); (3)
+/// else fall back to the parallel mtime walk. The git probe spawns one
+/// `git status`, so it runs only after the free checks and only when a
+/// clean-tree stamp exists to match.
 fn fresh(reader: &Reader, root: &Path, skip_freshness: bool) -> bool {
     if skip_freshness {
         return true;
@@ -141,268 +162,181 @@ fn fresh(reader: &Reader, root: &Path, skip_freshness: bool) -> bool {
     indexer::newest_mtime(&reader.paths(), root) <= reader.mtime
 }
 
-/// `rr read <ref>` — dereference a live anchor, or a pinned `anchor@commit`
-/// (snapshot) / `anchor~commit` (tracking) reference. The `<ref>` may be a bare
-/// **address** or a pasted `[[rr:anchor]]` **citation** marker, with any pin
-/// attached outside the closing `]]`.
-///
-/// A bare token resolves **known-anchor-wins**: if the whole token is a live
-/// anchor it is read literally (so an email heading `support@example.com`, an
-/// `@scope` path, or a `~/path` heading still resolves), and only otherwise is it
-/// split on its last `@`/`~` into a pin. A marker needs none of that — it already
-/// delimits the anchor, so a marker pin resolves offline with no index and no
-/// known-anchor-wins. A snapshot recovers from `.rr/` independently of the index
-/// and of git GC; tracking measures the current file against its stored baseline.
+/// Resolve one anchor to its definition locations, structured. The whole
+/// token is tried as an identity first, so an identity that itself contains
+/// `#` resolves literally; only then does the path qualifier of
+/// `[[rr:AD-1]]` split, and the identity's definitions filter to the
+/// qualifying file.
+fn resolve(reader: &Reader, anchor: &str) -> Vec<(String, u64, u64)> {
+    let parse_all = |locs: Vec<String>| -> Vec<(String, u64, u64)> {
+        locs.iter()
+            .filter_map(|l| refidx::parse_location(l))
+            .map(|(f, s, e)| (f.to_string(), s, e))
+            .collect()
+    };
+    let direct = parse_all(reader.forward_lookup(anchor));
+    if !direct.is_empty() {
+        return direct;
+    }
+    if let Some((path, identity)) = cli::split_qualifier(anchor) {
+        return parse_all(reader.forward_lookup(identity))
+            .into_iter()
+            .filter(|(f, _, _)| f == path)
+            .collect();
+    }
+    Vec::new()
+}
+
+/// `rr read <ref>` — resolve a marker, or a bare anchor, to the anchor's
+/// definition locations. The reader strips a pasted `[[rr:...]]` wrapper and
+/// unescapes before resolving (`[[rr:AD-2]]`); a token that opens like a
+/// marker but is not one is a usage error, never a silent reparse.
 pub fn run_read(args: &LowArgs) -> Result<u8, String> {
     let root = Path::new(".");
     let index_path = PathBuf::from(cli::index_path(args));
     let token = args.positional[0].to_string_lossy().into_owned();
+    let anchor = cli::parse_reference(&token)?;
 
-    match citation::decode(&token) {
-        // A pasted `[[rr:...]]` marker. The anchor is delimited and any pin is
-        // explicit and outside `]]`, so it dispatches offline with no
-        // known-anchor-wins: a no-pin marker is a freshness-gated live read; a
-        // pinned marker resolves from the sidecar without touching the index.
-        Decoded::Citation(Citation { anchor, pin: None }) => {
-            with_fresh_reader(&index_path, root, args.no_freshness, |reader| {
-                live_read(reader, &anchor)
+    with_fresh_reader(&index_path, root, args.no_freshness, |reader| {
+        let locations = resolve(reader, &anchor);
+        if args.format == OutputFormat::Json {
+            let mut data = String::from(r#"{"anchor":"#);
+            push_json_str(&mut data, &anchor);
+            data.push_str(",\"locations\":[");
+            for (i, loc) in locations.iter().enumerate() {
+                if i > 0 {
+                    data.push(',');
+                }
+                push_location(&mut data, &loc.0, loc.1, loc.2);
+            }
+            data.push_str("]}");
+            println!("{}", envelope("read", &data));
+        } else {
+            for (file, start, end) in &locations {
+                println!("{file}:{start}-{end}");
+            }
+        }
+        match locations.len() {
+            0 => {
+                eprintln!("no such anchor: {anchor}");
+                Ok(exit::ADVERSE)
+            }
+            1 => Ok(exit::OK),
+            n => {
+                eprintln!(
+                    "ambiguous anchor: {anchor} resolves to {n} definitions (add a path qualifier)"
+                );
+                Ok(exit::ADVERSE)
+            }
+        }
+    })
+}
+
+/// `rr at <file>:<line>` — the marker for the innermost anchor whose
+/// definition covers the line; the inverse of `read`. `--all` reports the
+/// whole covering nest, outermost first.
+pub fn run_at(args: &LowArgs) -> Result<u8, String> {
+    let root = Path::new(".");
+    let index_path = PathBuf::from(cli::index_path(args));
+    // `validate` already accepted this; re-parsing here keeps the position
+    // in one place rather than threading a parsed field through `LowArgs`.
+    let (file, line) = cli::parse_position(&args.positional[0].to_string_lossy())?;
+
+    with_fresh_reader(&index_path, root, args.no_freshness, |reader| {
+        let hits = reader.covering(&file, line);
+        // The innermost tie set: every hit sharing the tightest span.
+        let emitted: Vec<&AnchorHit> = if args.all {
+            hits.iter().collect()
+        } else if let Some(last) = hits.last() {
+            hits.iter()
+                .filter(|h| h.start_line == last.start_line && h.end_line == last.end_line)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        // The minimal unambiguous form: unqualified while the identity
+        // resolves uniquely, path-qualified when it does not.
+        let forms: Vec<(String, &AnchorHit)> = emitted
+            .iter()
+            .map(|h| {
+                let form = if reader.forward_lookup(&h.anchor).len() > 1 {
+                    format!("{}#{}", h.file, h.anchor)
+                } else {
+                    h.anchor.clone()
+                };
+                (form, *h)
             })
-        }
-        Decoded::Citation(Citation {
-            anchor,
-            pin: Some((sigil, commit)),
-        }) => read_pin(root, &anchor, sigil, &commit, false),
-        // A `[[rr:` sentinel that is not a well-formed citation: the user meant a
-        // citation, so report a usage error rather than silently reparsing it bare.
-        Decoded::Malformed(why) => Err(why),
-        // No marker: the existing bare path (last-sigil split + known-anchor-wins).
-        Decoded::Bare => match cli::parse_reference(&token) {
-            Reference::Plain(anchor) => {
-                with_fresh_reader(&index_path, root, args.no_freshness, |reader| {
-                    live_read(reader, anchor)
-                })
-            }
-            Reference::Pinned {
-                anchor,
-                sigil,
-                commit,
-            } => run_read_pinned(
-                &index_path,
-                root,
-                args.no_freshness,
-                &token,
-                anchor,
-                sigil,
-                commit,
-            ),
-        },
-    }
-}
+            .collect();
 
-/// Dereference one anchor through the forward map (the live read). Prints the
-/// location for a unique hit; reports not-found / ambiguous otherwise.
-fn live_read(reader: &Reader, anchor: &str) -> Result<u8, String> {
-    let hits = reader.forward_lookup(anchor);
-    match hits.len() {
-        0 => {
-            eprintln!("no such anchor: {anchor}");
-            Ok(exit::FINDINGS)
-        }
-        1 => {
-            // Only the location line is printed today; the source-body print and
-            // `-C`/`--context` are not yet implemented for the live read.
-            println!("{}", hits[0]);
-            Ok(exit::OK)
-        }
-        n => {
-            eprintln!("ambiguous anchor: {anchor} resolves to {n} definitions");
-            for loc in &hits {
-                eprintln!("  {loc}");
+        match args.format {
+            OutputFormat::Json => println!("{}", envelope("at", &at_json(&forms))),
+            OutputFormat::Text if forms.is_empty() => {
+                eprintln!("no anchor covers {file}:{line}");
             }
-            eprintln!("(use `rr search` to see the collisions)");
-            Ok(exit::FINDINGS)
+            OutputFormat::Text => println!("{}", at_text(&forms)),
         }
-    }
-}
-
-/// Resolve a `@`/`~` reference. Applies known-anchor-wins first (a stale or
-/// missing index must not block a pin, so a freshness failure there only means
-/// "could not confirm a live anchor" and we fall through), then resolves the pin
-/// from the committed sidecar.
-fn run_read_pinned(
-    index_path: &Path,
-    root: &Path,
-    skip_freshness: bool,
-    token: &str,
-    anchor: &str,
-    sigil: Sigil,
-    commit: &str,
-) -> Result<u8, String> {
-    // known-anchor-wins: a fresh index in which the whole token is a live anchor
-    // wins over any split. A missing/stale index leaves this unconfirmed.
-    let index_was_usable = match load_index(index_path, root, skip_freshness)? {
-        IndexState::Fresh(bytes) => {
-            let reader = Reader::parse(&bytes).map_err(|e| format!("corrupt index: {e}"))?;
-            if !reader.forward_lookup(token).is_empty() {
-                return live_read(&reader, token);
+        if forms.is_empty() {
+            if args.format == OutputFormat::Json {
+                eprintln!("no anchor covers {file}:{line}");
             }
-            true
-        }
-        IndexState::Missing | IndexState::Stale => false,
-    };
-    // A stale/missing index could not confirm a live anchor, so a not-found pin
-    // is reported as STALE (ask for a rebuild) rather than BROKEN.
-    read_pin(root, anchor, sigil, commit, !index_was_usable)
-}
-
-/// Resolve a pin from the committed sidecar and print it. Shared by the bare
-/// `anchor@commit` reader ([`run_read_pinned`]) and the decoded-marker reader
-/// ([`run_read`]). Touches no index — a marker pin resolves offline, which is
-/// AD-1's payoff. `unconfirmed_anchor` is true only for the bare path when the
-/// index was missing/stale, so a `NotFound` there might be an unconfirmable live
-/// anchor and is reported STALE; a delimited marker is unambiguous, so it passes
-/// `false` and a missing pin is honestly BROKEN.
-fn read_pin(
-    root: &Path,
-    anchor: &str,
-    sigil: Sigil,
-    commit: &str,
-    unconfirmed_anchor: bool,
-) -> Result<u8, String> {
-    let sc = Sidecar::at(root);
-    let manifest = sc.load()?;
-    let kind = match sigil {
-        Sigil::Snapshot => Kind::Snapshot,
-        Sigil::Tracking => Kind::Track,
-    };
-    match manifest.resolve(kind, anchor, commit) {
-        Ok(pin) => match sigil {
-            Sigil::Snapshot => read_snapshot(&sc, pin),
-            Sigil::Tracking => read_tracking(root, pin),
-        },
-        Err(ResolveError::NotFound) if unconfirmed_anchor => {
-            eprintln!("index is stale — rebuild with `rr index`");
-            Ok(exit::STALE)
-        }
-        Err(ResolveError::NotFound) => {
+            Ok(exit::ADVERSE)
+        } else if !args.all && forms.len() > 1 {
             eprintln!(
-                "broken reference: no {} of {anchor} at {commit} (re-point with `rr {}`)",
-                kind_noun(kind),
-                repin_verb(kind),
+                "ambiguous: {} anchors tie on the innermost span",
+                forms.len()
             );
-            Ok(exit::BROKEN)
-        }
-        Err(ResolveError::Ambiguous(shorts)) => {
-            eprintln!(
-                "broken reference: {anchor}{}{commit} is ambiguous ({} commits match: {})",
-                sigil_char(sigil),
-                shorts.len(),
-                shorts.join(", "),
-            );
-            Ok(exit::BROKEN)
-        }
-    }
-}
-
-/// Print the frozen source a snapshot pin recovered from `.rr/`. Self-verifying:
-/// the recovered bytes are re-hashed against the object name, so a corrupt or
-/// missing object is reported broken rather than shown as evidence. No git, no
-/// live tree, no reachable commit.
-fn read_snapshot(sc: &Sidecar, pin: &Pin) -> Result<u8, String> {
-    let Some(bytes) = sc.read_object(&pin.oid) else {
-        eprintln!(
-            "broken reference: snapshot object {} is missing from .rr/objects",
-            pin.oid
-        );
-        return Ok(exit::BROKEN);
-    };
-    if sidecar::oid_of(&bytes) != pin.oid {
-        eprintln!(
-            "broken reference: snapshot object {} is corrupt (re-hash does not match its name)",
-            pin.oid
-        );
-        return Ok(exit::BROKEN);
-    }
-    let header = format!("{}@{}:{}-{}", pin.path, pin.short, pin.start, pin.end);
-    println!("{header}");
-    match sidecar::classify(&bytes) {
-        Content::Binary => {
-            println!("[binary object, {} bytes — not shown]", bytes.len());
-        }
-        Content::Text => {
-            // Write the recovered range as raw bytes, so a CRLF file recovers as
-            // CRLF (the stored working-tree form), not normalized to LF.
-            let slice = sidecar::slice_lines(&bytes, pin.start, pin.end);
-            std::io::stdout()
-                .write_all(slice)
-                .map_err(|e| format!("failed to write snapshot output: {e}"))?;
-        }
-    }
-    Ok(exit::OK)
-}
-
-/// Report whether a tracked anchor's file still matches its baseline. Drift is a
-/// content comparison (`git hash-object` of the current file vs the stored
-/// baseline OID), never `git diff` (which a skip-worktree / racy-clean / EOL
-/// quirk can silently make lie). A renamed-but-identical file reads as moved, not
-/// drifted.
-fn read_tracking(root: &Path, pin: &Pin) -> Result<u8, String> {
-    match track_status(root, pin) {
-        TrackStatus::Clean => {
-            println!("{}~{}: OK ({} unchanged)", pin.anchor, pin.short, pin.path);
+            Ok(exit::ADVERSE)
+        } else {
             Ok(exit::OK)
         }
-        TrackStatus::Moved(to) => {
-            println!(
-                "{}~{}: OK (moved {} -> {to}, content unchanged)",
-                pin.anchor, pin.short, pin.path
-            );
-            Ok(exit::OK)
+    })
+}
+
+/// Text rendering for `rr at`: one marker per line, the document form a
+/// person pastes (`[[rr:AD-4]]`). Returned rather than printed so it is
+/// unit-testable; `run_at` does the I/O.
+fn at_text(forms: &[(String, &AnchorHit)]) -> String {
+    forms
+        .iter()
+        .map(|(form, _)| marker::wrap(form))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// JSON `data` for `rr at`: `anchors`, always a list, each entry the bare
+/// `anchor` (minimal unambiguous form), the composed `marker`, and the
+/// definition's `location`. Returned (not printed) so the exact document can
+/// be asserted in tests.
+fn at_json(forms: &[(String, &AnchorHit)]) -> String {
+    let mut out = String::from(r#"{"anchors":["#);
+    for (i, (form, hit)) in forms.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
         }
-        TrackStatus::Drifted(detail) => {
-            eprintln!("{}~{}: DRIFTED ({detail})", pin.anchor, pin.short);
-            Ok(exit::DRIFTED)
-        }
-        TrackStatus::Broken(reason) => {
-            eprintln!("{}~{}: BROKEN ({reason})", pin.anchor, pin.short);
-            Ok(exit::BROKEN)
-        }
+        out.push_str("{\"anchor\":");
+        push_json_str(&mut out, form);
+        out.push_str(",\"marker\":");
+        push_json_str(&mut out, &marker::wrap(form));
+        out.push_str(",\"location\":");
+        push_location(&mut out, &hit.file, hit.start_line, hit.end_line);
+        out.push('}');
     }
+    out.push_str("]}");
+    out
 }
 
-/// The drift verdict for a tracking pin, shared by `read ~` and `verify`.
-enum TrackStatus {
-    Clean,
-    Moved(String),
-    Drifted(String),
-    Broken(String),
+/// One scoped, readable text file: its repo-relative path and content.
+struct ScopedFile {
+    rel: String,
+    content: String,
+    host: scan::Host,
 }
 
-fn track_status(root: &Path, pin: &Pin) -> TrackStatus {
-    if root.join(&pin.path).is_file() {
-        match git::hash_object(root, &pin.path) {
-            Some(current) if current == pin.oid => TrackStatus::Clean,
-            Some(_) => TrackStatus::Drifted(format!("{} changed since the baseline", pin.path)),
-            None => TrackStatus::Broken(format!("cannot hash {}", pin.path)),
-        }
-    } else {
-        // The pinned path is gone: the content may have moved unchanged. The
-        // search hashes candidate files in process (no git fork per file), so it
-        // does not inflate `verify`'s git-call budget.
-        match find_by_content(root, &pin.oid) {
-            Some(moved_to) => TrackStatus::Moved(moved_to),
-            None => TrackStatus::Drifted(format!(
-                "{} is gone and its content was not found",
-                pin.path
-            )),
-        }
-    }
-}
-
-/// Search the working tree for a file whose git blob id equals `oid`, returning
-/// its repo-relative path. Used only on the rename/move fallback, when a tracked
-/// path has disappeared.
-fn find_by_content(root: &Path, oid: &str) -> Option<String> {
+/// Walk the working tree and collect the files the profile's scope selects.
+/// Shared by `search` and `verify`; `index` applies the same matcher inside
+/// its own walk.
+fn scoped_files(root: &Path, matcher: &ignore::overrides::Override) -> Vec<ScopedFile> {
+    let mut out = Vec::new();
     let walker = ignore::WalkBuilder::new(root)
         .hidden(true)
         .git_ignore(true)
@@ -413,491 +347,231 @@ fn find_by_content(root: &Path, oid: &str) -> Option<String> {
         if !dent.file_type().is_some_and(|t| t.is_file()) {
             continue;
         }
-        if let Ok(bytes) = std::fs::read(dent.path()) {
-            if sidecar::oid_of(&bytes) == oid {
-                let rel = dent.path().strip_prefix(root).unwrap_or(dent.path());
-                return Some(rel.to_string_lossy().replace('\\', "/"));
-            }
+        let rel = dent
+            .path()
+            .strip_prefix(root)
+            .unwrap_or(dent.path())
+            .to_string_lossy()
+            .replace('\\', "/");
+        if !config::in_scope(matcher, &rel) {
+            continue;
         }
-    }
-    None
-}
-
-/// `rr cite <anchor>` — freeze the anchor's current content as a snapshot.
-pub fn run_cite(args: &LowArgs) -> Result<u8, String> {
-    run_pin(args, Kind::Snapshot)
-}
-
-/// `rr track <anchor>` — record the anchor's current content as a tracking baseline.
-pub fn run_track(args: &LowArgs) -> Result<u8, String> {
-    run_pin(args, Kind::Track)
-}
-
-/// The shared producer for `cite` and `track`: resolve the anchor to a unique
-/// location, require its file to be committed *by content* and free of a clean
-/// filter / Git-LFS, store the working-tree bytes in `.rr/`, and append a pin.
-fn run_pin(args: &LowArgs, kind: Kind) -> Result<u8, String> {
-    let root = Path::new(".");
-    let index_path = PathBuf::from(cli::index_path(args));
-    let token = args.positional[0].to_string_lossy().into_owned();
-    // Accept a pasted `[[rr:anchor]]` (strip to the bare anchor); a pinned marker
-    // is nonsensical here — you pin the anchor with cite/track, not re-pin a pin.
-    let anchor = match citation::decode(&token) {
-        Decoded::Bare => token,
-        Decoded::Citation(Citation { anchor, pin: None }) => anchor,
-        Decoded::Citation(_) => {
-            eprintln!(
-                "cannot {} a pinned citation; pass the bare anchor or [[rr:anchor]]",
-                kind_verb(kind)
-            );
-            return Ok(exit::USAGE);
-        }
-        Decoded::Malformed(why) => {
-            eprintln!("{why}");
-            return Ok(exit::USAGE);
-        }
-    };
-
-    with_fresh_reader(&index_path, root, args.no_freshness, |reader| {
-        let hits = reader.forward_lookup(&anchor);
-        let loc = match hits.as_slice() {
-            [one] => one.clone(),
-            [] => {
-                eprintln!("no such anchor: {anchor}");
-                return Ok(exit::FINDINGS);
-            }
-            many => {
-                eprintln!(
-                    "ambiguous anchor: {anchor} resolves to {} definitions",
-                    many.len()
-                );
-                for loc in many {
-                    eprintln!("  {loc}");
-                }
-                return Ok(exit::FINDINGS);
-            }
+        let Ok(content) = std::fs::read_to_string(dent.path()) else {
+            continue; // binary or unreadable: not scoped text
         };
-        let (path, start, end) =
-            parse_loc(&loc).ok_or_else(|| format!("unparseable location: {loc:?}"))?;
-
-        // The manifest is TAB/newline-delimited; refuse a field that would
-        // corrupt it before doing any work, so a refused cite never writes a
-        // stray object. (The sidecar enforces this too, as defense in depth.)
-        if [anchor.as_str(), path.as_str()]
-            .iter()
-            .any(|s| s.contains('\t') || s.contains('\n'))
-        {
-            eprintln!(
-                "cannot {} {anchor}: the anchor or path contains a tab or newline, which the manifest cannot represent",
-                kind_verb(kind)
-            );
-            return Ok(exit::USAGE);
-        }
-
-        // Gate 1: the file must be committed *as-is*. Compare by content
-        // (`git hash-object` of the working tree vs `HEAD:<path>`), which sees an
-        // edit even under `--skip-worktree`, where `git status`/`git diff` would
-        // not. `hash_object` doubles as the content OID for the stored object.
-        let head_blob = git::rev_parse_head_blob(root, &path);
-        let wt_oid = git::hash_object(root, &path);
-        let oid = match (head_blob.as_deref(), wt_oid.as_deref()) {
-            (Some(h), Some(w)) if h == w => w.to_string(),
-            _ => {
-                eprintln!(
-                    "cannot {} {anchor}: {path} is not committed as-is — commit it first",
-                    kind_verb(kind)
-                );
-                return Ok(exit::USAGE);
-            }
-        };
-
-        // Gate 2: refuse a clean-filter / Git-LFS path. LFS content lives
-        // off-repo, and a clean filter's pre-clean bytes can re-leak what the
-        // filter strips, so freezing them verbatim is unsafe.
-        if git::is_filtered_path(root, &path) {
-            eprintln!(
-                "cannot {} {anchor}: {path} uses a clean filter or Git-LFS, so its stored bytes would be unfaithful",
-                kind_verb(kind)
-            );
-            return Ok(exit::USAGE);
-        }
-
-        let short = git::short_head(root).ok_or("cannot resolve HEAD (not a git repository?)")?;
-        let bytes =
-            std::fs::read(root.join(&path)).map_err(|e| format!("failed to read {path}: {e}"))?;
-
-        let sc = Sidecar::at(root);
-        sc.write_object(&oid, &bytes)?;
-        sc.append_pin(&Pin {
-            kind,
-            anchor: anchor.clone(),
-            short: short.clone(),
-            path,
-            start,
-            end,
-            oid,
-        })?;
-
-        if !args.quiet {
-            // The pinned citation marker to paste into a document: the pin sits
-            // outside the `]]`, so it parses offline (AD-1).
-            println!("{}{}{short}", citation::wrap(&anchor), sigil_char_for(kind));
-        }
-        Ok(exit::OK)
-    })
-}
-
-/// `rr verify [<ref>...]` — classify pinned references and return the worst exit
-/// code seen (0 ok, 4 drifted, 5 broken). Fails closed on a tampered manifest.
-pub fn run_verify(args: &LowArgs) -> Result<u8, String> {
-    let root = Path::new(".");
-    let sc = Sidecar::at(root);
-    let manifest = sc.load()?;
-
-    // Fail closed first: a committed pin silently removed from the working
-    // manifest (no tomb) is tampering, regardless of the individual refs.
-    if let Some(code) = tamper_check(root, &manifest)? {
-        return Ok(code);
-    }
-
-    let targets: Vec<&Pin> = if args.positional.is_empty() {
-        manifest
-            .live_pins(Kind::Snapshot)
-            .into_iter()
-            .chain(manifest.live_pins(Kind::Track))
-            .collect()
-    } else {
-        let mut out = Vec::new();
-        for token in &args.positional {
-            let token = token.to_string_lossy();
-            let (anchor, sigil, commit) = match require_pin(&token) {
-                Ok(triple) => triple,
-                Err(why) => {
-                    eprintln!("{token}: {why}");
-                    return Ok(exit::USAGE);
-                }
-            };
-            let kind = match sigil {
-                Sigil::Snapshot => Kind::Snapshot,
-                Sigil::Tracking => Kind::Track,
-            };
-            match manifest.resolve(kind, &anchor, &commit) {
-                Ok(pin) => out.push(pin),
-                Err(_) => {
-                    eprintln!("{token}: BROKEN (no such pinned reference)");
-                    return Ok(exit::BROKEN);
-                }
-            }
-        }
-        out
-    };
-
-    let mut worst = exit::OK;
-    for pin in targets {
-        let code = match pin.kind {
-            Kind::Snapshot => verify_snapshot(&sc, pin),
-            Kind::Track => {
-                let code = match track_status(root, pin) {
-                    TrackStatus::Clean => {
-                        println!("{}~{}: ok", pin.anchor, pin.short);
-                        exit::OK
-                    }
-                    TrackStatus::Moved(to) => {
-                        println!("{}~{}: moved -> {to}", pin.anchor, pin.short);
-                        exit::OK
-                    }
-                    TrackStatus::Drifted(detail) => {
-                        println!("{}~{}: drifted ({detail})", pin.anchor, pin.short);
-                        exit::DRIFTED
-                    }
-                    TrackStatus::Broken(reason) => {
-                        println!("{}~{}: broken ({reason})", pin.anchor, pin.short);
-                        exit::BROKEN
-                    }
-                };
-                code
-            }
-        };
-        worst = worst.max(code);
-    }
-    Ok(worst)
-}
-
-/// Verify a snapshot pin by re-hashing its stored object against the recorded
-/// name (snapshots are durable, so the only failures are a missing or corrupt
-/// object). Prints an `ok`/`broken` status line and returns its exit code.
-fn verify_snapshot(sc: &Sidecar, pin: &Pin) -> u8 {
-    match sc.read_object(&pin.oid) {
-        Some(bytes) if sidecar::oid_of(&bytes) == pin.oid => {
-            println!("{}@{}: ok", pin.anchor, pin.short);
-            exit::OK
-        }
-        Some(_) => {
-            println!(
-                "{}@{}: broken (object {} is corrupt)",
-                pin.anchor, pin.short, pin.oid
-            );
-            exit::BROKEN
-        }
-        None => {
-            println!(
-                "{}@{}: broken (object {} is missing)",
-                pin.anchor, pin.short, pin.oid
-            );
-            exit::BROKEN
-        }
-    }
-}
-
-/// Compare the working `.rr/refs` against its committed form. A snapshot/track
-/// pin present at `HEAD` but absent from the working manifest, with no tomb, is a
-/// silent deletion: `verify` fails closed (returns `Some(BROKEN)`). When the
-/// manifest is not committed there is no baseline to check, so this is a no-op.
-fn tamper_check(root: &Path, working: &Manifest) -> Result<Option<u8>, String> {
-    let Some(committed_text) = git::show_head_file(root, ".rr/refs") else {
-        return Ok(None);
-    };
-    let committed = Manifest::parse(&committed_text)?;
-    for record in &committed.records {
-        let Record::Pin(p) = record else { continue };
-        let present = working.records.iter().any(|wr| {
-            matches!(wr, Record::Pin(wp)
-                if wp.kind == p.kind && wp.anchor == p.anchor && wp.short == p.short && wp.oid == p.oid)
+        let ext = rel.rsplit('.').next();
+        out.push(ScopedFile {
+            host: scan::host_for(ext),
+            rel,
+            content,
         });
-        if !present && !working.is_tombed(&p.anchor, &p.short) {
-            eprintln!(
-                "manifest tampered: committed {} {}@{} was removed from .rr/refs without a tomb",
-                p.kind.tag(),
-                p.anchor,
-                p.short,
-            );
-            return Ok(Some(exit::BROKEN));
-        }
     }
-    Ok(None)
-}
-
-/// `rr uncite <anchor@commit>` — retire a snapshot with a tomb.
-pub fn run_uncite(args: &LowArgs) -> Result<u8, String> {
-    run_tomb(args, Kind::Snapshot)
-}
-
-/// `rr untrack <anchor~commit>` — retire a tracking baseline with a tomb.
-pub fn run_untrack(args: &LowArgs) -> Result<u8, String> {
-    run_tomb(args, Kind::Track)
-}
-
-/// Decode one token that must denote a pin (`verify` / `uncite` / `untrack`).
-/// Accepts a bare `anchor@commit` / `anchor~commit` (the existing last-sigil
-/// split; these commands intentionally do not apply known-anchor-wins) or a
-/// pasted `[[rr:anchor]]@commit` marker. Returns owned parts so the caller can
-/// borrow them into `manifest.resolve`; `Err` carries a usage message for a
-/// non-pin token or a malformed marker.
-fn require_pin(token: &str) -> Result<(String, Sigil, String), String> {
-    match citation::decode(token) {
-        Decoded::Citation(Citation {
-            anchor,
-            pin: Some((sigil, commit)),
-        }) => Ok((anchor, sigil, commit)),
-        Decoded::Citation(Citation { pin: None, .. }) => Err(
-            "not a pinned reference (expected anchor@commit or [[rr:anchor]]@commit)".to_string(),
-        ),
-        Decoded::Malformed(why) => Err(why),
-        Decoded::Bare => match cli::parse_reference(token) {
-            Reference::Pinned {
-                anchor,
-                sigil,
-                commit,
-            } => Ok((anchor.to_string(), sigil, commit.to_string())),
-            Reference::Plain(_) => {
-                Err("not a pinned reference (expected anchor@commit or anchor~commit)".to_string())
-            }
-        },
-    }
-}
-
-fn run_tomb(args: &LowArgs, kind: Kind) -> Result<u8, String> {
-    let root = Path::new(".");
-    let token = args.positional[0].to_string_lossy().into_owned();
-    let Ok((anchor, sigil, commit)) = require_pin(&token) else {
-        eprintln!("expected {}", pin_syntax(kind));
-        return Ok(exit::USAGE);
-    };
-    let want = match kind {
-        Kind::Snapshot => Sigil::Snapshot,
-        Kind::Track => Sigil::Tracking,
-    };
-    if sigil != want {
-        eprintln!("expected {}", pin_syntax(kind));
-        return Ok(exit::USAGE);
-    }
-
-    let sc = Sidecar::at(root);
-    let manifest = sc.load()?;
-    match manifest.resolve(kind, &anchor, &commit) {
-        Ok(pin) => {
-            sc.append_tomb(&Tomb {
-                anchor: pin.anchor.clone(),
-                short: pin.short.clone(),
-                reason: format!("un{}", kind_verb(kind)),
-            })?;
-            if !args.quiet {
-                println!("retired {}{}{}", pin.anchor, sigil_char(want), pin.short);
-            }
-            Ok(exit::OK)
-        }
-        Err(_) => {
-            eprintln!("no such pinned reference: {token}");
-            Ok(exit::BROKEN)
-        }
-    }
-}
-
-/// Split a `file:start-end` location into `(file, start, end)`.
-fn parse_loc(loc: &str) -> Option<(String, u64, u64)> {
-    let (file, span) = loc.rsplit_once(':')?;
-    let (start, end) = span.split_once('-')?;
-    Some((file.to_string(), start.parse().ok()?, end.parse().ok()?))
-}
-
-fn kind_verb(kind: Kind) -> &'static str {
-    match kind {
-        Kind::Snapshot => "cite",
-        Kind::Track => "track",
-    }
-}
-
-fn repin_verb(kind: Kind) -> &'static str {
-    match kind {
-        Kind::Snapshot => "cite",
-        Kind::Track => "track",
-    }
-}
-
-fn kind_noun(kind: Kind) -> &'static str {
-    match kind {
-        Kind::Snapshot => "snapshot",
-        Kind::Track => "tracking baseline",
-    }
-}
-
-fn sigil_char(sigil: Sigil) -> char {
-    match sigil {
-        Sigil::Snapshot => '@',
-        Sigil::Tracking => '~',
-    }
-}
-
-fn sigil_char_for(kind: Kind) -> char {
-    match kind {
-        Kind::Snapshot => '@',
-        Kind::Track => '~',
-    }
-}
-
-fn pin_syntax(kind: Kind) -> &'static str {
-    match kind {
-        Kind::Snapshot => "<anchor>@<commit>",
-        Kind::Track => "<anchor>~<commit>",
-    }
-}
-
-/// `rr at <file>:<line>` — name the anchor to cite for the position. The inverse
-/// of `read`: a `file:line` in, the anchor you would write out. Text prints the
-/// single tightest (innermost) anchor by default, or the whole nest it sits in
-/// with `--all`; JSON always carries the full list with spans.
-pub fn run_at(args: &LowArgs) -> Result<u8, String> {
-    let root = Path::new(".");
-    let index_path = PathBuf::from(cli::index_path(args));
-    // `validate` already accepted this; re-parsing here keeps the position in
-    // one place rather than threading a parsed field through `LowArgs`.
-    let (file, line) = cli::parse_position(&args.positional[0].to_string_lossy())?;
-
-    with_fresh_reader(&index_path, root, args.no_freshness, |reader| {
-        let hits = reader.covering(&file, line);
-        match args.format {
-            // JSON always emits the envelope; `found`/`anchors` carry the result,
-            // the exit code signals it (envelope spec: `[[rr:usecases/editor-completion.md]]`).
-            OutputFormat::Json => println!("{}", at_json(&file, line, &hits)),
-            OutputFormat::Text if hits.is_empty() => eprintln!("no anchor covers {file}:{line}"),
-            OutputFormat::Text => println!("{}", at_text(&hits, args.all, args.cite)),
-        }
-        if hits.is_empty() {
-            Ok(exit::FINDINGS)
-        } else {
-            Ok(exit::OK)
-        }
-    })
-}
-
-/// Text rendering for `rr at`. By default each line is the bare anchor (its
-/// **address**), with no line numbers — those are the fragile coordinate ripref
-/// exists to replace and live only in `--format json` — so it round-trips
-/// straight into `rr read`. With `--cite` each line is instead the document
-/// **citation marker** `[[rr:anchor]]` (the form you paste into prose). The
-/// default is the single tightest anchor covering the position; `--all` prints
-/// the whole nest it sits in, outermost-first, for when the tightest is not the
-/// one you mean. Returned rather than printed so it is unit-testable; `run_at`
-/// does the I/O.
-fn at_text(hits: &[AnchorHit], all: bool, cite: bool) -> String {
-    let render = |anchor: &str| -> String {
-        if cite {
-            citation::wrap(anchor)
-        } else {
-            anchor.to_string()
-        }
-    };
-    if all {
-        hits.iter()
-            .map(|h| render(&h.anchor))
-            .collect::<Vec<_>>()
-            .join("\n")
-    } else {
-        // `covering` is outermost-first, so the tightest anchor is the last one.
-        hits.last().map_or(String::new(), |h| render(&h.anchor))
-    }
-}
-
-/// JSON rendering for `rr at`: the `rr-json` envelope (spec:
-/// `[[rr:usecases/editor-completion.md]]`). Hand-rolled because the crate has no serde
-/// dependency and the schema is a hand-written source of truth; the first command
-/// to actually emit `--format json`. Returned (not printed) so the exact document
-/// can be asserted in tests.
-fn at_json(file: &str, line: u64, hits: &[AnchorHit]) -> String {
-    let mut out = String::from(r#"{"format":"rr-json","version":1,"command":"at","data":{"file":"#);
-    push_json_str(&mut out, file);
-    out.push_str(",\"line\":");
-    out.push_str(&line.to_string());
-    out.push_str(",\"found\":");
-    out.push_str(if hits.is_empty() { "false" } else { "true" });
-    out.push_str(",\"anchors\":[");
-    for (i, h) in hits.iter().enumerate() {
-        if i > 0 {
-            out.push(',');
-        }
-        out.push_str("{\"anchor\":");
-        push_json_str(&mut out, &h.anchor);
-        // Additive `citation` field (AD-1): the pre-composed `[[rr:...]]` marker,
-        // so a plugin inserts it without re-deriving the delimited form. The
-        // envelope `version` stays 1 — this is a backward-compatible addition.
-        out.push_str(",\"citation\":");
-        push_json_str(&mut out, &citation::wrap(&h.anchor));
-        out.push_str(",\"location\":{\"file\":");
-        push_json_str(&mut out, &h.file);
-        out.push_str(",\"start_line\":");
-        out.push_str(&h.start_line.to_string());
-        out.push_str(",\"end_line\":");
-        out.push_str(&h.end_line.to_string());
-        out.push_str("}}");
-    }
-    out.push_str("]}}");
+    out.sort_by(|a, b| a.rel.cmp(&b.rel));
     out
 }
 
-/// Append `s` to `out` as a quoted, escaped JSON string. Escapes `"`, `\`, and
-/// C0 control characters — anchors legitimately contain quotes (a scenario
-/// anchor is `file.feature#"Title"`) and stray control bytes must not break the
-/// document.
+/// `rr search [<anchor>]` — list the markers scoped text writes, each with
+/// the location it sits at; under `--mentions`, the path mentions instead.
+/// Purely lexical: no index is read, so it never returns stale.
+pub fn run_search(args: &LowArgs) -> Result<u8, String> {
+    let root = Path::new(".");
+    let cfg = config::load(root);
+    let matcher = config::scope_matcher(root, &cfg)?;
+    let filter = args.positional.first().map(|a| {
+        let token = a.to_string_lossy().into_owned();
+        cli::parse_reference(&token)
+    });
+    let filter = match filter {
+        Some(Ok(anchor)) => Some(anchor),
+        Some(Err(why)) => return Err(why),
+        None => None,
+    };
+
+    let mut lines = Vec::new();
+    let mut json = String::from(r#"{"matches":["#);
+    let mut count = 0usize;
+    for file in scoped_files(root, &matcher) {
+        for found in scan::scan(&file.content, file.host) {
+            match (&found.what, args.mentions) {
+                (What::Marker { raw, anchor }, false) => {
+                    if let Some(want) = &filter {
+                        if !filter_matches(want, anchor) {
+                            continue;
+                        }
+                    }
+                    lines.push(format!("{}:{}: {raw}", file.rel, found.line));
+                    if count > 0 {
+                        json.push(',');
+                    }
+                    json.push_str("{\"file\":");
+                    push_json_str(&mut json, &file.rel);
+                    json.push_str(&format!(",\"line\":{}", found.line));
+                    json.push_str(",\"anchor\":");
+                    push_json_str(&mut json, anchor);
+                    json.push_str(",\"marker\":");
+                    push_json_str(&mut json, raw);
+                    json.push('}');
+                    count += 1;
+                }
+                (What::Mention { token, .. }, true) => {
+                    lines.push(format!("{}:{}: {token}", file.rel, found.line));
+                    if count > 0 {
+                        json.push(',');
+                    }
+                    json.push_str("{\"file\":");
+                    push_json_str(&mut json, &file.rel);
+                    json.push_str(&format!(",\"line\":{}", found.line));
+                    json.push_str(",\"mention\":");
+                    push_json_str(&mut json, token);
+                    json.push('}');
+                    count += 1;
+                }
+                _ => {}
+            }
+        }
+    }
+    json.push_str("]}");
+
+    if args.format == OutputFormat::Json {
+        println!("{}", envelope("search", &json));
+    } else {
+        for line in &lines {
+            println!("{line}");
+        }
+        println!(
+            "{count} {}",
+            if args.mentions { "mentions" } else { "markers" }
+        );
+    }
+    Ok(if count > 0 { exit::OK } else { exit::ADVERSE })
+}
+
+/// Whether a search filter matches a decoded marker anchor: an unqualified
+/// argument matches every marker whose identity equals it, path-qualified or
+/// not; a qualified argument matches exactly (`[[rr:AD-3]]`).
+fn filter_matches(want: &str, anchor: &str) -> bool {
+    if want == anchor {
+        return true;
+    }
+    if !want.contains('#') {
+        if let Some((_, identity)) = cli::split_qualifier(anchor) {
+            return identity == want;
+        }
+    }
+    false
+}
+
+/// One `verify` finding.
+struct Finding {
+    file: String,
+    line: u64,
+    rule: &'static str,
+    detail: String,
+}
+
+/// `rr verify` — the gate: judge the references scoped text writes and
+/// report findings of the six kinds of `[[rr:AD-3]]`. Resolution judgments
+/// need the index, so a stale index exits 3 rather than judging from stale
+/// data; mention judgments run against the live tree.
+pub fn run_verify(args: &LowArgs) -> Result<u8, String> {
+    let root = Path::new(".");
+    let index_path = PathBuf::from(cli::index_path(args));
+    let cfg = config::load(root);
+    let matcher = config::scope_matcher(root, &cfg)?;
+
+    with_fresh_reader(&index_path, root, args.no_freshness, |reader| {
+        let mut findings: Vec<Finding> = Vec::new();
+        for file in scoped_files(root, &matcher) {
+            for found in scan::scan(&file.content, file.host) {
+                let (rule, detail) = match &found.what {
+                    What::Malformed { reason } => ("malformed marker", reason.clone()),
+                    What::Marker { raw, anchor } => {
+                        if !anchor.contains('#') && scan::is_path_shaped(anchor) {
+                            ("path-only marker", raw.clone())
+                        } else {
+                            match resolve(reader, anchor).len() {
+                                0 => ("dangling marker", raw.clone()),
+                                1 => continue,
+                                n => (
+                                    "ambiguous marker",
+                                    format!("{raw} resolves to {n} definitions"),
+                                ),
+                            }
+                        }
+                    }
+                    What::Mention { token, line_ref } => {
+                        // The judgment guard of AD-5: only a token whose
+                        // first segment names a real directory (or scope
+                        // root) is judged, so prose compounds never reach a
+                        // finding.
+                        let first = token.split('/').next().unwrap_or("");
+                        if first.is_empty() || !root.join(first).is_dir() {
+                            continue;
+                        }
+                        if *line_ref {
+                            ("bare path:line reference", token.clone())
+                        } else if !root.join(token).exists() {
+                            ("stale path mention", token.clone())
+                        } else {
+                            continue;
+                        }
+                    }
+                };
+                findings.push(Finding {
+                    file: file.rel.clone(),
+                    line: found.line,
+                    rule,
+                    detail,
+                });
+            }
+        }
+
+        if args.format == OutputFormat::Json {
+            let mut data = String::from(r#"{"findings":["#);
+            for (i, f) in findings.iter().enumerate() {
+                if i > 0 {
+                    data.push(',');
+                }
+                data.push_str("{\"file\":");
+                push_json_str(&mut data, &f.file);
+                data.push_str(&format!(",\"line\":{}", f.line));
+                data.push_str(",\"rule\":");
+                push_json_str(&mut data, f.rule);
+                data.push('}');
+            }
+            data.push_str("]}");
+            println!("{}", envelope("verify", &data));
+        } else {
+            for f in &findings {
+                println!("{}:{}: {}: {}", f.file, f.line, f.rule, f.detail);
+            }
+            println!("{} findings", findings.len());
+        }
+        Ok(if findings.is_empty() {
+            exit::OK
+        } else {
+            exit::ADVERSE
+        })
+    })
+}
+
+/// The one `rr-json` envelope every verb prints under `--format json`
+/// (`[[rr:AD-4]]`). Hand-rolled because the crate has no serde dependency
+/// and the schema is a hand-written source of truth.
+fn envelope(command: &str, data: &str) -> String {
+    format!(r#"{{"format":"rr-json","version":1,"command":"{command}","data":{data}}}"#)
+}
+
+/// Append a structured location object.
+fn push_location(out: &mut String, file: &str, start: u64, end: u64) {
+    out.push_str("{\"file\":");
+    push_json_str(out, file);
+    out.push_str(&format!(",\"start_line\":{start},\"end_line\":{end}}}"));
+}
+
+/// Append `s` to `out` as a quoted, escaped JSON string. Escapes `"`, `\`,
+/// and C0 control characters — anchors legitimately contain quotes and stray
+/// control bytes must not break the document.
 fn push_json_str(out: &mut String, s: &str) {
     out.push('"');
     for c in s.chars() {
@@ -928,25 +602,50 @@ mod tests {
     }
 
     #[test]
-    fn at_json_lists_anchors_outermost_first() {
-        let hits = vec![
-            hit("src/handlers.py", "src/handlers.py", 1, 40),
-            hit("handle_request", "src/handlers.py", 8, 30),
+    fn at_text_wraps_each_form() {
+        let a = hit("Guide", "docs/guide.md", 1, 40);
+        let b = hit("Configuration", "docs/guide.md", 12, 30);
+        let forms = vec![
+            ("Guide".to_string(), &a),
+            ("docs/guide.md#Configuration".to_string(), &b),
         ];
-        // Pins the whole envelope: field order, the nested `location`, and the
-        // outermost-first ordering of `anchors`.
         assert_eq!(
-            at_json("src/handlers.py", 15, &hits),
-            r#"{"format":"rr-json","version":1,"command":"at","data":{"file":"src/handlers.py","line":15,"found":true,"anchors":[{"anchor":"src/handlers.py","citation":"[[rr:src/handlers.py]]","location":{"file":"src/handlers.py","start_line":1,"end_line":40}},{"anchor":"handle_request","citation":"[[rr:handle_request]]","location":{"file":"src/handlers.py","start_line":8,"end_line":30}}]}}"#
+            at_text(&forms),
+            "[[rr:Guide]]\n[[rr:docs/guide.md#Configuration]]"
         );
     }
 
     #[test]
-    fn at_json_not_found_emits_false_and_empty_anchors() {
+    fn at_json_is_an_anchors_list() {
+        let h = hit("handle_request", "src/handlers.py", 8, 30);
+        let forms = vec![("handle_request".to_string(), &h)];
         assert_eq!(
-            at_json("a.rs", 9, &[]),
-            r#"{"format":"rr-json","version":1,"command":"at","data":{"file":"a.rs","line":9,"found":false,"anchors":[]}}"#
+            envelope("at", &at_json(&forms)),
+            r#"{"format":"rr-json","version":1,"command":"at","data":{"anchors":[{"anchor":"handle_request","marker":"[[rr:handle_request]]","location":{"file":"src/handlers.py","start_line":8,"end_line":30}}]}}"#
         );
+    }
+
+    #[test]
+    fn at_json_empty_list_still_shapes() {
+        assert_eq!(at_json(&[]), r#"{"anchors":[]}"#);
+    }
+
+    #[test]
+    fn filter_matches_identity_through_qualifier() {
+        assert!(filter_matches("parse_reference", "parse_reference"));
+        assert!(filter_matches(
+            "parse_reference",
+            "src/cli.rs#parse_reference"
+        ));
+        assert!(filter_matches(
+            "src/cli.rs#parse_reference",
+            "src/cli.rs#parse_reference"
+        ));
+        assert!(!filter_matches(
+            "src/cli.rs#parse_reference",
+            "parse_reference"
+        ));
+        assert!(!filter_matches("other", "src/cli.rs#parse_reference"));
     }
 
     #[test]
@@ -959,8 +658,8 @@ mod tests {
         push_json_str(&mut whitespace, "tab\tnl\n");
         assert_eq!(whitespace, r#""tab\tnl\n""#);
 
-        // A C0 control char becomes a \uXXXX escape; the raw byte must not survive.
-        // Asserted by property to keep the literal escape out of this test's source.
+        // A C0 control char becomes a \uXXXX escape; the raw byte must not
+        // survive.
         let mut control = String::new();
         push_json_str(&mut control, "\u{1}");
         assert!(
@@ -975,39 +674,15 @@ mod tests {
 
     #[test]
     fn at_json_escapes_anchor_text() {
-        // A scenario-style anchor carries a quoted title (`file.feature#"Title"`).
-        // No extractor emits one yet, so only a unit test exercises the escape
-        // path that keeps such an anchor from breaking the JSON document.
-        let hits = vec![hit(r#"x.feature#"Title""#, "x.feature", 3, 3)];
-        let doc = at_json("x.feature", 3, &hits);
-        assert!(doc.contains(r#""anchor":"x.feature#\"Title\"""#), "{doc}");
-        // The citation marker composes wrap() with JSON escaping: wrap escapes
-        // `[`/`]`/`\` (none here), then push_json_str escapes the quotes.
+        // A scenario-style anchor may carry quotes; the marker composes
+        // wrap() with JSON escaping.
+        let h = hit(r#"x.feature#say "hi""#, "x.feature", 3, 3);
+        let forms = vec![(h.anchor.clone(), &h)];
+        let doc = at_json(&forms);
+        assert!(doc.contains(r#""anchor":"x.feature#say \"hi\"""#), "{doc}");
         assert!(
-            doc.contains(r#""citation":"[[rr:x.feature#\"Title\"]]""#),
+            doc.contains(r#""marker":"[[rr:x.feature#say \"hi\"]]""#),
             "{doc}"
-        );
-    }
-
-    #[test]
-    fn at_text_default_is_the_tightest_anchor_by_name() {
-        // `covering` order: outermost (whole file) first, tightest last.
-        let hits = vec![
-            hit("src/handlers.py", "src/handlers.py", 1, 40),
-            hit("handle_request", "src/handlers.py", 8, 30),
-        ];
-        // Default: just the anchor a human would cite, no line numbers.
-        assert_eq!(at_text(&hits, false, false), "handle_request");
-        // `--all`: the whole nest, outermost-first, names only.
-        assert_eq!(
-            at_text(&hits, true, false),
-            "src/handlers.py\nhandle_request"
-        );
-        // `--cite`: the citation marker form; `--all --cite` wraps each line.
-        assert_eq!(at_text(&hits, false, true), "[[rr:handle_request]]");
-        assert_eq!(
-            at_text(&hits, true, true),
-            "[[rr:src/handlers.py]]\n[[rr:handle_request]]"
         );
     }
 }

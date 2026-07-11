@@ -1,12 +1,13 @@
 /*!
-The on-disk index format, `refidx v1`.
+The on-disk index format, `refidx v2`.
 
 Flat, sorted, newline-terminated UTF-8 records, with a self-describing section
 table. The writer ([`serialize`]) produces the bytes; the reader ([`Reader`])
-borrows an mmap'd `&[u8]` and binary-searches a section in place. The writer
-populates the `forward` and `paths` sections from `path` anchors today, and
-writes an empty-but-present `reverse` section: the section table must list every
-core section even when it is zero-length, so the reader can locate each by name.
+borrows an mmap'd `&[u8]` and binary-searches a section in place. Three
+sections: `forward` (each anchor's definition locations), `mentions` (where
+prose writes paths, `[[rr:AD-5]]`), and `paths` (every in-scope file, the
+freshness set). The section table lists every core section even when it is
+zero-length, so the reader can locate each by name.
 
 A format change must bump `MAGIC`, so an old reader rejects a new index rather
 than misparsing it.
@@ -14,14 +15,23 @@ than misparsing it.
 
 use std::collections::HashMap;
 
-/// Magic line pinning the format version; [`Reader::parse`] rejects any other value.
-pub const MAGIC: &str = "refidx v1";
+/// Magic line pinning the format version; [`Reader::parse`] rejects any other
+/// value.
+pub const MAGIC: &str = "refidx v2";
 
-/// One forward-map entry: an anchor and the location it defines.
+/// One forward-map entry: an anchor and a location where it is defined.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ForwardEntry {
     pub anchor: String,
     /// The location body, exactly as printed: `file:start-end`.
+    pub location: String,
+}
+
+/// One mention-table entry: a path token and the location prose writes it at.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MentionEntry {
+    pub token: String,
+    /// Where the mention sits: `file:line-line`.
     pub location: String,
 }
 
@@ -44,32 +54,39 @@ pub struct IndexData {
     pub mtime: u64,
     /// Git tree SHA, or empty when the tree is dirty / not a git repo.
     pub tree: String,
-    /// Forward map. [`serialize`] sorts it (total order: anchor, then location)
-    /// before writing, so [`Reader::forward_lookup`] can binary-search the
-    /// on-disk image; callers need not pre-sort.
+    /// Forward map. [`serialize`] sorts it (total order: anchor, then
+    /// location) before writing, so [`Reader::forward_lookup`] can
+    /// binary-search the on-disk image; callers need not pre-sort.
     pub forward: Vec<ForwardEntry>,
-    /// Every in-scope path; backs the dangling/freshness checks. [`serialize`]
-    /// sorts it before writing, like `forward`.
+    /// The mention table (`[[rr:AD-5]]`). Sorted like `forward`.
+    pub mentions: Vec<MentionEntry>,
+    /// Every in-scope path; backs the freshness check. [`serialize`] sorts it
+    /// before writing.
     pub paths: Vec<String>,
 }
 
-/// Serialize an [`IndexData`] into the `refidx v1` byte layout.
+/// Serialize an [`IndexData`] into the `refidx v2` byte layout.
 ///
 /// The order of records on disk is canonicalized here, not trusted from the
-/// caller: `forward` is sorted by a **total** order (anchor, then the full
-/// `location`) and `paths` lexicographically. This makes the image a pure
+/// caller: `forward` and `mentions` sort by a **total** order (key, then the
+/// full location) and `paths` lexicographically. This makes the image a pure
 /// function of the logical contents, so two builds of the same tree are
 /// byte-identical even though the parallel walk hands records back in a
-/// scheduling-dependent order, and colliding anchors (same anchor, different
-/// location) serialize identically across input permutations — an anchor-only
-/// sort would leave their relative order input-defined. The total order is a
-/// refinement of the anchor order [`Reader::forward_lookup`] binary-searches, so
-/// the search invariant is preserved.
+/// scheduling-dependent order, and colliding keys serialize identically
+/// across input permutations. The total order is a refinement of the key
+/// order [`Reader::forward_lookup`] binary-searches, so the search invariant
+/// is preserved.
 pub fn serialize(data: &IndexData) -> Vec<u8> {
     let mut forward: Vec<&ForwardEntry> = data.forward.iter().collect();
     forward.sort_by(|a, b| {
         a.anchor
             .cmp(&b.anchor)
+            .then_with(|| a.location.cmp(&b.location))
+    });
+    let mut mentions: Vec<&MentionEntry> = data.mentions.iter().collect();
+    mentions.sort_by(|a, b| {
+        a.token
+            .cmp(&b.token)
             .then_with(|| a.location.cmp(&b.location))
     });
     let mut paths: Vec<&String> = data.paths.iter().collect();
@@ -83,28 +100,36 @@ pub fn serialize(data: &IndexData) -> Vec<u8> {
         forward_body.push_str(&e.location);
         forward_body.push('\n');
     }
-    let reverse_body = String::new(); // no reverse entries yet; section stays present but empty
+    let mut mentions_body = String::new();
+    for m in mentions {
+        mentions_body.push_str("men:");
+        mentions_body.push_str(&m.token);
+        mentions_body.push('\t');
+        mentions_body.push_str(&m.location);
+        mentions_body.push('\n');
+    }
     let mut paths_body = String::new();
     for p in paths {
         paths_body.push_str(p);
         paths_body.push('\n');
     }
 
-    let (l_fwd, l_rev, l_paths) = (forward_body.len(), reverse_body.len(), paths_body.len());
+    let (l_fwd, l_men, l_paths) = (forward_body.len(), mentions_body.len(), paths_body.len());
 
     // The section offsets are absolute from file start, so they depend on the
-    // header's own length — which depends on the digit-count of those offsets.
-    // Resolve the circularity with a tiny fixpoint (converges in 1–2 steps).
+    // header's own length — which depends on the digit-count of those
+    // offsets. Resolve the circularity with a tiny fixpoint (converges in 1-2
+    // steps).
     let header = |h: usize| -> String {
         let fwd_off = h;
-        let rev_off = h + l_fwd;
-        let paths_off = h + l_fwd + l_rev;
+        let men_off = h + l_fwd;
+        let paths_off = h + l_fwd + l_men;
         format!(
             "{MAGIC}\n\
              mtime:{}\n\
              tree:{}\n\
              section:forward:{fwd_off}:{l_fwd}\n\
-             section:reverse:{rev_off}:{l_rev}\n\
+             section:mentions:{men_off}:{l_men}\n\
              section:paths:{paths_off}:{l_paths}\n\
              \n",
             data.mtime, data.tree,
@@ -121,7 +146,7 @@ pub fn serialize(data: &IndexData) -> Vec<u8> {
 
     let mut out = header(h).into_bytes();
     out.extend_from_slice(forward_body.as_bytes());
-    out.extend_from_slice(reverse_body.as_bytes());
+    out.extend_from_slice(mentions_body.as_bytes());
     out.extend_from_slice(paths_body.as_bytes());
     out
 }
@@ -183,10 +208,11 @@ impl<'a> Reader<'a> {
             sections.insert(name, (off, len));
         }
 
-        // Bounds-check every section against the actual image length, so a torn
-        // or truncated index is rejected here as a corrupt index rather than
-        // panicking later when `section` slices past the end (the offsets are
-        // taken from the header, but the bytes behind them may not exist).
+        // Bounds-check every section against the actual image length, so a
+        // torn or truncated index is rejected here as a corrupt index rather
+        // than panicking later when `section` slices past the end (the
+        // offsets are taken from the header, but the bytes behind them may
+        // not exist).
         for (name, &(off, len)) in &sections {
             let end = off
                 .checked_add(len)
@@ -209,31 +235,29 @@ impl<'a> Reader<'a> {
 
     fn section(&self, name: &str) -> &'a [u8] {
         match self.sections.get(name) {
-            // `parse` already bounds-checked every section, so the slice is in
-            // range; `get(..).unwrap_or(&[])` keeps this total even if a future
-            // caller builds a `Reader` by hand without that check.
+            // `parse` already bounds-checked every section, so the slice is
+            // in range; `get(..).unwrap_or(&[])` keeps this total even if a
+            // future caller builds a `Reader` by hand without that check.
             Some(&(off, len)) => self.bytes.get(off..off.saturating_add(len)).unwrap_or(&[]),
             None => &[],
         }
     }
 
     /// Resolve an anchor through the forward map. Returns every matching
-    /// location (zero = not found, one = unique, more = a collision).
+    /// location (zero = not found, one = unique, more = ambiguous).
     pub fn forward_lookup(&self, anchor: &str) -> Vec<String> {
         let slice = self.section("forward");
         let lines: Vec<&[u8]> = split_records(slice);
         let target = anchor.as_bytes();
-        // Binary search: `forward` records are sorted by the key after `fwd:`,
-        // so the predicate "key < target" is monotonic. This builds an explicit
-        // line index for clarity; a future version can bisect the raw bytes in
-        // place without materializing it.
-        let start = lines.partition_point(|l| fwd_key(l) < target);
+        // Binary search: `forward` records are sorted by the key after
+        // `fwd:`, so the predicate "key < target" is monotonic.
+        let start = lines.partition_point(|l| record_key(l, b"fwd:") < target);
         let mut out = Vec::new();
         for line in &lines[start..] {
-            if fwd_key(line) != target {
+            if record_key(line, b"fwd:") != target {
                 break;
             }
-            if let Some(loc) = fwd_location(line) {
+            if let Some(loc) = record_value(line) {
                 out.push(loc.to_string());
             }
         }
@@ -245,51 +269,46 @@ impl<'a> Reader<'a> {
     /// anchor name (a total order, so the output is deterministic).
     ///
     /// This is a linear scan of the `forward` section. Positions live only
-    /// inside the location text there, and that section is sorted by anchor —
-    /// not by file — so there is no binary-search shortcut for the inverse
-    /// query. A position-keyed section could replace this with a bisect later
-    /// (see this module's format docs); the scan keeps the walking skeleton
-    /// format-compatible.
+    /// inside the location text there, and that section is sorted by anchor,
+    /// not by file, so there is no binary-search shortcut for the inverse
+    /// query; a position-keyed section could replace this with a bisect.
     ///
     /// # Examples
     ///
     /// ```
     /// use ripref::refidx::{serialize, ForwardEntry, IndexData, Reader};
     ///
-    /// // One file with two overlapping anchors: the whole-file path anchor
-    /// // (lines 1-20) and a function defined inside it (lines 5-12). `forward`
-    /// // is kept sorted by anchor — the writer's invariant.
+    /// // One Markdown file with two nested section anchors: the title's
+    /// // record spans the document, a heading spans its own section.
     /// let data = IndexData {
-    ///     mtime: 0,
-    ///     tree: String::new(),
     ///     forward: vec![
-    ///         ForwardEntry { anchor: "handle".into(), location: "src/api.rs:5-12".into() },
-    ///         ForwardEntry { anchor: "src/api.rs".into(), location: "src/api.rs:1-20".into() },
+    ///         ForwardEntry { anchor: "AD-9".into(), location: "doc/x.md:1-20".into() },
+    ///         ForwardEntry { anchor: "Consequences".into(), location: "doc/x.md:12-20".into() },
     ///     ],
-    ///     paths: vec!["src/api.rs".into()],
+    ///     paths: vec!["doc/x.md".into()],
+    ///     ..Default::default()
     /// };
     ///
-    /// // Round-trip through the on-disk format, exactly as a reader does:
-    /// // serialize to bytes, then parse them back (here from a slice, in the
-    /// // binary from an mmap).
+    /// // Round-trip through the on-disk format, exactly as a reader does.
     /// let bytes = serialize(&data);
     /// let reader = Reader::parse(&bytes).unwrap();
     ///
-    /// // Line 8 falls inside both spans; `covering` returns them outermost-first.
-    /// let hits = reader.covering("src/api.rs", 8);
+    /// // Line 15 falls inside both spans; `covering` returns outermost first.
+    /// let hits = reader.covering("doc/x.md", 15);
     /// let names: Vec<&str> = hits.iter().map(|h| h.anchor.as_str()).collect();
-    /// assert_eq!(names, ["src/api.rs", "handle"]);
+    /// assert_eq!(names, ["AD-9", "Consequences"]);
     /// ```
     pub fn covering(&self, file: &str, line: u64) -> Vec<AnchorHit> {
         let mut hits = Vec::new();
         for record in split_records(self.section("forward")) {
-            let Ok(anchor) = std::str::from_utf8(fwd_key(record)) else {
+            let Ok(anchor) = std::str::from_utf8(record_key(record, b"fwd:")) else {
                 continue;
             };
-            let Some((loc_file, start, end)) = fwd_location(record).and_then(parse_location) else {
+            let Some((loc_file, start, end)) = record_value(record).and_then(parse_location) else {
                 continue;
             };
-            // Exact file match (not a prefix): `a/b.rs` must not answer for `b.rs`.
+            // Exact file match (not a prefix): `a/b.rs` must not answer for
+            // `b.rs`.
             if loc_file == file && start <= line && line <= end {
                 hits.push(AnchorHit {
                     anchor: anchor.to_string(),
@@ -308,7 +327,21 @@ impl<'a> Reader<'a> {
         hits
     }
 
-    /// Every in-scope path recorded in the index (the freshness/dangling set).
+    /// Every mention-table entry, as `(token, location)` pairs in on-disk
+    /// (token-sorted) order. The table serves completion and rename tooling
+    /// (`[[rr:AD-5]]`); the scanners never read it.
+    pub fn mentions(&self) -> Vec<(String, String)> {
+        split_records(self.section("mentions"))
+            .into_iter()
+            .filter_map(|l| {
+                let key = std::str::from_utf8(record_key(l, b"men:")).ok()?;
+                let loc = record_value(l)?;
+                Some((key.to_string(), loc.to_string()))
+            })
+            .collect()
+    }
+
+    /// Every in-scope path recorded in the index (the freshness set).
     pub fn paths(&self) -> Vec<&'a str> {
         split_records(self.section("paths"))
             .into_iter()
@@ -333,26 +366,26 @@ fn split_records(slice: &[u8]) -> Vec<&[u8]> {
         .collect()
 }
 
-/// The binary-search key of a `forward` record: the anchor between `fwd:` and
+/// The binary-search key of a record: the text between its tag prefix and
 /// the first tab.
-fn fwd_key(line: &[u8]) -> &[u8] {
-    let body = line.strip_prefix(b"fwd:").unwrap_or(line);
+fn record_key<'r>(line: &'r [u8], tag: &[u8]) -> &'r [u8] {
+    let body = line.strip_prefix(tag).unwrap_or(line);
     match body.iter().position(|&b| b == b'\t') {
         Some(t) => &body[..t],
         None => body,
     }
 }
 
-/// The location body of a `forward` record: everything after the tab.
-fn fwd_location(line: &[u8]) -> Option<&str> {
+/// The value body of a record: everything after the tab.
+fn record_value(line: &[u8]) -> Option<&str> {
     let tab = line.iter().position(|&b| b == b'\t')?;
     std::str::from_utf8(&line[tab + 1..]).ok()
 }
 
-/// Split a `file:start-end` location into `(file, start, end)`. Parses from the
-/// right so a colon in the path keeps its prefix; returns `None` if the trailing
-/// span is not `<u64>-<u64>`.
-fn parse_location(loc: &str) -> Option<(&str, u64, u64)> {
+/// Split a `file:start-end` location into `(file, start, end)`. Parses from
+/// the right so a colon in the path keeps its prefix (`[[rr:AD-1]]`); returns
+/// `None` if the trailing span is not `<u64>-<u64>`.
+pub fn parse_location(loc: &str) -> Option<(&str, u64, u64)> {
     let (file, span) = loc.rsplit_once(':')?;
     let (start, end) = span.split_once('-')?;
     Some((file, start.parse().ok()?, end.parse().ok()?))
@@ -368,49 +401,49 @@ mod tests {
             tree: "abc123".to_string(),
             forward: vec![
                 ForwardEntry {
-                    anchor: "a/one.rs".into(),
-                    location: "a/one.rs:1-10".into(),
+                    anchor: "Alpha".into(),
+                    location: "a/one.md:1-10".into(),
                 },
                 ForwardEntry {
-                    anchor: "b/two.rs".into(),
+                    anchor: "two".into(),
                     location: "b/two.rs:1-3".into(),
                 },
             ],
-            paths: vec!["a/one.rs".into(), "b/two.rs".into()],
+            mentions: vec![MentionEntry {
+                token: "src/cli.rs".into(),
+                location: "a/one.md:4-4".into(),
+            }],
+            paths: vec!["a/one.md".into(), "b/two.rs".into()],
         }
     }
 
     #[test]
     fn roundtrip_header_and_lookups() {
         let bytes = serialize(&sample());
-        assert!(bytes.starts_with(b"refidx v1\n"));
+        assert!(bytes.starts_with(b"refidx v2\n"));
         let r = Reader::parse(&bytes).unwrap();
         assert_eq!(r.mtime, 1_718_660_000);
         assert_eq!(r.tree, "abc123");
+        assert_eq!(r.forward_lookup("Alpha"), vec!["a/one.md:1-10".to_string()]);
+        assert_eq!(r.forward_lookup("two"), vec!["b/two.rs:1-3".to_string()]);
+        assert!(r.forward_lookup("missing").is_empty());
         assert_eq!(
-            r.forward_lookup("a/one.rs"),
-            vec!["a/one.rs:1-10".to_string()]
+            r.mentions(),
+            vec![("src/cli.rs".to_string(), "a/one.md:4-4".to_string())]
         );
-        assert_eq!(
-            r.forward_lookup("b/two.rs"),
-            vec!["b/two.rs:1-3".to_string()]
-        );
-        assert!(r.forward_lookup("missing.rs").is_empty());
-        assert_eq!(r.paths(), vec!["a/one.rs", "b/two.rs"]);
+        assert_eq!(r.paths(), vec!["a/one.md", "b/two.rs"]);
     }
 
     #[test]
     fn section_offsets_point_at_real_data() {
-        // Proves the fixpoint produced consistent offsets: the parsed sections
-        // line up with the bytes the writer appended.
+        // Proves the fixpoint produced consistent offsets: the parsed
+        // sections line up with the bytes the writer appended.
         let bytes = serialize(&sample());
         let r = Reader::parse(&bytes).unwrap();
-        assert!(r.section("reverse").is_empty());
         let fwd = std::str::from_utf8(r.section("forward")).unwrap();
-        assert_eq!(
-            fwd,
-            "fwd:a/one.rs\ta/one.rs:1-10\nfwd:b/two.rs\tb/two.rs:1-3\n"
-        );
+        assert_eq!(fwd, "fwd:Alpha\ta/one.md:1-10\nfwd:two\tb/two.rs:1-3\n");
+        let men = std::str::from_utf8(r.section("mentions")).unwrap();
+        assert_eq!(men, "men:src/cli.rs\ta/one.md:4-4\n");
     }
 
     #[test]
@@ -433,17 +466,14 @@ mod tests {
 
     #[test]
     fn rejects_unknown_magic() {
-        let bad = b"refidx v999\nmtime:0\ntree:\n\n";
+        let bad = b"refidx v1\nmtime:0\ntree:\n\n";
         assert!(Reader::parse(bad).is_err());
     }
 
-    /// `serialize` must be a pure function of the logical contents: feeding the
-    /// same records in two different input orders (including colliding anchors,
-    /// where an anchor-only sort would leave their order input-defined) must
-    /// produce byte-identical images. This is what lets the parallel walk hand
-    /// records back in any order and still yield a deterministic index, and it
-    /// catches the false-confidence in a build-twice test that would also pass
-    /// on a non-total sort.
+    /// `serialize` must be a pure function of the logical contents: feeding
+    /// the same records in two different input orders (including colliding
+    /// anchors, where an anchor-only sort would leave their order
+    /// input-defined) must produce byte-identical images.
     #[test]
     fn serialize_is_order_independent_for_collisions() {
         let mtime = 7;
@@ -464,10 +494,19 @@ mod tests {
                     location: "a.rs:1-1".into(),
                 },
             ],
+            mentions: vec![
+                MentionEntry {
+                    token: "b/n.md".into(),
+                    location: "a.md:2-2".into(),
+                },
+                MentionEntry {
+                    token: "a/m.md".into(),
+                    location: "a.md:1-1".into(),
+                },
+            ],
             paths: vec!["z.rs".into(), "a.rs".into()],
         };
-        // The exact same records, permuted (the two `dup` collisions swapped,
-        // `alpha` moved) and `paths` reversed.
+        // The exact same records, permuted, and `paths` reversed.
         let two = IndexData {
             mtime,
             tree: "t".into(),
@@ -485,25 +524,32 @@ mod tests {
                     location: "a.rs:1-2".into(),
                 },
             ],
+            mentions: vec![
+                MentionEntry {
+                    token: "a/m.md".into(),
+                    location: "a.md:1-1".into(),
+                },
+                MentionEntry {
+                    token: "b/n.md".into(),
+                    location: "a.md:2-2".into(),
+                },
+            ],
             paths: vec!["a.rs".into(), "z.rs".into()],
         };
         assert_eq!(serialize(&one), serialize(&two));
 
-        // And the canonical order is by anchor, then location, so the colliding
-        // `dup` records come out in location order regardless of input.
+        // And the canonical order is by key, then location, so colliding
+        // records come out in location order regardless of input.
         let bytes = serialize(&one);
         let r = Reader::parse(&bytes).unwrap();
         assert_eq!(r.forward_lookup("dup"), vec!["a.rs:1-1", "z.rs:9-9"]);
     }
 
-    /// A truncated image whose header still parses but whose section bytes are
-    /// gone must be rejected as corrupt, never sliced out of bounds (the
-    /// historical `refidx.rs` panic). `parse` bounds-checks, so the error
-    /// surfaces here instead of as an OOB panic in `section`.
+    /// A truncated image whose header still parses but whose section bytes
+    /// are gone must be rejected as corrupt, never sliced out of bounds.
     #[test]
     fn parse_rejects_truncated_section_bytes() {
         let full = serialize(&sample());
-        // Cut the body off but keep the whole header (through the blank line).
         let header_end = full
             .windows(2)
             .position(|w| w == b"\n\n")
@@ -533,58 +579,56 @@ mod tests {
         // `forward` MUST be sorted by anchor (the writer's invariant), so the
         // fixture is in anchor order, not span order.
         let data = IndexData {
-            mtime: 0,
-            tree: String::new(),
             forward: vec![
                 ForwardEntry {
-                    anchor: "file".into(),
-                    location: "f.rs:1-40".into(),
+                    anchor: "doc".into(),
+                    location: "f.md:1-40".into(),
                 },
                 ForwardEntry {
                     anchor: "inner".into(),
-                    location: "f.rs:12-18".into(),
+                    location: "f.md:12-18".into(),
                 },
                 ForwardEntry {
                     anchor: "other".into(),
-                    location: "g.rs:1-5".into(),
+                    location: "g.md:1-5".into(),
                 },
                 ForwardEntry {
                     anchor: "outer".into(),
-                    location: "f.rs:8-30".into(),
+                    location: "f.md:8-30".into(),
                 },
             ],
-            paths: vec!["f.rs".into(), "g.rs".into()],
+            paths: vec!["f.md".into(), "g.md".into()],
+            ..Default::default()
         };
         let bytes = serialize(&data);
         let r = Reader::parse(&bytes).unwrap();
 
-        // Outermost-first: file (1-40) ⊃ outer (8-30) ⊃ inner (12-18).
+        // Outermost-first: doc (1-40) contains outer (8-30) contains inner
+        // (12-18).
         assert_eq!(
-            covering_names(&r, "f.rs", 15),
-            vec!["file", "outer", "inner"]
+            covering_names(&r, "f.md", 15),
+            vec!["doc", "outer", "inner"]
         );
         assert_eq!(
-            r.covering("f.rs", 15)[0],
+            r.covering("f.md", 15)[0],
             AnchorHit {
-                anchor: "file".into(),
-                file: "f.rs".into(),
+                anchor: "doc".into(),
+                file: "f.md".into(),
                 start_line: 1,
                 end_line: 40,
             }
         );
-        // Line 9 sits in file + outer but above inner's 12-18.
-        assert_eq!(covering_names(&r, "f.rs", 9), vec!["file", "outer"]);
-        // Past every span on f.rs → nothing (drives the exit-1 path).
-        assert!(r.covering("f.rs", 50).is_empty());
-        // Exact-file match: f.rs records must not leak into a g.rs query.
-        assert_eq!(covering_names(&r, "g.rs", 3), vec!["other"]);
+        // Line 9 sits in doc + outer but above inner's 12-18.
+        assert_eq!(covering_names(&r, "f.md", 9), vec!["doc", "outer"]);
+        // Past every span on f.md → nothing (drives the adverse exit).
+        assert!(r.covering("f.md", 50).is_empty());
+        // Exact-file match: f.md records must not leak into a g.md query.
+        assert_eq!(covering_names(&r, "g.md", 3), vec!["other"]);
     }
 
     #[test]
     fn covering_breaks_equal_spans_lexicographically() {
         let data = IndexData {
-            mtime: 0,
-            tree: String::new(),
             forward: vec![
                 ForwardEntry {
                     anchor: "alpha".into(),
@@ -596,6 +640,7 @@ mod tests {
                 },
             ],
             paths: vec!["f.rs".into()],
+            ..Default::default()
         };
         let bytes = serialize(&data);
         let r = Reader::parse(&bytes).unwrap();

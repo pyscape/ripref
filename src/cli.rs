@@ -4,33 +4,29 @@ Command-line interface for `rr`, modeled on ripgrep's `Flag`-trait mechanism.
 Each optional flag is a zero-sized type implementing [`Flag`]; a single global
 slice `FLAGS` holds them as `&dyn Flag`. The parser walks argv, looks a token
 up in that slice, and calls [`Flag::update`] to fold the value into [`LowArgs`].
-The same trait objects also generate `--help`, so documentation can't drift from
-the parser. This is the faithful-but-minimal version of ripgrep's
-`crates/core/flags`; the doc-category / doc-short strings here are written to
-become the eventual generated `--help` and man-page literals.
+The same trait objects also generate `--help`, so documentation can't drift
+from the parser. This is the faithful-but-minimal version of ripgrep's
+`crates/core/flags`.
 */
 
 use std::ffi::{OsStr, OsString};
 
-/// The subcommand selected on the command line.
+use crate::marker::{self, Decoded};
+
+/// The subcommand selected on the command line: the five verbs of
+/// `[[rr:AD-3]]`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Subcommand {
-    /// `rr index` — the sole writer.
+    /// `rr index` — the sole writer: anchors and mentions into the index.
     Index,
-    /// `rr read` — dereference one anchor (or a pinned `anchor@commit` / `anchor~commit`).
+    /// `rr read` — resolve a marker or bare anchor to definition locations.
     Read,
-    /// `rr at` — list the anchors whose span covers a `file:line` position.
+    /// `rr at` — the marker for the innermost anchor covering a `file:line`.
     At,
-    /// `rr cite` — freeze an anchor's current content as a recoverable snapshot.
-    Cite,
-    /// `rr track` — baseline an anchor so drift from it can be flagged.
-    Track,
-    /// `rr verify` — classify pinned references ok / drifted / moved / broken.
+    /// `rr search` — list the markers scoped text writes.
+    Search,
+    /// `rr verify` — the gate: judge the references scoped text writes.
     Verify,
-    /// `rr uncite` — retire a snapshot with a tomb record.
-    Uncite,
-    /// `rr untrack` — retire a tracking baseline with a tomb record.
-    Untrack,
 }
 
 impl Subcommand {
@@ -39,61 +35,36 @@ impl Subcommand {
             "index" => Some(Subcommand::Index),
             "read" => Some(Subcommand::Read),
             "at" => Some(Subcommand::At),
-            "cite" => Some(Subcommand::Cite),
-            "track" => Some(Subcommand::Track),
+            "search" => Some(Subcommand::Search),
             "verify" => Some(Subcommand::Verify),
-            "uncite" => Some(Subcommand::Uncite),
-            "untrack" => Some(Subcommand::Untrack),
             _ => None,
         }
     }
 }
 
-/// Which pin a `@`/`~` reference names.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Sigil {
-    /// `anchor@commit`: a frozen snapshot.
-    Snapshot,
-    /// `anchor~commit`: a tracking baseline.
-    Tracking,
-}
-
-/// The structural parse of a reference token: either a plain anchor, or an anchor
-/// pinned at a commit. This is purely syntactic (split on the last `@`/`~`); the
-/// caller applies **known-anchor-wins** by checking whether the whole token is a
-/// live anchor *before* trusting a split, so an anchor that legitimately contains
-/// `@`/`~` (an email heading, an `@scope` path, a `~/path` heading) still reads
-/// literally.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Reference<'a> {
-    Plain(&'a str),
-    Pinned {
-        anchor: &'a str,
-        sigil: Sigil,
-        commit: &'a str,
-    },
-}
-
-/// Split a reference token on its **last** `@`/`~` into `(anchor, sigil, commit)`,
-/// or [`Reference::Plain`] when there is no such split (no sigil, or an empty side).
-/// Splitting on the last sigil is what lets `support@example.com@a1b2c3d` mean a
-/// snapshot of the `support@example.com` anchor.
-pub fn parse_reference(token: &str) -> Reference<'_> {
-    match token.rfind(['@', '~']) {
-        Some(i) if i > 0 && i + 1 < token.len() => {
-            let sigil = if token.as_bytes()[i] == b'@' {
-                Sigil::Snapshot
-            } else {
-                Sigil::Tracking
-            };
-            Reference::Pinned {
-                anchor: &token[..i],
-                sigil,
-                commit: &token[i + 1..],
-            }
-        }
-        _ => Reference::Plain(token),
+/// Parse one reference token from the CLI into its bare anchor. A pasted
+/// `[[rr:...]]` marker decodes (strip, then unescape, per `[[rr:AD-2]]`);
+/// any other token already is a bare anchor. `Err` is a token that opens
+/// like a marker but is not one: the user meant a marker, so it is a usage
+/// error rather than a silent reparse.
+pub fn parse_reference(token: &str) -> Result<String, String> {
+    match marker::decode(token) {
+        Decoded::Bare => Ok(token.to_string()),
+        Decoded::Marker(anchor) => Ok(anchor),
+        Decoded::Malformed(why) => Err(why),
     }
+}
+
+/// Split a qualified anchor `path#identity` at its first `#`
+/// (`[[rr:AD-1]]`). `None` when there is no `#` or either side is empty; the
+/// caller tries the whole token as an identity first, so an identity that
+/// itself contains `#` still resolves literally.
+pub fn split_qualifier(anchor: &str) -> Option<(&str, &str)> {
+    let (path, identity) = anchor.split_once('#')?;
+    if path.is_empty() || identity.is_empty() {
+        return None;
+    }
+    Some((path, identity))
 }
 
 /// A "special" mode that short-circuits normal dispatch.
@@ -103,16 +74,16 @@ pub enum Special {
     Version,
 }
 
-/// Output format for the global `--format` flag. Only `Text` is emitted today;
-/// `Json` parses but is not yet wired to output.
+/// Output format for the global `--format` flag (`[[rr:AD-4]]`): text by
+/// default, or one `rr-json` envelope per invocation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OutputFormat {
     Text,
     Json,
 }
 
-/// When to colorize, for the global `--color` flag. Parsed but currently inert:
-/// `read --locate` output is a plain location line.
+/// When to colorize, for the global `--color` flag. Parsed but inert: every
+/// current output is plain text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Color {
     Auto,
@@ -120,25 +91,22 @@ pub enum Color {
     Never,
 }
 
-/// The low-level, parsed-but-unresolved arguments. Mirrors ripgrep's `LowArgs`:
-/// flags only validate into this struct; commands interpret it.
+/// The low-level, parsed-but-unresolved arguments. Mirrors ripgrep's
+/// `LowArgs`: flags only validate into this struct; commands interpret it.
 #[derive(Clone, Debug)]
 pub struct LowArgs {
     pub command: Subcommand,
     pub index: Option<OsString>,
     pub format: OutputFormat,
     pub color: Color,
-    /// `rr read --locate`: print only `file:start-end`.
-    pub locate: bool,
     /// `rr index -q/--quiet`: suppress the summary line.
     pub quiet: bool,
-    /// `rr read/at --no-freshness`: answer from the index without the staleness check.
+    /// `--no-freshness`: answer from the index without the staleness check.
     pub no_freshness: bool,
-    /// `rr at --all`: list every covering anchor, not just the tightest.
+    /// `rr at --all`: report the whole nest, not just the innermost anchor.
     pub all: bool,
-    /// `rr at --cite`: emit the document citation marker `[[rr:anchor]]` instead
-    /// of the bare anchor (text output only; JSON always carries `citation`).
-    pub cite: bool,
+    /// `rr search --mentions`: list path mentions instead of markers.
+    pub mentions: bool,
     /// Positional arguments (e.g. the anchor for `read`).
     pub positional: Vec<OsString>,
 }
@@ -150,11 +118,10 @@ impl LowArgs {
             index: None,
             format: OutputFormat::Text,
             color: Color::Auto,
-            locate: false,
             quiet: false,
             no_freshness: false,
             all: false,
-            cite: false,
+            mentions: false,
             positional: Vec::new(),
         }
     }
@@ -182,9 +149,10 @@ impl FlagValue {
     }
 }
 
-/// The definition of one optional flag. A trimmed-down [ripgrep `Flag`] trait:
-/// long name (required), optional short name, whether it takes a value, the
-/// documentation strings, and an `update` that folds the value into [`LowArgs`].
+/// The definition of one optional flag. A trimmed-down [ripgrep `Flag`]
+/// trait: long name (required), optional short name, whether it takes a
+/// value, the documentation strings, and an `update` that folds the value
+/// into [`LowArgs`].
 ///
 /// [ripgrep `Flag`]: https://github.com/BurntSushi/ripgrep
 pub trait Flag: Sync {
@@ -196,7 +164,7 @@ pub trait Flag: Sync {
     }
     /// Long name (required), without the leading `--`.
     fn name_long(&self) -> &'static str;
-    /// Documentation category, pre-staging the eventual `doc_category`.
+    /// Documentation category.
     fn doc_category(&self) -> &'static str;
     /// Terse one-line help string.
     fn doc_short(&self) -> &'static str;
@@ -297,26 +265,6 @@ impl Flag for NoColorFlag {
     }
 }
 
-struct LocateFlag;
-impl Flag for LocateFlag {
-    fn is_switch(&self) -> bool {
-        true
-    }
-    fn name_long(&self) -> &'static str {
-        "locate"
-    }
-    fn doc_category(&self) -> &'static str {
-        "output"
-    }
-    fn doc_short(&self) -> &'static str {
-        "Print only the resolved location (file:start-end)."
-    }
-    fn update(&self, _value: FlagValue, args: &mut LowArgs) -> Result<(), String> {
-        args.locate = true;
-        Ok(())
-    }
-}
-
 struct QuietFlag;
 impl Flag for QuietFlag {
     fn is_switch(&self) -> bool {
@@ -372,7 +320,7 @@ impl Flag for AllFlag {
         "output"
     }
     fn doc_short(&self) -> &'static str {
-        "rr at: list every covering anchor, not just the tightest."
+        "rr at: report the whole covering nest, outermost first."
     }
     fn update(&self, _value: FlagValue, args: &mut LowArgs) -> Result<(), String> {
         args.all = true;
@@ -380,22 +328,22 @@ impl Flag for AllFlag {
     }
 }
 
-struct CiteFlag;
-impl Flag for CiteFlag {
+struct MentionsFlag;
+impl Flag for MentionsFlag {
     fn is_switch(&self) -> bool {
         true
     }
     fn name_long(&self) -> &'static str {
-        "cite"
+        "mentions"
     }
     fn doc_category(&self) -> &'static str {
         "output"
     }
     fn doc_short(&self) -> &'static str {
-        "rr at: emit the citation marker [[rr:anchor]] instead of the bare anchor."
+        "rr search: list path mentions instead of markers."
     }
     fn update(&self, _value: FlagValue, args: &mut LowArgs) -> Result<(), String> {
-        args.cite = true;
+        args.mentions = true;
         Ok(())
     }
 }
@@ -406,11 +354,10 @@ static FLAGS: &[&dyn Flag] = &[
     &FormatFlag,
     &ColorFlag,
     &NoColorFlag,
-    &LocateFlag,
     &QuietFlag,
     &NoFreshnessFlag,
     &AllFlag,
-    &CiteFlag,
+    &MentionsFlag,
 ];
 
 fn lookup_long(name: &str) -> Option<&'static dyn Flag> {
@@ -421,7 +368,8 @@ fn lookup_short(ch: char) -> Option<&'static dyn Flag> {
     FLAGS.iter().copied().find(|f| f.name_short() == Some(ch))
 }
 
-/// Parse argv (already stripped of the leading program name) into a [`ParseOutcome`].
+/// Parse argv (already stripped of the leading program name) into a
+/// [`ParseOutcome`].
 pub fn parse(argv: &[OsString]) -> Result<ParseOutcome, String> {
     // `--help`/`-h` and `--version`/`-V` are special: honored anywhere, alone.
     for tok in argv {
@@ -520,37 +468,24 @@ fn validate(args: &LowArgs) -> Result<(), String> {
                 Err("index takes no positional arguments".to_string())
             }
         }
-        Subcommand::Cite => match args.positional.len() {
-            1 => Ok(()),
-            0 => Err("cite requires an <anchor> argument".to_string()),
-            _ => Err("cite takes exactly one <anchor>".to_string()),
+        Subcommand::Search => match args.positional.len() {
+            0 | 1 => Ok(()),
+            _ => Err("search takes at most one <anchor>".to_string()),
         },
-        Subcommand::Track => match args.positional.len() {
-            1 => Ok(()),
-            0 => Err("track requires an <anchor> argument".to_string()),
-            _ => Err("track takes exactly one <anchor>".to_string()),
-        },
-        // verify with no refs checks every pin in the manifest; with refs, just
-        // those. Either arity is valid.
-        Subcommand::Verify => Ok(()),
-        Subcommand::Uncite => match args.positional.len() {
-            1 => Ok(()),
-            0 => Err("uncite requires an <anchor@commit> argument".to_string()),
-            _ => Err("uncite takes exactly one <anchor@commit>".to_string()),
-        },
-        Subcommand::Untrack => match args.positional.len() {
-            1 => Ok(()),
-            0 => Err("untrack requires an <anchor~commit> argument".to_string()),
-            _ => Err("untrack takes exactly one <anchor~commit>".to_string()),
-        },
+        Subcommand::Verify => {
+            if args.positional.is_empty() {
+                Ok(())
+            } else {
+                Err("verify takes no positional arguments".to_string())
+            }
+        }
     }
 }
 
-/// Split a `<file>:<line>` position into its parts. Parses the line from the
-/// right (`rsplit_once`) so a path containing a colon keeps its prefix; the line
-/// must be a bare `u64`. The richer `file:start-end` (range) and `file:line:col`
-/// (column) forms are reserved as provisional and are not accepted yet — a
-/// range tail fails the numeric parse and reports a usage error.
+/// Split a `<file>:<line>` location into its parts, per the location grammar
+/// of `[[rr:AD-1]]`: the span is the numeric suffix after the last colon, so
+/// a path containing a colon (a Windows drive) keeps its prefix. The line
+/// must be a bare `u64`; `at` takes a single line, never a range.
 pub fn parse_position(s: &str) -> Result<(String, u64), String> {
     let (file, line) = s
         .rsplit_once(':')
@@ -561,7 +496,7 @@ pub fn parse_position(s: &str) -> Result<(String, u64), String> {
     let line = line
         .parse::<u64>()
         .map_err(|_| format!("line must be a number in <file>:<line>, got {s:?}"))?;
-    Ok((file.to_string(), line))
+    Ok((file.replace('\\', "/"), line))
 }
 
 /// Resolve the index path: `--index`, else `REF_INDEX`, else the default.
@@ -575,23 +510,20 @@ pub fn index_path(args: &LowArgs) -> OsString {
     OsString::from(".ref-cache/index")
 }
 
-/// Generate `--help` text from the flag registry, proving the docs-from-flags
-/// design. A later version replaces this with the fully generated help.
+/// Generate `--help` text from the flag registry, proving the
+/// docs-from-flags design.
 pub fn help_text() -> String {
     let mut out = String::new();
-    out.push_str("rr — cite code and prose by stable anchors.\n\n");
+    out.push_str("rr - reference code and prose by stable anchors.\n\n");
     out.push_str("USAGE:\n    rr <command> [options] [args]\n\n");
     out.push_str("COMMANDS:\n");
-    out.push_str("    index    Build / refresh the index from the working tree (writer)\n");
-    out.push_str("    read     Dereference an anchor, or a pinned anchor@commit / anchor~commit\n");
     out.push_str(
-        "    at       Name the anchor to cite for a file:line position (--all: full nest)\n",
+        "    index    Build / refresh the index from the working tree (the only writer)\n",
     );
-    out.push_str("    cite     Freeze an anchor's current content as a recoverable snapshot\n");
-    out.push_str("    track    Baseline an anchor so later drift from it can be flagged\n");
-    out.push_str("    verify   Classify pinned references ok / drifted / moved / broken\n");
-    out.push_str("    uncite   Retire a snapshot (tomb record)\n");
-    out.push_str("    untrack  Retire a tracking baseline (tomb record)\n\n");
+    out.push_str("    read     Resolve a marker or bare anchor to its definition locations\n");
+    out.push_str("    at       Print the marker covering a file:line (--all: the whole nest)\n");
+    out.push_str("    search   List the markers scoped text writes (--mentions: path mentions)\n");
+    out.push_str("    verify   Judge every reference in scoped text; findings exit 1\n\n");
     out.push_str("OPTIONS:\n");
     for flag in FLAGS {
         let short = match flag.name_short() {
@@ -599,13 +531,13 @@ pub fn help_text() -> String {
             None => "    ".to_string(),
         };
         out.push_str(&format!(
-            "    {short}--{:<10} {}\n",
+            "    {short}--{:<12} {}\n",
             flag.name_long(),
             flag.doc_short()
         ));
     }
-    out.push_str("    -h, --help       Show this help\n");
-    out.push_str("    -V, --version    Print version\n");
+    out.push_str("    -h, --help         Show this help\n");
+    out.push_str("    -V, --version      Print version\n");
     out
 }
 
@@ -632,8 +564,11 @@ mod tests {
     #[test]
     fn picks_the_command() {
         assert_eq!(parse_run(&["index"]).command, Subcommand::Index);
-        assert_eq!(parse_run(&["read", "a.rs"]).command, Subcommand::Read);
+        assert_eq!(parse_run(&["read", "a"]).command, Subcommand::Read);
         assert_eq!(parse_run(&["at", "a.rs:1"]).command, Subcommand::At);
+        assert_eq!(parse_run(&["search"]).command, Subcommand::Search);
+        assert_eq!(parse_run(&["search", "a"]).command, Subcommand::Search);
+        assert_eq!(parse_run(&["verify"]).command, Subcommand::Verify);
     }
 
     #[test]
@@ -644,9 +579,51 @@ mod tests {
         );
         // Right-split keeps a colon-bearing prefix attached to the file.
         assert_eq!(parse_position("a:b:7").unwrap(), ("a:b".to_string(), 7));
+        // A backslash separator is CLI input; it normalizes to `/`.
+        assert_eq!(
+            parse_position(r"C:\src\a.rs:9").unwrap(),
+            ("C:/src/a.rs".to_string(), 9)
+        );
         assert!(parse_position("no-line").is_err());
-        assert!(parse_position("a.rs:1-3").is_err()); // range form not accepted yet
+        assert!(parse_position("a.rs:1-3").is_err()); // a range is not a position
         assert!(parse_position(":5").is_err()); // empty file
+    }
+
+    #[test]
+    fn parse_reference_decodes_markers_and_passes_bare() {
+        assert_eq!(parse_reference("AD-42").unwrap(), "AD-42");
+        assert_eq!(parse_reference("[[rr:AD-42]]").unwrap(), "AD-42");
+        assert_eq!(
+            parse_reference(r"[[rr:arr\[0\]]]").unwrap(),
+            "arr[0]",
+            "unescape is normative"
+        );
+        assert!(
+            parse_reference("[[rr:a]]@a1b2c3d").is_err(),
+            "no suffix ever"
+        );
+        assert!(parse_reference("[[rr:a").is_err(), "unterminated is usage");
+        // Tokens that merely contain grammar bytes stay bare.
+        assert_eq!(
+            parse_reference("support@example.com").unwrap(),
+            "support@example.com"
+        );
+    }
+
+    #[test]
+    fn split_qualifier_takes_the_first_hash() {
+        assert_eq!(
+            split_qualifier("src/cli.rs#parse_reference"),
+            Some(("src/cli.rs", "parse_reference"))
+        );
+        assert_eq!(
+            split_qualifier("doc/x.md#A: b#c"),
+            Some(("doc/x.md", "A: b#c")),
+            "identity may itself contain #"
+        );
+        assert_eq!(split_qualifier("plain"), None);
+        assert_eq!(split_qualifier("#lead"), None);
+        assert_eq!(split_qualifier("trail#"), None);
     }
 
     #[test]
@@ -666,13 +643,11 @@ mod tests {
     #[test]
     fn value_flags_take_inline_or_next_arg() {
         assert_eq!(
-            parse_run(&["read", "a.rs", "--index=foo"]).index.unwrap(),
+            parse_run(&["read", "a", "--index=foo"]).index.unwrap(),
             "foo"
         );
         assert_eq!(
-            parse_run(&["read", "a.rs", "--index", "bar"])
-                .index
-                .unwrap(),
+            parse_run(&["read", "a", "--index", "bar"]).index.unwrap(),
             "bar"
         );
     }
@@ -689,7 +664,7 @@ mod tests {
 
     #[test]
     fn switches_reject_values_and_value_flags_require_them() {
-        assert!(parse_err(&["read", "a.rs", "--locate=yes"]).contains("switch"));
+        assert!(parse_err(&["at", "a.rs:1", "--all=yes"]).contains("switch"));
         assert!(parse_err(&["index", "--format"]).contains("requires a value"));
         assert!(parse_err(&["index", "--format", "xml"]).contains("text"));
     }
@@ -703,9 +678,22 @@ mod tests {
     }
 
     #[test]
+    fn selection_flags_parse() {
+        assert!(parse_run(&["at", "a.rs:1", "--all"]).all);
+        assert!(parse_run(&["search", "--mentions"]).mentions);
+        assert!(parse_run(&["read", "a", "--no-freshness"]).no_freshness);
+    }
+
+    #[test]
     fn arity_and_unknowns_are_usage_errors() {
         assert!(parse_err(&[]).contains("no command"));
         assert!(parse_err(&["frobnicate"]).contains("unknown command"));
+        for dropped in ["cite", "track", "uncite", "untrack", "enforce"] {
+            assert!(
+                parse_err(&[dropped, "a"]).contains("unknown command"),
+                "{dropped} must not parse"
+            );
+        }
         assert!(parse_err(&["read"]).contains("requires an <anchor>"));
         assert!(parse_err(&["read", "a", "b"]).contains("exactly one"));
         assert!(parse_err(&["at"]).contains("requires a <file>:<line>"));
@@ -713,8 +701,16 @@ mod tests {
         assert!(parse_err(&["at", "a.rs"]).contains("<file>:<line>"));
         assert!(parse_err(&["at", "a.rs:xyz"]).contains("number"));
         assert!(parse_err(&["index", "stray"]).contains("no positional"));
+        assert!(parse_err(&["search", "a", "b"]).contains("at most one"));
+        assert!(parse_err(&["verify", "stray"]).contains("no positional"));
         assert!(parse_err(&["index", "--bogus"]).contains("unknown flag"));
         assert!(parse_err(&["index", "-z"]).contains("unknown flag"));
+        for gone in ["--cite", "--locate"] {
+            assert!(
+                parse_err(&["at", "a.rs:1", gone]).contains("unknown flag"),
+                "{gone} must not parse"
+            );
+        }
     }
 
     #[test]
@@ -726,7 +722,7 @@ mod tests {
     }
 
     #[test]
-    fn help_text_lists_every_flag() {
+    fn help_text_lists_every_flag_and_verb() {
         let help = help_text();
         for flag in FLAGS {
             assert!(
@@ -735,59 +731,14 @@ mod tests {
                 flag.name_long()
             );
         }
-    }
-
-    #[test]
-    fn parse_reference_splits_on_the_last_sigil() {
-        // No sigil: a plain anchor.
-        assert_eq!(parse_reference("README.md"), Reference::Plain("README.md"));
-        // Snapshot and tracking pins.
-        assert_eq!(
-            parse_reference("README.md@abc1234"),
-            Reference::Pinned {
-                anchor: "README.md",
-                sigil: Sigil::Snapshot,
-                commit: "abc1234"
-            }
-        );
-        assert_eq!(
-            parse_reference("src/app.py~deadbee"),
-            Reference::Pinned {
-                anchor: "src/app.py",
-                sigil: Sigil::Tracking,
-                commit: "deadbee"
-            }
-        );
-        // An anchor that itself contains `@` splits only on the LAST `@`, so the
-        // email heading stays intact as the anchor.
-        assert_eq!(
-            parse_reference("support@example.com@abc1234"),
-            Reference::Pinned {
-                anchor: "support@example.com",
-                sigil: Sigil::Snapshot,
-                commit: "abc1234"
-            }
-        );
-        // A leading `~` (e.g. a `~/path` heading) has an empty left side, so it is
-        // not a pin split; it stays Plain for known-anchor-wins to read literally.
-        assert_eq!(parse_reference("~/path"), Reference::Plain("~/path"));
-        // A trailing sigil with no commit is also not a split.
-        assert_eq!(parse_reference("a@"), Reference::Plain("a@"));
-    }
-
-    #[test]
-    fn new_subcommands_parse_and_check_arity() {
-        assert_eq!(parse_run(&["cite", "a"]).command, Subcommand::Cite);
-        assert_eq!(parse_run(&["track", "a"]).command, Subcommand::Track);
-        assert_eq!(parse_run(&["verify"]).command, Subcommand::Verify);
-        assert_eq!(
-            parse_run(&["verify", "a@b", "c~d"]).command,
-            Subcommand::Verify
-        );
-        assert_eq!(parse_run(&["uncite", "a@b"]).command, Subcommand::Uncite);
-        assert_eq!(parse_run(&["untrack", "a~b"]).command, Subcommand::Untrack);
-        assert!(parse_err(&["cite"]).contains("requires an <anchor>"));
-        assert!(parse_err(&["cite", "a", "b"]).contains("exactly one"));
-        assert!(parse_err(&["track"]).contains("requires an <anchor>"));
+        for verb in ["index", "read", "at", "search", "verify"] {
+            assert!(help.contains(verb), "help missing verb {verb}");
+        }
+        for gone in ["cite", "track", "uncite", "untrack"] {
+            assert!(
+                !help.contains(&format!("\n    {gone} ")),
+                "help must not advertise {gone}"
+            );
+        }
     }
 }
