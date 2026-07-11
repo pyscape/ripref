@@ -1,10 +1,8 @@
 //! Allocation pin for the index read path.
 //!
-//! The README ("How it works" / "Why") claims a reader "binary-searches a
-//! single prebuilt index ... no rescan, no deserialization, no allocation, so a
-//! lookup costs microseconds." For [`Reader::forward_lookup`] and
-//! [`Reader::covering`] the "no allocation" half of that claim is currently
-//! FALSE, and this test pins that contradiction so it cannot silently worsen.
+//! [`Reader::forward_lookup`] and [`Reader::covering`] allocate O(n) in the
+//! index size on every call; this test pins that behavior so it cannot
+//! silently worsen, and BENCHMARKS.md carries the measured costs.
 //!
 //! Root cause: both methods call `split_records` (in the `refidx` module), which
 //! `.collect()`s a `Vec` of record slices over the ENTIRE forward section on
@@ -91,6 +89,7 @@ fn sorted_index(n: usize) -> IndexData {
         mtime: 0,
         tree: String::new(),
         forward,
+        mentions: Vec::new(),
         paths,
     }
 }
