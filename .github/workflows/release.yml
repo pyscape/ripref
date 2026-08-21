@@ -1,0 +1,25 @@
+name: Release
+
+# Tag-driven: pushing a v-prefixed tag (v0.0.1, v1.2.3) starts a release build.
+# Nothing is uploaded yet; this only proves the tag builds on every first-class
+# platform. Artifact upload comes in a later pass.
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  # Same three runners as the `rust` job in ci.yml. Keep the two lists in sync:
+  # a platform that gates PRs must also be a platform we can ship from.
+  build:
+    name: build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build release binary
+        run: cargo build --release
