@@ -1,11 +1,14 @@
 name: Release
 
-# Tag-driven: pushing a v-prefixed tag (v0.0.1, v1.2.3) starts a release build.
-# Nothing is uploaded yet; this only proves the tag builds on every first-class
-# platform. Artifact upload comes in a later pass.
+# Tag-driven: pushing a v-prefixed tag (v0.0.1, v1.2.3) starts a release build
+# and attaches an archive per platform to a draft GitHub release.
 on:
   push:
     tags: ['v*']
+
+# softprops/action-gh-release needs write access to create the draft release.
+permissions:
+  contents: write
 
 jobs:
   # Same three runners as the `rust` job in ci.yml. Keep the two lists in sync:
@@ -23,3 +26,26 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build release binary
         run: cargo build --release
+      - name: Package archive
+        # tar on Unix, zip (via the preinstalled 7z) on Windows. Named
+        # rr-<version>-<target> so the three platform archives don't collide.
+        shell: bash
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          target=$(rustc -vV | sed -n 's/host: //p')
+          name="rr-${version}-${target}"
+          mkdir "$name"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp target/release/rr.exe "$name/"
+            7z a "$name.zip" "$name" >/dev/null
+          else
+            cp target/release/rr "$name/"
+            tar czf "$name.tar.gz" "$name"
+          fi
+      - name: Attach to draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: |
+            rr-*.tar.gz
+            rr-*.zip
