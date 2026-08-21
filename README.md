@@ -296,7 +296,20 @@ The built-in defaults (the base layer your config merges over) are in
 `.rr.toml` at your project root to override them: scope, the anchor kinds
 and their patterns, per-language scan regions, and the `verify` rule set.
 This repository's own [`.rr.toml`](.rr.toml) excludes its test fixtures from
-the gate, since fixtures hold deliberate violations. Additional languages
+the gate, since fixtures hold deliberate violations.
+
+A language named under `[scan.<lang>]` with `eligible = ["comments"]` is read
+comment-only, so a marker in a string literal is invisible; a language in
+scope but not listed is read per raw line, same as `[scan.text]`. A
+Python/Rust project opts a language's comments in with:
+
+```
+[scan.rust]
+eligible = ["comments"]
+# [scan.python] takes the identical two lines
+```
+
+Additional languages
 are a Tree-sitter grammar plus a query, built in or loaded from WebAssembly.
 
 ### Shared options

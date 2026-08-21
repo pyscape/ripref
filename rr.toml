@@ -85,5 +85,13 @@ eligible = ["prose"]               # prose and inline code spans; fenced blocks 
 [scan.text]
 eligible = ["all"]                 # .txt / .rst and other plain prose, per raw line
 
-# Code languages: add a [scan.<lang>] (built-in or via plugin) to scan their
-# comments, e.g. [scan.rust] with eligible = ["comments"].
+# Code languages: a language named here with eligible = ["comments"] is read
+# comment-only, per raw line within each comment (`[[rr:AD-2]]`); a language
+# in scope but not listed here is read per raw line in full, like [scan.text]
+# above. Add a plugin grammar the same way. Uncomment to opt a language in:
+#
+# [scan.rust]
+# eligible = ["comments"]
+#
+# [scan.python]
+# eligible = ["comments"]
