@@ -609,7 +609,10 @@ rrtest!(
 rrtest!(version_exits_zero, |_dir: Dir, mut cmd: TestCommand| {
     let v = cmd.arg("--version").run();
     assert_eq!(code(&v), 0);
-    assert!(String::from_utf8_lossy(&v.stdout).starts_with("rr "));
+    let out = String::from_utf8_lossy(&v.stdout);
+    assert!(out.starts_with("rr "));
+    // Guards against a hardcoded version string drifting from Cargo.toml.
+    assert!(out.contains(env!("CARGO_PKG_VERSION")), "{out:?}");
 });
 
 rrtest!(
