@@ -144,14 +144,23 @@ def oracle(do_scan):
     toks = data.split('\0')
     if data.endswith('\0'):
         toks = toks[:-1]  # drop only the artifact of the trailing separator
+    # Write raw UTF-8 bytes: on Windows a piped sys.stdout falls back to the
+    # locale code page (cp1252) and print() dies on multibyte anchors, and
+    # text mode would also rewrite \n as \r\n.
+    out = sys.stdout.buffer
+
+    def emit(line):
+        out.write((line + '\n').encode('utf-8', 'surrogatepass'))
+
     for tok in toks:
         if do_scan:
             for m in scan(tok):
-                print(m)
-            print()  # blank line separates records
+                emit(m)
+            emit('')  # blank line separates records
         else:
             m = accept(tok)
-            print(f"ACCEPT\t{m}" if m is not None else "REJECT")
+            emit(f"ACCEPT\t{m}" if m is not None else "REJECT")
+    out.flush()
 
 
 if __name__ == '__main__':
