@@ -419,6 +419,35 @@ rrtest!(
     }
 );
 
+// A [scan.python] table with eligible = ["comments"] makes the comment (not
+// the whole file) the region: a marker inside a string literal is invisible,
+// while one in a trailing comment is read and judged like any other.
+rrtest!(
+    comments_are_the_region,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file(
+            ".rr.toml",
+            concat!(
+                "[verify]\nin-scope = [\"**/*.md\", \"**/*.py\"]\n\n",
+                "[scan.python]\neligible = [\"comments\"]\n"
+            ),
+        )
+        .file("a.md", "# Alpha\n")
+        .file("x.py", "s = \"[[rr:nope]]\"\n# [[rr:Alpha]]\n");
+        cmd.arg("index").assert_exit_code(0);
+        let out = cmd.arg("verify").run();
+        assert_eq!(code(&out), 0, "string-literal marker is invisible: {out:?}");
+
+        dir.file("y.py", "# [[rr:gone]]\n");
+        cmd.arg("index").assert_exit_code(0);
+        let out = cmd.arg("verify").run();
+        assert_eq!(code(&out), 1, "{out:?}");
+        let s = String::from_utf8_lossy(&out.stdout);
+        assert!(s.contains("dangling marker"), "{s}");
+        assert!(s.contains("1 findings"), "{s}");
+    }
+);
+
 // --- the index artifact ---------------------------------------------------------
 
 /// The default index path within a test [`Dir`].
