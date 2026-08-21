@@ -349,12 +349,16 @@ ripref is written in Rust, so you'll need a
 ripref compiles with the latest stable release of the Rust compiler. To
 build:
 
+``` bash
+
+git clone https://github.com/pyscape/ripref
+cd ripref
+cargo build --release
+./target/release/rr --version
 ```
-$ git clone https://github.com/pyscape/ripref
-$ cd ripref
-$ cargo build --release
-$ ./target/release/rr --version
-```
+
+Note: The release binary is not rebuilt by tests. Use
+`cargo build --release` for that.
 
 ### Running tests
 
