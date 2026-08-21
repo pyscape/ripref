@@ -116,11 +116,44 @@ pub fn comment_text<'a>(line: &'a str, syntax: &CommentSyntax) -> Option<&'a str
     None
 }
 
+/// The first of `syntax.line` or `syntax.block`'s opener found outside a
+/// quoted string, as (byte offset, is_block, marker len). Same quote
+/// tracking as `comment_text`; whichever marker occurs first (left to
+/// right) wins.
+fn next_comment_start(line: &str, syntax: &CommentSyntax) -> Option<(usize, bool, usize)> {
+    let bytes = line.as_bytes();
+    let line_marker = syntax.line.as_bytes();
+    let block_open = syntax.block.map(|(open, _)| open.as_bytes());
+    let mut quote: Option<u8> = None;
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if let Some(q) = quote {
+            if b == b'\\' {
+                i += 2;
+                continue;
+            }
+            if b == q {
+                quote = None;
+            }
+        } else if b == b'"' || b == b'\'' {
+            quote = Some(b);
+        } else if bytes[i..].starts_with(line_marker) {
+            return Some((i, false, line_marker.len()));
+        } else if block_open.is_some_and(|o| bytes[i..].starts_with(o)) {
+            return Some((i, true, block_open.unwrap().len()));
+        }
+        i += 1;
+    }
+    None
+}
+
 /// Scan one file's content. Markers and malformed openers come from every
 /// scanned region; mentions come from prose only.
 pub fn scan(content: &str, host: Host) -> Vec<Found> {
     let mut out = Vec::new();
     let mut fence: Option<&str> = None; // the delimiter that opened the fence
+    let mut in_block = false; // inside a block comment carried from a prior line
     for (i, line) in content.lines().enumerate() {
         let lineno = (i + 1) as u64;
         match host {
@@ -149,12 +182,41 @@ pub fn scan(content: &str, host: Host) -> Vec<Found> {
                     scan_segment(text, is_span, lineno, &mut out);
                 }
             }
-            // The comment is itself a structureless region: what follows
-            // `syntax.line` is read exactly as a Plain line is, so mentions
-            // qualify there too ([[rr:AD-5]]).
+            // The comment is itself a structureless region: comment text is
+            // read exactly as a Plain line is, so mentions qualify there too
+            // ([[rr:AD-5]]). A block comment (`/* ... */`) may span several
+            // lines; once open, a line's text up to the close (or all of it,
+            // if the close is later still) is comment text in full -- quotes
+            // don't apply inside an already-open comment.
             Host::Comments(syntax) => {
-                if let Some(text) = comment_text(line, syntax) {
-                    scan_segment(text, false, lineno, &mut out);
+                let mut pos = 0;
+                loop {
+                    if in_block {
+                        let close = syntax.block.unwrap().1;
+                        match line[pos..].find(close) {
+                            Some(idx) => {
+                                scan_segment(&line[pos..pos + idx], false, lineno, &mut out);
+                                pos += idx + close.len();
+                                in_block = false;
+                            }
+                            None => {
+                                scan_segment(&line[pos..], false, lineno, &mut out);
+                                break;
+                            }
+                        }
+                    } else {
+                        match next_comment_start(&line[pos..], syntax) {
+                            Some((off, true, len)) => {
+                                pos += off + len;
+                                in_block = true;
+                            }
+                            Some((off, false, len)) => {
+                                scan_segment(&line[pos + off + len..], false, lineno, &mut out);
+                                break;
+                            }
+                            None => break,
+                        }
+                    }
                 }
             }
             Host::Plain => scan_segment(line, false, lineno, &mut out),
@@ -377,6 +439,18 @@ mod tests {
             ],
             "{got:?}"
         );
+    }
+
+    #[test]
+    fn block_comment_spans_lines_and_can_share_a_line_with_a_line_comment() {
+        let rust = comment_syntax("rust").unwrap();
+        let text = "/*\nsee [[rr:x]] here\n*/\n";
+        let got = kinds(text, Host::Comments(rust));
+        assert_eq!(got, vec!["2:marker:x"], "{got:?}");
+
+        let text = "/* a */ code // see [[rr:y]]\n";
+        let got = kinds(text, Host::Comments(rust));
+        assert_eq!(got, vec!["1:marker:y"], "{got:?}");
     }
 
     #[test]
