@@ -35,6 +35,9 @@ pub enum What {
 pub enum Host {
     /// Markdown regions: prose and qualifying inline spans; fences invisible.
     Markdown,
+    /// A `[scan.<lang>]` comment host: the text after `syntax.line` per raw
+    /// line is read as prose; everything else on the line is invisible.
+    Comments(&'static CommentSyntax),
     /// No declared structure: every raw line is scanned.
     Plain,
 }
@@ -50,6 +53,7 @@ pub fn host_for(ext: Option<&str>) -> Host {
 /// A language's comment delimiters: the region a `[scan.<lang>]` table with
 /// `eligible = ["comments"]` reads (`[[rr:AD-2]]`). A comment is itself a
 /// structureless host, so `scan` still runs per raw line within it.
+#[derive(Debug, PartialEq, Eq)]
 pub struct CommentSyntax {
     pub line: &'static str,
     pub block: Option<(&'static str, &'static str)>,
@@ -119,32 +123,41 @@ pub fn scan(content: &str, host: Host) -> Vec<Found> {
     let mut fence: Option<&str> = None; // the delimiter that opened the fence
     for (i, line) in content.lines().enumerate() {
         let lineno = (i + 1) as u64;
-        if host == Host::Markdown {
-            let trimmed = line.trim_start();
-            let delim = if trimmed.starts_with("```") {
-                Some("```")
-            } else if trimmed.starts_with("~~~") {
-                Some("~~~")
-            } else {
-                None
-            };
-            match (fence, delim) {
-                (None, Some(d)) => {
-                    fence = Some(d);
-                    continue;
+        match host {
+            Host::Markdown => {
+                let trimmed = line.trim_start();
+                let delim = if trimmed.starts_with("```") {
+                    Some("```")
+                } else if trimmed.starts_with("~~~") {
+                    Some("~~~")
+                } else {
+                    None
+                };
+                match (fence, delim) {
+                    (None, Some(d)) => {
+                        fence = Some(d);
+                        continue;
+                    }
+                    (Some(open), Some(d)) if open == d => {
+                        fence = None;
+                        continue;
+                    }
+                    (Some(_), _) => continue, // inside a fence: invisible
+                    (None, None) => {}
                 }
-                (Some(open), Some(d)) if open == d => {
-                    fence = None;
-                    continue;
+                for (text, is_span) in split_inline(line) {
+                    scan_segment(text, is_span, lineno, &mut out);
                 }
-                (Some(_), _) => continue, // inside a fence: invisible
-                (None, None) => {}
             }
-            for (text, is_span) in split_inline(line) {
-                scan_segment(text, is_span, lineno, &mut out);
+            // The comment is itself a structureless region: what follows
+            // `syntax.line` is read exactly as a Plain line is, so mentions
+            // qualify there too ([[rr:AD-5]]).
+            Host::Comments(syntax) => {
+                if let Some(text) = comment_text(line, syntax) {
+                    scan_segment(text, false, lineno, &mut out);
+                }
             }
-        } else {
-            scan_segment(line, false, lineno, &mut out);
+            Host::Plain => scan_segment(line, false, lineno, &mut out),
         }
     }
     out
@@ -346,6 +359,24 @@ mod tests {
         assert_eq!(comment_text(r#"s = "a # b" # c"#, py), Some("c"));
         assert_eq!(comment_text(r#"let u = "http://x"; // y"#, rust), Some("y"));
         assert_eq!(comment_text("let x = 1;", rust), None);
+    }
+
+    #[test]
+    fn comments_host_reads_only_the_comment() {
+        let py = comment_syntax("python").unwrap();
+        let text = concat!(
+            "s = \"see [[rr:AD-1]] docs/design/x.md\"  ",
+            "# see [[rr:AD-2]] docs/design/x.md\n"
+        );
+        let got = kinds(text, Host::Comments(py));
+        assert_eq!(
+            got,
+            vec![
+                "1:marker:AD-2".to_string(),
+                "1:mention:docs/design/x.md".to_string(),
+            ],
+            "{got:?}"
+        );
     }
 
     #[test]
