@@ -75,6 +75,14 @@ pub struct CommentSyntax {
     /// (Python's `"""`/`'''`, hardening against a `#` inside a docstring
     /// reading as a comment). Meaningless when `block` is `None`.
     pub block_is_comment: bool,
+    /// Whether a lone `'` opens a quoted string (Python) or is Rust's
+    /// overloaded token: a self-terminating char literal (`'x'`, `'\n'`,
+    /// `'\u{2764}'`) if it validates as one, otherwise a lifetime or loop
+    /// label (`'static`, `'a`, `'outer:`) that never opens anything. Treating
+    /// every `'` as a plain quote opener makes a lone lifetime/label swallow
+    /// the rest of the line (and beyond, via `in_block`-less line scanning)
+    /// as an unterminated string, hiding a trailing `//` comment from scan.
+    pub tick_is_char_literal: bool,
 }
 
 const COMMENT_SYNTAX: &[(&str, &[&str], CommentSyntax)] = &[
@@ -85,6 +93,7 @@ const COMMENT_SYNTAX: &[(&str, &[&str], CommentSyntax)] = &[
             line: "//",
             block: Some(("/*", "*/")),
             block_is_comment: true,
+            tick_is_char_literal: true,
         },
     ),
     (
@@ -94,6 +103,7 @@ const COMMENT_SYNTAX: &[(&str, &[&str], CommentSyntax)] = &[
             line: "#",
             block: Some(("\"\"\"", "\"\"\"")),
             block_is_comment: false,
+            tick_is_char_literal: false,
         },
     ),
 ];
@@ -107,10 +117,64 @@ pub fn comment_syntax(lang: &str) -> Option<&'static CommentSyntax> {
         .map(|(_, _, syntax)| syntax)
 }
 
+/// The byte length of a Rust char literal starting at `s[0]` (which must be
+/// `'`), or `None` if what follows doesn't validate as one. A lone `'` is
+/// Rust's overloaded token: `'x'`, `'\n'`, `'\x41'` and `'\u{2764}'` are char
+/// literals (self-terminating, so never left open across the marker/comment
+/// search); `'static`, `'a`, `'outer:` are lifetimes and loop labels, which
+/// never close and so never open a quote at all (`tick_is_char_literal`).
+fn char_literal_len(s: &str) -> Option<usize> {
+    let mut chars = s.chars();
+    debug_assert_eq!(chars.next(), Some('\''));
+    let mut len = 1;
+    let c = chars.next()?;
+    len += c.len_utf8();
+    if c == '\\' {
+        let esc = chars.next()?;
+        len += esc.len_utf8();
+        match esc {
+            'n' | 't' | 'r' | '\\' | '0' | '\'' | '"' => {}
+            'x' => {
+                for _ in 0..2 {
+                    let h = chars.next()?;
+                    if !h.is_ascii_hexdigit() {
+                        return None;
+                    }
+                    len += h.len_utf8();
+                }
+            }
+            'u' => {
+                if chars.next()? != '{' {
+                    return None;
+                }
+                len += 1;
+                loop {
+                    let h = chars.next()?;
+                    len += h.len_utf8();
+                    if h == '}' {
+                        break;
+                    }
+                    if !h.is_ascii_hexdigit() {
+                        return None;
+                    }
+                }
+            }
+            _ => return None,
+        }
+    }
+    if chars.next()? == '\'' {
+        Some(len + 1)
+    } else {
+        None
+    }
+}
+
 /// The text after `syntax.line` on a line, or `None` if the marker never
-/// appears outside a quoted string. `"`/`'` toggle quote state and `\` skips
+/// appears outside a quoted string. `"` toggles quote state and `\` skips
 /// the next byte, so an escaped quote or a marker inside a string literal
-/// (`"http://x"`) doesn't start the comment early.
+/// (`"http://x"`) doesn't start the comment early. `'` does the same only
+/// when `!syntax.tick_is_char_literal`; otherwise it's Rust's overloaded
+/// token (see `char_literal_len`).
 pub fn comment_text<'a>(line: &'a str, syntax: &CommentSyntax) -> Option<&'a str> {
     let bytes = line.as_bytes();
     let marker = syntax.line.as_bytes();
@@ -126,6 +190,9 @@ pub fn comment_text<'a>(line: &'a str, syntax: &CommentSyntax) -> Option<&'a str
             if b == q {
                 quote = None;
             }
+        } else if b == b'\'' && syntax.tick_is_char_literal {
+            i += char_literal_len(&line[i..]).unwrap_or(1);
+            continue;
         } else if b == b'"' || b == b'\'' {
             quote = Some(b);
         } else if bytes[i..].starts_with(marker) {
@@ -163,6 +230,9 @@ fn next_comment_start(line: &str, syntax: &CommentSyntax) -> Option<(usize, bool
             return Some((i, true, block_open.unwrap().len()));
         } else if bytes[i..].starts_with(line_marker) {
             return Some((i, false, line_marker.len()));
+        } else if b == b'\'' && syntax.tick_is_char_literal {
+            i += char_literal_len(&line[i..]).unwrap_or(1);
+            continue;
         } else if b == b'"' || b == b'\'' {
             quote = Some(b);
         }
@@ -469,6 +539,31 @@ mod tests {
         assert_eq!(comment_text(r#"s = "a # b" # c"#, py), Some("c"));
         assert_eq!(comment_text(r#"let u = "http://x"; // y"#, rust), Some("y"));
         assert_eq!(comment_text("let x = 1;", rust), None);
+    }
+
+    // A lone `'` outside a string is Rust's overloaded token: a lifetime or
+    // loop label (never closes) or a self-terminating char literal. Treating
+    // every `'` as a plain quote opener leaves a lifetime's tick "open" for
+    // the rest of the line, hiding a trailing `//` comment from the scan.
+    #[test]
+    fn lifetimes_and_loop_labels_do_not_open_a_quote() {
+        let rust = comment_syntax("rust").unwrap();
+        assert_eq!(
+            comment_text("fn f() -> &'static str { \"x\" } // gone-rust", rust),
+            Some("gone-rust")
+        );
+        assert_eq!(
+            comment_text("fn f<'a>(x: &'a str, y: &'a str) {} // gone2", rust),
+            Some("gone2")
+        );
+        assert_eq!(comment_text("'outer: loop { // gone3", rust), Some("gone3"));
+        // Char literals still validate and self-terminate as before.
+        assert_eq!(comment_text("let c = 'x'; // ok", rust), Some("ok"));
+        assert_eq!(comment_text(r"let n = '\n'; // ok2", rust), Some("ok2"));
+        assert_eq!(
+            comment_text(r"let h = '\u{2764}'; // ok3", rust),
+            Some("ok3")
+        );
     }
 
     #[test]
