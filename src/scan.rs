@@ -71,6 +71,10 @@ pub fn host_for(ext: Option<&str>, cfg: &Config) -> Host {
 pub struct CommentSyntax {
     pub line: &'static str,
     pub block: Option<(&'static str, &'static str)>,
+    /// Whether `block`'s span is comment text (Rust's `/* */`) or a string
+    /// (Python's `"""`/`'''`, hardening against a `#` inside a docstring
+    /// reading as a comment). Meaningless when `block` is `None`.
+    pub block_is_comment: bool,
 }
 
 const COMMENT_SYNTAX: &[(&str, &[&str], CommentSyntax)] = &[
@@ -80,6 +84,7 @@ const COMMENT_SYNTAX: &[(&str, &[&str], CommentSyntax)] = &[
         CommentSyntax {
             line: "//",
             block: Some(("/*", "*/")),
+            block_is_comment: true,
         },
     ),
     (
@@ -87,7 +92,8 @@ const COMMENT_SYNTAX: &[(&str, &[&str], CommentSyntax)] = &[
         &["py"],
         CommentSyntax {
             line: "#",
-            block: None,
+            block: Some(("\"\"\"", "\"\"\"")),
+            block_is_comment: false,
         },
     ),
 ];
@@ -150,12 +156,15 @@ fn next_comment_start(line: &str, syntax: &CommentSyntax) -> Option<(usize, bool
             if b == q {
                 quote = None;
             }
-        } else if b == b'"' || b == b'\'' {
-            quote = Some(b);
+        } else if block_open.is_some_and(|o| bytes[i..].starts_with(o)) {
+            // Checked ahead of the single-quote toggle below: `"""` must not
+            // be read as an ordinary quote opening (which would immediately
+            // close on its own second byte).
+            return Some((i, true, block_open.unwrap().len()));
         } else if bytes[i..].starts_with(line_marker) {
             return Some((i, false, line_marker.len()));
-        } else if block_open.is_some_and(|o| bytes[i..].starts_with(o)) {
-            return Some((i, true, block_open.unwrap().len()));
+        } else if b == b'"' || b == b'\'' {
+            quote = Some(b);
         }
         i += 1;
     }
@@ -201,7 +210,10 @@ pub fn scan(content: &str, host: Host) -> Vec<Found> {
             // ([[rr:AD-5]]). A block comment (`/* ... */`) may span several
             // lines; once open, a line's text up to the close (or all of it,
             // if the close is later still) is comment text in full -- quotes
-            // don't apply inside an already-open comment.
+            // don't apply inside an already-open comment. Python's block is
+            // instead a triple-quoted string (`block_is_comment: false`): the
+            // same open/close tracking carries it across lines, but its text
+            // is never scanned, so a `#` inside a docstring isn't a comment.
             Host::Comments(syntax) => {
                 let mut pos = 0;
                 loop {
@@ -209,12 +221,16 @@ pub fn scan(content: &str, host: Host) -> Vec<Found> {
                         let close = syntax.block.unwrap().1;
                         match line[pos..].find(close) {
                             Some(idx) => {
-                                scan_segment(&line[pos..pos + idx], false, lineno, &mut out);
+                                if syntax.block_is_comment {
+                                    scan_segment(&line[pos..pos + idx], false, lineno, &mut out);
+                                }
                                 pos += idx + close.len();
                                 in_block = false;
                             }
                             None => {
-                                scan_segment(&line[pos..], false, lineno, &mut out);
+                                if syntax.block_is_comment {
+                                    scan_segment(&line[pos..], false, lineno, &mut out);
+                                }
                                 break;
                             }
                         }
@@ -441,7 +457,7 @@ mod tests {
     #[test]
     fn comment_syntax_resolves_known_languages_only() {
         assert_eq!(comment_syntax("rust").unwrap().line, "//");
-        assert_eq!(comment_syntax("python").unwrap().block, None);
+        assert!(!comment_syntax("python").unwrap().block_is_comment);
         assert!(comment_syntax("go").is_none());
     }
 
@@ -483,6 +499,14 @@ mod tests {
         let text = "/* a */ code // see [[rr:y]]\n";
         let got = kinds(text, Host::Comments(rust));
         assert_eq!(got, vec!["1:marker:y"], "{got:?}");
+    }
+
+    #[test]
+    fn docstring_hash_is_not_a_comment() {
+        let py = comment_syntax("python").unwrap();
+        let text = "\"\"\"\n# [[rr:x]] not a comment\n\"\"\"\n# [[rr:y]] a real comment\n";
+        let got = kinds(text, Host::Comments(py));
+        assert_eq!(got, vec!["4:marker:y"], "{got:?}");
     }
 
     #[test]
