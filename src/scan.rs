@@ -47,6 +47,42 @@ pub fn host_for(ext: Option<&str>) -> Host {
     }
 }
 
+/// A language's comment delimiters: the region a `[scan.<lang>]` table with
+/// `eligible = ["comments"]` reads (`[[rr:AD-2]]`). A comment is itself a
+/// structureless host, so `scan` still runs per raw line within it.
+pub struct CommentSyntax {
+    pub line: &'static str,
+    pub block: Option<(&'static str, &'static str)>,
+}
+
+const COMMENT_SYNTAX: &[(&str, &[&str], CommentSyntax)] = &[
+    (
+        "rust",
+        &["rs"],
+        CommentSyntax {
+            line: "//",
+            block: Some(("/*", "*/")),
+        },
+    ),
+    (
+        "python",
+        &["py"],
+        CommentSyntax {
+            line: "#",
+            block: None,
+        },
+    ),
+];
+
+/// The comment syntax for a `[scan.<lang>]` table name, or `None` if the
+/// language has no declared comment syntax.
+pub fn comment_syntax(lang: &str) -> Option<&'static CommentSyntax> {
+    COMMENT_SYNTAX
+        .iter()
+        .find(|(name, ..)| *name == lang)
+        .map(|(_, _, syntax)| syntax)
+}
+
 /// Scan one file's content. Markers and malformed openers come from every
 /// scanned region; mentions come from prose only.
 pub fn scan(content: &str, host: Host) -> Vec<Found> {
@@ -264,6 +300,13 @@ mod tests {
                 }
             })
             .collect()
+    }
+
+    #[test]
+    fn comment_syntax_resolves_known_languages_only() {
+        assert_eq!(comment_syntax("rust").unwrap().line, "//");
+        assert_eq!(comment_syntax("python").unwrap().block, None);
+        assert!(comment_syntax("go").is_none());
     }
 
     #[test]
