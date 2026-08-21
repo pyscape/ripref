@@ -325,22 +325,35 @@ the code reports how it was answered.
 
 ### Installation
 
-The binary name for ripref is `rr`.
+The binary name for ripref is `rr`. ripref is not on crates.io yet, so for now
+both routes build from source and you'll need a
+[Rust installation](https://www.rust-lang.org/).
 
-If you're a Rust programmer, ripref can be installed with `cargo`:
-
-```
-$ cargo install ripref
-```
-
-To build and install from a checkout of this repository:
+From a checkout of this repository:
 
 ```
 $ cargo install --path .
 ```
 
-Precompiled binaries for Windows, macOS and Linux are attached to each
-[release](https://github.com/pyscape/ripref/releases).
+Or straight from the repository, without cloning it first:
+
+```
+$ cargo install --git https://github.com/pyscape/ripref
+```
+
+Once the first release is published, this becomes the short way in, but it
+does not work yet:
+
+```
+$ cargo install ripref    # pending the first crates.io publish
+```
+
+Either working command drops the binary at `~/.cargo/bin/rr`, which is on
+`PATH` for a standard rustup setup. That path is the one that matters if you
+wire `rr` into an editor or a Claude Code hook: a hook shells out to `rr` by
+name, so it resolves through `PATH` and picks up whatever `cargo install` last
+put there. Reinstalling over an existing copy replaces that same binary, so
+hooks follow along with no configuration change.
 
 ### Building
 
