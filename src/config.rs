@@ -22,6 +22,10 @@ pub struct Config {
     pub verify_in_scope: Vec<String>,
     /// `[verify] exclude`: globs subtracted from the scope.
     pub verify_exclude: Vec<String>,
+    /// `[scan.<lang>] eligible`, one entry per language named so far, in the
+    /// order first declared. A later layer's `eligible` for the same
+    /// language replaces the entry wholesale rather than appending.
+    pub scan: Vec<(String, Vec<String>)>,
 }
 
 /// Load the profile: defaults, then the project's `.rr.toml` merged over
@@ -30,6 +34,7 @@ pub fn load(root: &Path) -> Config {
     let mut cfg = Config {
         verify_in_scope: Vec::new(),
         verify_exclude: Vec::new(),
+        scan: Vec::new(),
     };
     apply(DEFAULTS, &mut cfg);
     if let Ok(text) = std::fs::read_to_string(root.join(".rr.toml")) {
@@ -70,6 +75,14 @@ fn apply(text: &str, cfg: &mut Config) {
                 "in-scope" => cfg.verify_in_scope = strings_in(&value),
                 "exclude" => cfg.verify_exclude = strings_in(&value),
                 _ => {}
+            }
+        } else if let Some(lang) = section.strip_prefix("scan.") {
+            if key == "eligible" {
+                let eligible = strings_in(&value);
+                match cfg.scan.iter_mut().find(|(l, _)| l == lang) {
+                    Some(entry) => entry.1 = eligible,
+                    None => cfg.scan.push((lang.to_string(), eligible)),
+                }
             }
         }
     }
@@ -133,6 +146,7 @@ mod tests {
         let mut cfg = Config {
             verify_in_scope: Vec::new(),
             verify_exclude: Vec::new(),
+            scan: Vec::new(),
         };
         apply(DEFAULTS, &mut cfg);
         assert_eq!(cfg.verify_in_scope, vec!["**/*.md"]);
@@ -144,6 +158,7 @@ mod tests {
         let mut cfg = Config {
             verify_in_scope: vec!["**/*.md".into()],
             verify_exclude: Vec::new(),
+            scan: Vec::new(),
         };
         apply("[verify]\nexclude = [\"tests/data/**\"]\n", &mut cfg);
         assert_eq!(cfg.verify_in_scope, vec!["**/*.md"], "untouched key stands");
@@ -156,9 +171,29 @@ mod tests {
         let mut cfg = Config {
             verify_in_scope: Vec::new(),
             verify_exclude: Vec::new(),
+            scan: Vec::new(),
         };
         apply(text, &mut cfg);
         assert_eq!(cfg.verify_in_scope, vec!["a/**", "b/**"]);
+    }
+
+    #[test]
+    fn scan_table_parses_and_second_layer_replaces() {
+        let mut cfg = Config {
+            verify_in_scope: Vec::new(),
+            verify_exclude: Vec::new(),
+            scan: Vec::new(),
+        };
+        apply("[scan.python]\neligible = [\"comments\"]\n", &mut cfg);
+        assert_eq!(
+            cfg.scan,
+            vec![("python".to_string(), vec!["comments".to_string()])]
+        );
+        apply("[scan.python]\neligible = [\"prose\"]\n", &mut cfg);
+        assert_eq!(
+            cfg.scan,
+            vec![("python".to_string(), vec!["prose".to_string()])]
+        );
     }
 
     #[test]
@@ -166,6 +201,7 @@ mod tests {
         let cfg = Config {
             verify_in_scope: vec!["**/*.md".into()],
             verify_exclude: vec!["tests/data/**".into()],
+            scan: Vec::new(),
         };
         let m = scope_matcher(Path::new("."), &cfg).unwrap();
         assert!(in_scope(&m, "README.md"));
