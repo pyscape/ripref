@@ -83,6 +83,35 @@ pub fn comment_syntax(lang: &str) -> Option<&'static CommentSyntax> {
         .map(|(_, _, syntax)| syntax)
 }
 
+/// The text after `syntax.line` on a line, or `None` if the marker never
+/// appears outside a quoted string. `"`/`'` toggle quote state and `\` skips
+/// the next byte, so an escaped quote or a marker inside a string literal
+/// (`"http://x"`) doesn't start the comment early.
+pub fn comment_text<'a>(line: &'a str, syntax: &CommentSyntax) -> Option<&'a str> {
+    let bytes = line.as_bytes();
+    let marker = syntax.line.as_bytes();
+    let mut quote: Option<u8> = None;
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if let Some(q) = quote {
+            if b == b'\\' {
+                i += 2;
+                continue;
+            }
+            if b == q {
+                quote = None;
+            }
+        } else if b == b'"' || b == b'\'' {
+            quote = Some(b);
+        } else if bytes[i..].starts_with(marker) {
+            return Some(line[i + marker.len()..].trim());
+        }
+        i += 1;
+    }
+    None
+}
+
 /// Scan one file's content. Markers and malformed openers come from every
 /// scanned region; mentions come from prose only.
 pub fn scan(content: &str, host: Host) -> Vec<Found> {
@@ -307,6 +336,16 @@ mod tests {
         assert_eq!(comment_syntax("rust").unwrap().line, "//");
         assert_eq!(comment_syntax("python").unwrap().block, None);
         assert!(comment_syntax("go").is_none());
+    }
+
+    #[test]
+    fn comment_text_is_quote_aware() {
+        let py = comment_syntax("python").unwrap();
+        let rust = comment_syntax("rust").unwrap();
+        assert_eq!(comment_text("# x", py), Some("x"));
+        assert_eq!(comment_text(r#"s = "a # b" # c"#, py), Some("c"));
+        assert_eq!(comment_text(r#"let u = "http://x"; // y"#, rust), Some("y"));
+        assert_eq!(comment_text("let x = 1;", rust), None);
     }
 
     #[test]
