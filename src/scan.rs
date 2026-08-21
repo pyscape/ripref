@@ -9,6 +9,7 @@ invisible; a structureless host is read per raw line. Mentions qualify only
 in prose, and marker interiors are excluded from the mention scan.
 */
 
+use crate::config::Config;
 use crate::marker;
 
 /// One scanner hit, located by 1-based line number.
@@ -42,11 +43,24 @@ pub enum Host {
     Plain,
 }
 
-/// The host the default profile declares for a file extension.
-pub fn host_for(ext: Option<&str>) -> Host {
+/// The host the profile declares for a file extension: Markdown as ever;
+/// otherwise a `[scan.<lang>]` entry that lists `"comments"` and whose
+/// `COMMENT_SYNTAX` row claims the extension gives `Host::Comments`, and
+/// anything else is `Host::Plain`.
+pub fn host_for(ext: Option<&str>, cfg: &Config) -> Host {
     match ext {
         Some("md") | Some("markdown") => Host::Markdown,
-        _ => Host::Plain,
+        Some(ext) => cfg
+            .scan
+            .iter()
+            .filter(|(_, eligible)| eligible.iter().any(|e| e == "comments"))
+            .find_map(|(lang, _)| {
+                COMMENT_SYNTAX
+                    .iter()
+                    .find(|(name, exts, _)| name == lang && exts.contains(&ext))
+            })
+            .map_or(Host::Plain, |(_, _, syntax)| Host::Comments(syntax)),
+        None => Host::Plain,
     }
 }
 
@@ -404,6 +418,24 @@ mod tests {
                 }
             })
             .collect()
+    }
+
+    #[test]
+    fn host_for_resolves_via_scan_config() {
+        let cfg = Config {
+            verify_in_scope: Vec::new(),
+            verify_exclude: Vec::new(),
+            scan: vec![("python".to_string(), vec!["comments".to_string()])],
+        };
+        assert_eq!(host_for(Some("md"), &cfg), Host::Markdown);
+        assert!(matches!(host_for(Some("py"), &cfg), Host::Comments(_)));
+        assert_eq!(host_for(Some("go"), &cfg), Host::Plain); // not declared eligible
+        let bare = Config {
+            verify_in_scope: Vec::new(),
+            verify_exclude: Vec::new(),
+            scan: Vec::new(),
+        };
+        assert_eq!(host_for(Some("py"), &bare), Host::Plain); // no [scan.python] at all
     }
 
     #[test]

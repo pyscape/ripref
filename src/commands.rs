@@ -30,7 +30,7 @@ pub fn run_index(args: &LowArgs) -> Result<u8, String> {
     let cfg = config::load(root);
     let scope = config::scope_matcher(root, &cfg)?;
 
-    let data = indexer::build(root, &index_path, &scope)
+    let data = indexer::build(root, &index_path, &scope, &cfg)
         .map_err(|e| format!("failed to walk the working tree: {e}"))?;
     let bytes = refidx::serialize(&data);
 
@@ -335,7 +335,11 @@ struct ScopedFile {
 /// Walk the working tree and collect the files the profile's scope selects.
 /// Shared by `search` and `verify`; `index` applies the same matcher inside
 /// its own walk.
-fn scoped_files(root: &Path, matcher: &ignore::overrides::Override) -> Vec<ScopedFile> {
+fn scoped_files(
+    root: &Path,
+    matcher: &ignore::overrides::Override,
+    cfg: &config::Config,
+) -> Vec<ScopedFile> {
     let mut out = Vec::new();
     let walker = ignore::WalkBuilder::new(root)
         .hidden(true)
@@ -361,7 +365,7 @@ fn scoped_files(root: &Path, matcher: &ignore::overrides::Override) -> Vec<Scope
         };
         let ext = rel.rsplit('.').next();
         out.push(ScopedFile {
-            host: scan::host_for(ext),
+            host: scan::host_for(ext, cfg),
             rel,
             content,
         });
@@ -390,7 +394,7 @@ pub fn run_search(args: &LowArgs) -> Result<u8, String> {
     let mut lines = Vec::new();
     let mut json = String::from(r#"{"matches":["#);
     let mut count = 0usize;
-    for file in scoped_files(root, &matcher) {
+    for file in scoped_files(root, &matcher, &cfg) {
         for found in scan::scan(&file.content, file.host) {
             match (&found.what, args.mentions) {
                 (What::Marker { raw, anchor }, false) => {
@@ -481,7 +485,7 @@ pub fn run_verify(args: &LowArgs) -> Result<u8, String> {
 
     with_fresh_reader(&index_path, root, args.no_freshness, |reader| {
         let mut findings: Vec<Finding> = Vec::new();
-        for file in scoped_files(root, &matcher) {
+        for file in scoped_files(root, &matcher, &cfg) {
             for found in scan::scan(&file.content, file.host) {
                 let (rule, detail) = match &found.what {
                     What::Malformed { reason } => ("malformed marker", reason.clone()),

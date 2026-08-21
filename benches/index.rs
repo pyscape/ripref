@@ -58,14 +58,15 @@ fn bench_build(c: &mut Criterion) {
     for &n in SCALES {
         let root = make_corpus(n);
         let index_path = index_path_for(&root);
-        let scope = config::scope_matcher(&root, &config::load(&root)).unwrap();
+        let cfg = config::load(&root);
+        let scope = config::scope_matcher(&root, &cfg).unwrap();
 
         // Correctness guard: require that language extraction fired. A healthy
         // corpus yields ~11 anchors/file, so `5 * n` sits well below the
         // expected count while a dead grammar (near-zero anchors) fails loudly
         // instead of timing nothing meaningful. Mirrors grammar_loader's
         // native/wasm guard.
-        let data = indexer::build(&root, &index_path, &scope).unwrap();
+        let data = indexer::build(&root, &index_path, &scope, &cfg).unwrap();
         assert!(
             data.forward.len() >= n * 5,
             "corpus at scale {n} extracted only {} anchors (< {}); language extraction is broken",
@@ -75,7 +76,7 @@ fn bench_build(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements(n as u64));
         group.bench_with_input(BenchmarkId::new("build", n), &n, |b, _| {
-            b.iter(|| black_box(indexer::build(&root, &index_path, &scope).unwrap()));
+            b.iter(|| black_box(indexer::build(&root, &index_path, &scope, &cfg).unwrap()));
         });
 
         // build is read-only on the tree, so the measurements above all reused
@@ -93,8 +94,9 @@ fn bench_serialize(c: &mut Criterion) {
         // and reuse it; the temp tree exists only long enough to produce it.
         let root = make_corpus(n);
         let index_path = index_path_for(&root);
-        let scope = config::scope_matcher(&root, &config::load(&root)).unwrap();
-        let data: IndexData = indexer::build(&root, &index_path, &scope).unwrap();
+        let cfg = config::load(&root);
+        let scope = config::scope_matcher(&root, &cfg).unwrap();
+        let data: IndexData = indexer::build(&root, &index_path, &scope, &cfg).unwrap();
         std::fs::remove_dir_all(&root).ok();
 
         group.throughput(Throughput::Elements(n as u64));

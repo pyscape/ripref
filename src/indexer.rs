@@ -38,7 +38,12 @@ type FileRecords = (Vec<ForwardEntry>, Vec<MentionEntry>, String);
 /// order), but it need not be: [`crate::refidx::serialize`] sorts to a total
 /// order, so the on-disk image is identical regardless of the order records
 /// arrive in.
-pub fn build(root: &Path, index_path: &Path, scope: &Override) -> std::io::Result<IndexData> {
+pub fn build(
+    root: &Path,
+    index_path: &Path,
+    scope: &Override,
+    cfg: &config::Config,
+) -> std::io::Result<IndexData> {
     let index_rel = index_path
         .strip_prefix(root)
         .unwrap_or(index_path)
@@ -83,7 +88,7 @@ pub fn build(root: &Path, index_path: &Path, scope: &Override) -> std::io::Resul
             let mut mentions = Vec::new();
             if config::in_scope(scope, &rel_path) {
                 if let Ok(content) = std::fs::read_to_string(dent.path()) {
-                    for found in scan::scan(&content, scan::host_for(ext)) {
+                    for found in scan::scan(&content, scan::host_for(ext, cfg)) {
                         if let What::Mention { token, .. } = found.what {
                             mentions.push(MentionEntry {
                                 token,
