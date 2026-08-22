@@ -486,10 +486,6 @@ fn take_value(
     }
 }
 
-/// Enforce each verb's positional arity; `verify`'s is open by design,
-/// see `[[rr:AD-3]]`.
-/// The verbs a scoped flag names, as the help prefix and the usage error
-/// both write them: `rr at`, or `rr at, rr search` once one spans two.
 fn verb_list(verbs: &[Subcommand]) -> String {
     verbs
         .iter()
@@ -498,6 +494,7 @@ fn verb_list(verbs: &[Subcommand]) -> String {
         .join(", ")
 }
 
+/// `[[rr:AD-3#Decision outcome]]`
 fn validate(args: &LowArgs) -> Result<(), String> {
     for name in &args.seen_flags {
         let Some(flag) = lookup_long(name) else {
@@ -516,9 +513,9 @@ fn validate(args: &LowArgs) -> Result<(), String> {
         },
         Subcommand::At => match args.positional.len() {
             0 => Err("at requires a <file>:<line> argument".to_string()),
-            // Resolved now, before any command touches the index, so a
-            // malformed `file:line` is
-            // [[rr:AD-4#Decision outcome]].
+            // Resolved before any verb reads the index, so a malformed
+            // location answers as a usage error and not as a stale index.
+            // [[rr:AD-4#Decision outcome]]
             1 => parse_position(&args.positional[0].to_string_lossy()).map(|_| ()),
             _ => Err("at takes exactly one <file>:<line>".to_string()),
         },
