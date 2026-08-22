@@ -149,13 +149,12 @@ pub fn build(
     })
 }
 
-/// So an index is portable across Windows and Unix.
+/// `[[rr:AD-1#Decision outcome]]`
 fn to_unix(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
-/// The HEAD tree SHA when the working tree is clean, else empty; `index`
-/// stamps it for provenance (`[[rr:README.md#Freshness]]`).
+/// `[[rr:ripref (rr)#Freshness]]`
 pub(crate) fn git_tree(root: &Path) -> String {
     let clean = Command::new("git")
         .arg("-C")
@@ -178,13 +177,11 @@ pub(crate) fn git_tree(root: &Path) -> String {
         .unwrap_or_default()
 }
 
-/// The newest mtime (Unix seconds) among `paths`, resolved relative to
-/// `root` (`[[rr:README.md#Freshness]]`). The reduction is an
-/// order-independent `max` with no shared mutable state, so the parallel
-/// result is identical to the serial one — see `newest_serial`, which it
-/// delegates to.
+/// `[[rr:ripref (rr)#Freshness]]`
+/// The reduction is an order-independent `max` over disjoint chunks, so the
+/// parallel result is identical to the serial one.
 pub fn newest_mtime(paths: &[&str], root: &Path) -> u64 {
-    // [[rr:BENCHMARKS.md#Findings that hold on both platforms]]
+    // [[rr:Findings that hold on both platforms]]
     const PARALLEL_THRESHOLD: usize = 256;
     let n = std::thread::available_parallelism()
         .map_or(1, |n| n.get())

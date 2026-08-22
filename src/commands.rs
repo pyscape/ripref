@@ -98,13 +98,10 @@ where
     }
 }
 
-/// The outcome of trying to load a usable index.
 enum IndexState {
-    /// Present, parseable, and fresh: the owned image bytes.
     Fresh(Vec<u8>),
-    /// No index file exists yet.
     Missing,
-    /// `[[rr:README.md#Freshness]]`
+    /// `[[rr:ripref (rr)#Freshness]]`
     Stale,
 }
 
@@ -123,7 +120,7 @@ fn load_index(index_path: &Path, root: &Path, skip_freshness: bool) -> Result<In
         // SAFETY: the index is a regular file we just opened; `rr index`
         // publishes new contents with an atomic rename, so the mapped inode
         // is always a complete image and is never mutated under us.
-        #[allow(unsafe_code)] // the one justified unsafe in the crate (posture: src/lib.rs)
+        #[allow(unsafe_code)]
         match unsafe { Mmap::map(&file) } {
             Ok(mmap) => mmap.to_vec(),
             Err(_) => std::fs::read(index_path)
@@ -139,7 +136,7 @@ fn load_index(index_path: &Path, root: &Path, skip_freshness: bool) -> Result<In
     Ok(IndexState::Fresh(bytes))
 }
 
-/// Whether the index may answer this query (`[[rr:README.md#Freshness]]`).
+/// Whether the index may answer this query (`[[rr:ripref (rr)#Freshness]]`).
 /// The git probe spawns one `git status`, so it runs only after the free
 /// checks and only when a clean-tree stamp exists to match.
 fn fresh(reader: &Reader, root: &Path, skip_freshness: bool) -> bool {
