@@ -447,6 +447,8 @@ fn take_value(
     }
 }
 
+/// Enforce each verb's positional arity; `verify`'s is open by design,
+/// see [[rr:AD-3]].
 fn validate(args: &LowArgs) -> Result<(), String> {
     match args.command {
         Subcommand::Read => match args.positional.len() {
@@ -472,13 +474,7 @@ fn validate(args: &LowArgs) -> Result<(), String> {
             0 | 1 => Ok(()),
             _ => Err("search takes at most one <anchor>".to_string()),
         },
-        Subcommand::Verify => {
-            if args.positional.is_empty() {
-                Ok(())
-            } else {
-                Err("verify takes no positional arguments".to_string())
-            }
-        }
+        Subcommand::Verify => Ok(()),
     }
 }
 
@@ -702,7 +698,10 @@ mod tests {
         assert!(parse_err(&["at", "a.rs:xyz"]).contains("number"));
         assert!(parse_err(&["index", "stray"]).contains("no positional"));
         assert!(parse_err(&["search", "a", "b"]).contains("at most one"));
-        assert!(parse_err(&["verify", "stray"]).contains("no positional"));
+        assert_eq!(
+            parse_run(&["verify", "stray"]).positional,
+            vec![OsString::from("stray")]
+        );
         assert!(parse_err(&["index", "--bogus"]).contains("unknown flag"));
         assert!(parse_err(&["index", "-z"]).contains("unknown flag"));
         for gone in ["--cite", "--locate"] {

@@ -332,14 +332,33 @@ struct ScopedFile {
     host: scan::Host,
 }
 
-/// Walk the working tree and collect the files the profile's scope selects.
-/// Shared by `search` and `verify`; `index` applies the same matcher inside
-/// its own walk.
+/// [[rr:AD-3]]
 fn scoped_files(
     root: &Path,
     matcher: &ignore::overrides::Override,
     cfg: &config::Config,
-) -> Vec<ScopedFile> {
+    paths: &[String],
+) -> Result<Vec<ScopedFile>, String> {
+    if !paths.is_empty() {
+        let mut out = Vec::with_capacity(paths.len());
+        for raw in paths {
+            let rel = raw.replace('\\', "/");
+            let abs = root.join(&rel);
+            if !abs.is_file() {
+                return Err(format!("not a file: {rel}"));
+            }
+            let content =
+                std::fs::read_to_string(&abs).map_err(|e| format!("cannot read {rel}: {e}"))?;
+            let ext = rel.rsplit('.').next();
+            out.push(ScopedFile {
+                host: scan::host_for(ext, cfg),
+                rel,
+                content,
+            });
+        }
+        return Ok(out);
+    }
+
     let mut out = Vec::new();
     let walker = ignore::WalkBuilder::new(root)
         .hidden(true)
@@ -371,7 +390,7 @@ fn scoped_files(
         });
     }
     out.sort_by(|a, b| a.rel.cmp(&b.rel));
-    out
+    Ok(out)
 }
 
 /// `rr search [<anchor>]` — list the markers scoped text writes, each with
@@ -394,7 +413,7 @@ pub fn run_search(args: &LowArgs) -> Result<u8, String> {
     let mut lines = Vec::new();
     let mut json = String::from(r#"{"matches":["#);
     let mut count = 0usize;
-    for file in scoped_files(root, &matcher, &cfg) {
+    for file in scoped_files(root, &matcher, &cfg, &[])? {
         for found in scan::scan(&file.content, file.host) {
             match (&found.what, args.mentions) {
                 (What::Marker { raw, anchor }, false) => {
@@ -482,10 +501,15 @@ pub fn run_verify(args: &LowArgs) -> Result<u8, String> {
     let index_path = PathBuf::from(cli::index_path(args));
     let cfg = config::load(root);
     let matcher = config::scope_matcher(root, &cfg)?;
+    let paths: Vec<String> = args
+        .positional
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
 
     with_fresh_reader(&index_path, root, args.no_freshness, |reader| {
         let mut findings: Vec<Finding> = Vec::new();
-        for file in scoped_files(root, &matcher, &cfg) {
+        for file in scoped_files(root, &matcher, &cfg, &paths)? {
             for found in scan::scan(&file.content, file.host) {
                 let (rule, detail) = match &found.what {
                     What::Malformed { reason } => ("malformed marker", reason.clone()),

@@ -448,6 +448,24 @@ rrtest!(
     }
 );
 
+// [[rr:AD-3]]
+rrtest!(
+    verify_named_paths_scope_to_those_files,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file("bad.md", "a dangling [[rr:nope]] here\n")
+            .file("other.md", "another dangling [[rr:gone]] here\n");
+        cmd.arg("index").assert_exit_code(0);
+
+        let out = cmd.args(["verify", "bad.md"]).run();
+        assert_eq!(code(&out), 1, "{out:?}");
+        let s = String::from_utf8_lossy(&out.stdout);
+        assert!(s.contains("bad.md"), "{s}");
+        assert!(!s.contains("other.md"), "other.md must not be judged: {s}");
+
+        cmd.args(["verify", "missing.md"]).assert_exit_code(2);
+    }
+);
+
 // --- the index artifact ---------------------------------------------------------
 
 /// The default index path within a test [`Dir`].
