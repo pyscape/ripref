@@ -247,6 +247,7 @@ pub fn scan(content: &str, host: Host) -> Vec<Found> {
     let mut out = Vec::new();
     let mut fence: Option<&str> = None; // the delimiter that opened the fence
     let mut awaiting_close: Option<&'static str> = None;
+    let mut paragraph: Option<Paragraph> = None;
     for (i, line) in content.lines().enumerate() {
         let lineno = (i + 1) as u64;
         match host {
@@ -261,6 +262,7 @@ pub fn scan(content: &str, host: Host) -> Vec<Found> {
                 };
                 match (fence, delim) {
                     (None, Some(d)) => {
+                        flush_paragraph(&mut paragraph, &mut out);
                         fence = Some(d);
                         continue;
                     }
@@ -271,30 +273,33 @@ pub fn scan(content: &str, host: Host) -> Vec<Found> {
                     (Some(_), _) => continue, // inside a fence: invisible
                     (None, None) => {}
                 }
-                for (text, is_span) in split_inline(line) {
-                    scan_segment(text, is_span, lineno, &mut out);
+                if trimmed.is_empty() {
+                    flush_paragraph(&mut paragraph, &mut out);
+                    continue;
                 }
+                extend_paragraph(&mut paragraph, lineno, line);
             }
-            // Comment text is read exactly as a Plain line is, so mentions
-            // qualify there too, per [[rr:AD-5]].
+            // [[rr:AD-5#Decision outcome]]
             Host::Comments(syntax) => {
                 let mut pos = 0;
+                let mut commented = false;
                 loop {
                     if let Some(close) = awaiting_close {
-                        match line[pos..].find(close) {
-                            Some(idx) => {
-                                if syntax.block_is_comment {
-                                    scan_segment(&line[pos..pos + idx], false, lineno, &mut out);
-                                }
-                                pos += idx + close.len();
+                        let (body, next) = match line[pos..].find(close) {
+                            Some(idx) => (&line[pos..pos + idx], Some(pos + idx + close.len())),
+                            None => (&line[pos..], None),
+                        };
+                        if syntax.block_is_comment {
+                            extend_paragraph(&mut paragraph, lineno, body);
+                            commented = true;
+                        }
+                        match next {
+                            Some(n) => {
+                                pos = n;
                                 awaiting_close = None;
+                                flush_paragraph(&mut paragraph, &mut out);
                             }
-                            None => {
-                                if syntax.block_is_comment {
-                                    scan_segment(&line[pos..], false, lineno, &mut out);
-                                }
-                                break;
-                            }
+                            None => break,
                         }
                     } else {
                         match next_comment_start(&line[pos..], syntax) {
@@ -303,18 +308,71 @@ pub fn scan(content: &str, host: Host) -> Vec<Found> {
                                 awaiting_close = Some(close);
                             }
                             Some((off, CommentStart::Line { len })) => {
-                                scan_segment(&line[pos + off + len..], false, lineno, &mut out);
+                                let mut body = &line[pos + off + len..];
+                                let last = syntax.line.as_bytes()[syntax.line.len() - 1];
+                                while body
+                                    .as_bytes()
+                                    .first()
+                                    .is_some_and(|&b| b == last || b == b'!')
+                                {
+                                    body = &body[1..];
+                                }
+                                extend_paragraph(&mut paragraph, lineno, body);
+                                commented = true;
                                 break;
                             }
                             None => break,
                         }
                     }
                 }
+                if !commented {
+                    flush_paragraph(&mut paragraph, &mut out);
+                }
             }
             Host::Plain => scan_segment(line, false, lineno, &mut out),
         }
     }
+    flush_paragraph(&mut paragraph, &mut out);
     out
+}
+
+struct Paragraph {
+    first_line: u64,
+    text: String,
+}
+
+fn extend_paragraph(paragraph: &mut Option<Paragraph>, lineno: u64, line: &str) {
+    match paragraph {
+        Some(p) => {
+            p.text.push('\n');
+            p.text.push_str(line.trim_start());
+        }
+        None => {
+            *paragraph = Some(Paragraph {
+                first_line: lineno,
+                text: line.to_string(),
+            })
+        }
+    }
+}
+
+fn flush_paragraph(paragraph: &mut Option<Paragraph>, out: &mut Vec<Found>) {
+    let Some(Paragraph { first_line, text }) = paragraph.take() else {
+        return;
+    };
+    for (range, is_span) in split_inline(&text) {
+        let line_at = |offset: usize| first_line + text[..offset].matches('\n').count() as u64;
+        if is_span {
+            let joined = text[range.clone()].replace('\n', " ");
+            scan_segment(&joined, true, line_at(range.start), out);
+        } else {
+            let mut at = range.start;
+            for piece in text[range].split('\n') {
+                scan_segment(piece, false, line_at(at), out);
+                at += piece.len() + 1;
+            }
+        }
+    }
 }
 
 /// Scan one region segment. The code-span rule is
@@ -426,9 +484,9 @@ pub fn is_path_shaped(token: &str) -> bool {
 /// Split one Markdown line into prose and inline-code-span segments. Spans
 /// follow the backtick-run rule: an opener of N backticks closes at the next
 /// run of exactly N; an unclosed opener is literal prose.
-fn split_inline(line: &str) -> Vec<(&str, bool)> {
+fn split_inline(text: &str) -> Vec<(std::ops::Range<usize>, bool)> {
     let mut parts = Vec::new();
-    let bytes = line.as_bytes();
+    let bytes = text.as_bytes();
     let mut pos = 0;
     let mut prose_from = 0;
     while pos < bytes.len() {
@@ -460,15 +518,15 @@ fn split_inline(line: &str) -> Vec<(&str, bool)> {
         }
         if let Some((close_start, close_end)) = close {
             if prose_from < open_start {
-                parts.push((&line[prose_from..open_start], false));
+                parts.push((prose_from..open_start, false));
             }
-            parts.push((&line[pos..close_start], true));
+            parts.push((pos..close_start, true));
             pos = close_end;
             prose_from = close_end;
         }
     }
-    if prose_from < line.len() {
-        parts.push((&line[prose_from..], false));
+    if prose_from < text.len() {
+        parts.push((prose_from..text.len(), false));
     }
     parts
 }
@@ -678,6 +736,37 @@ mod tests {
     }
 
     #[test]
+    fn comment_run_is_a_paragraph_so_a_span_may_cross_lines() {
+        let rust = comment_syntax("rust").unwrap();
+        let text = "/// Doc `[[rr:AD-1#Decision\n/// outcome]]` wrapped\nfn f() {}\n// plain `[[rr:AD-2#Decision\n//   outcome]]`\nlet x = 1; // [[rr:c]]\n/* block `[[rr:AD-3#Decision\n   outcome]]` */ let y = 2;\n";
+        let got = kinds(text, Host::Comments(rust));
+        assert_eq!(
+            got,
+            vec![
+                "1:marker:AD-1#Decision outcome",
+                "4:marker:AD-2#Decision outcome",
+                "6:marker:c",
+                "7:marker:AD-3#Decision outcome",
+            ],
+            "{got:?}"
+        );
+    }
+
+    #[test]
+    fn bare_marker_split_across_comment_lines_is_malformed() {
+        let rust = comment_syntax("rust").unwrap();
+        let got = kinds("// see [[rr:Decision\n// outcome]]\n", Host::Comments(rust));
+        assert_eq!(got, vec!["1:malformed"], "{got:?}");
+    }
+
+    #[test]
+    fn code_between_comment_lines_ends_the_paragraph() {
+        let rust = comment_syntax("rust").unwrap();
+        let got = kinds("// `[[rr:a\nlet x = 1;\n// b]]`\n", Host::Comments(rust));
+        assert_eq!(got, vec!["1:malformed"], "{got:?}");
+    }
+
+    #[test]
     fn finds_markers_in_prose_and_qualifying_spans() {
         let text = "see [[rr:AD-1]] and `[[rr:AD-2]]` and `rg '\\[\\[rr:'` here\n";
         let got = kinds(text, Host::Markdown);
@@ -689,6 +778,42 @@ mod tests {
         let text = "[[rr:a]]\n```\n[[rr:fenced]]\nsrc/fenced.rs\n```\n[[rr:b]]\n";
         let got = kinds(text, Host::Markdown);
         assert_eq!(got, vec!["1:marker:a", "6:marker:b"], "{got:?}");
+    }
+
+    #[test]
+    fn code_span_across_lines_reads_the_line_ending_as_a_space() {
+        let text = "see `[[rr:doc/a.md#Decision\noutcome]]` and\n[[rr:b]] here\n\nsrc/x.rs\n";
+        let got = kinds(text, Host::Markdown);
+        assert_eq!(
+            got,
+            vec![
+                "1:marker:doc/a.md#Decision outcome",
+                "3:marker:b",
+                "5:mention:src/x.rs"
+            ],
+            "{got:?}"
+        );
+    }
+
+    #[test]
+    fn continuation_indent_is_not_span_content() {
+        let got = kinds(
+            "- item `[[rr:AD-1#Decision\n    outcome]]` here\n",
+            Host::Markdown,
+        );
+        assert_eq!(got, vec!["1:marker:AD-1#Decision outcome"], "{got:?}");
+    }
+
+    #[test]
+    fn code_span_does_not_cross_a_blank_line() {
+        let got = kinds("`[[rr:a\n\nb]]`\n", Host::Markdown);
+        assert_eq!(got, vec!["1:malformed"], "{got:?}");
+    }
+
+    #[test]
+    fn wrapped_prose_marker_is_still_malformed() {
+        let got = kinds("see [[rr:Decision\noutcome]] here\n", Host::Markdown);
+        assert_eq!(got, vec!["1:malformed"], "{got:?}");
     }
 
     #[test]
