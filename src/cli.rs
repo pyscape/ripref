@@ -30,6 +30,16 @@ pub enum Subcommand {
 }
 
 impl Subcommand {
+    fn name(self) -> &'static str {
+        match self {
+            Subcommand::Index => "index",
+            Subcommand::Read => "read",
+            Subcommand::At => "at",
+            Subcommand::Search => "search",
+            Subcommand::Verify => "verify",
+        }
+    }
+
     fn from_token(tok: &OsStr) -> Option<Subcommand> {
         match tok.to_str()? {
             "index" => Some(Subcommand::Index),
@@ -111,6 +121,9 @@ pub struct LowArgs {
     pub markers: bool,
     /// Positional arguments (e.g. the anchor for `read`).
     pub positional: Vec<OsString>,
+    /// Recorded rather than inferred from the fields above, so a flag's
+    /// `verbs` is the only thing to keep right when one is added.
+    pub seen_flags: Vec<&'static str>,
 }
 
 impl LowArgs {
@@ -126,6 +139,7 @@ impl LowArgs {
             mentions: false,
             markers: false,
             positional: Vec::new(),
+            seen_flags: Vec::new(),
         }
     }
 }
@@ -154,8 +168,8 @@ impl FlagValue {
 
 /// The definition of one optional flag. A trimmed-down [ripgrep `Flag`]
 /// trait: long name (required), optional short name, whether it takes a
-/// value, the documentation strings, and an `update` that folds the value
-/// into [`LowArgs`].
+/// value, the verbs it applies to, the documentation strings, and an
+/// `update` that folds the value into [`LowArgs`].
 ///
 /// [ripgrep `Flag`]: https://github.com/BurntSushi/ripgrep
 pub trait Flag: Sync {
@@ -169,7 +183,13 @@ pub trait Flag: Sync {
     fn name_long(&self) -> &'static str;
     /// Documentation category.
     fn doc_category(&self) -> &'static str;
-    /// Terse one-line help string.
+    /// Empty means shared, the set [[rr:Shared options]] lists; on any
+    /// other verb a scoped flag is the unknown flag of [[rr:AD-4]]. The
+    /// same list writes the help prefix, so the two cannot disagree.
+    fn verbs(&self) -> &'static [Subcommand] {
+        &[]
+    }
+    /// Terse one-line help string, without the verb prefix `verbs` writes.
     fn doc_short(&self) -> &'static str;
     /// Fold a parsed value into the low-level args.
     fn update(&self, value: FlagValue, args: &mut LowArgs) -> Result<(), String>;
@@ -322,8 +342,11 @@ impl Flag for AllFlag {
     fn doc_category(&self) -> &'static str {
         "output"
     }
+    fn verbs(&self) -> &'static [Subcommand] {
+        &[Subcommand::At]
+    }
     fn doc_short(&self) -> &'static str {
-        "rr at: report the whole covering nest, outermost first."
+        "report the whole covering nest, outermost first."
     }
     fn update(&self, _value: FlagValue, args: &mut LowArgs) -> Result<(), String> {
         args.all = true;
@@ -342,8 +365,11 @@ impl Flag for MentionsFlag {
     fn doc_category(&self) -> &'static str {
         "output"
     }
+    fn verbs(&self) -> &'static [Subcommand] {
+        &[Subcommand::Search]
+    }
     fn doc_short(&self) -> &'static str {
-        "rr search: list path mentions instead of markers."
+        "list path mentions instead of markers."
     }
     fn update(&self, _value: FlagValue, args: &mut LowArgs) -> Result<(), String> {
         args.mentions = true;
@@ -362,8 +388,11 @@ impl Flag for MarkersFlag {
     fn doc_category(&self) -> &'static str {
         "output"
     }
+    fn verbs(&self) -> &'static [Subcommand] {
+        &[Subcommand::Search]
+    }
     fn doc_short(&self) -> &'static str {
-        "rr search: list every marker, taking no <anchor>."
+        "list every marker, taking no <anchor>."
     }
     fn update(&self, _value: FlagValue, args: &mut LowArgs) -> Result<(), String> {
         args.markers = true;
@@ -428,6 +457,7 @@ pub fn parse(argv: &[OsString]) -> Result<ParseOutcome, String> {
             let flag = lookup_long(name).ok_or_else(|| format!("unknown flag: --{name}"))?;
             let value = take_value(flag, name, inline, &mut iter)?;
             flag.update(value, &mut args)?;
+            args.seen_flags.push(flag.name_long());
         } else if text.starts_with('-') && text != "-" {
             // Short flag(s). Only single switches / `-x value` are supported.
             let ch = text.chars().nth(1).unwrap();
@@ -439,6 +469,7 @@ pub fn parse(argv: &[OsString]) -> Result<ParseOutcome, String> {
             };
             let value = take_value(flag, flag.name_long(), inline, &mut iter)?;
             flag.update(value, &mut args)?;
+            args.seen_flags.push(flag.name_long());
         } else {
             args.positional.push(tok.clone());
         }
@@ -473,7 +504,26 @@ fn take_value(
 
 /// Enforce each verb's positional arity; `verify`'s is open by design,
 /// see [[rr:AD-3]].
+/// The verbs a scoped flag names, as the help prefix and the usage error
+/// both write them: `rr at`, or `rr at, rr search` once one spans two.
+fn verb_list(verbs: &[Subcommand]) -> String {
+    verbs
+        .iter()
+        .map(|v| format!("rr {}", v.name()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn validate(args: &LowArgs) -> Result<(), String> {
+    for name in &args.seen_flags {
+        let Some(flag) = lookup_long(name) else {
+            continue;
+        };
+        let verbs = flag.verbs();
+        if !verbs.is_empty() && !verbs.contains(&args.command) {
+            return Err(format!("--{name} applies to {} only", verb_list(verbs)));
+        }
+    }
     match args.command {
         Subcommand::Read => match args.positional.len() {
             0 => Err("read requires an <anchor> argument".to_string()),
@@ -552,8 +602,12 @@ pub fn help_text() -> String {
             Some(c) => format!("-{c}, "),
             None => "    ".to_string(),
         };
+        let scope = match flag.verbs() {
+            [] => String::new(),
+            verbs => format!("{}: ", verb_list(verbs)),
+        };
         out.push_str(&format!(
-            "    {short}--{:<12} {}\n",
+            "    {short}--{:<12} {scope}{}\n",
             flag.name_long(),
             flag.doc_short()
         ));
@@ -697,6 +751,29 @@ mod tests {
         // `--` forces the rest to be positional, even a leading-dash anchor.
         let args = parse_run(&["read", "--", "-weird-anchor"]);
         assert_eq!(args.positional, vec![OsString::from("-weird-anchor")]);
+    }
+
+    #[test]
+    fn a_scoped_flag_elsewhere_is_a_usage_error() {
+        assert_eq!(
+            parse_err(&["verify", "--markers"]),
+            "--markers applies to rr search only"
+        );
+        assert_eq!(
+            parse_err(&["read", "a", "--mentions"]),
+            "--mentions applies to rr search only"
+        );
+        assert_eq!(
+            parse_err(&["search", "--all"]),
+            "--all applies to rr at only"
+        );
+        // Shared flags have nothing to do on `search`, and that is fine.
+        assert!(parse_run(&["search", "--no-freshness"]).no_freshness);
+        assert_eq!(
+            parse_run(&["search", "--index", "x"]).index.unwrap(),
+            "x",
+            "shared per the README's Shared options"
+        );
     }
 
     #[test]
