@@ -152,11 +152,6 @@ fn fresh(reader: &Reader, root: &Path, skip_freshness: bool) -> bool {
     indexer::newest_mtime(&reader.paths(), root) <= reader.mtime
 }
 
-/// Resolve one anchor to its definition locations, structured. The whole
-/// token is tried as an identity first, so an identity that itself contains
-/// `#` resolves literally; only then does the path qualifier of
-/// `[[rr:AD-1]]` split, and the identity's definitions filter to the
-/// qualifying file.
 type Location = (String, u64, u64);
 
 fn parse_all(locs: Vec<String>) -> Vec<Location> {
@@ -166,6 +161,7 @@ fn parse_all(locs: Vec<String>) -> Vec<Location> {
         .collect()
 }
 
+/// `[[rr:AD-6#Decision outcome]]`
 fn resolve(reader: &Reader, anchor: &str) -> Vec<Location> {
     let direct = parse_all(reader.forward_lookup(anchor));
     if !direct.is_empty() {
@@ -193,6 +189,7 @@ fn resolve(reader: &Reader, anchor: &str) -> Vec<Location> {
         .collect()
 }
 
+/// `[[rr:AD-6#Decision outcome]]`
 fn minimal_form(reader: &Reader, hit: &AnchorHit) -> String {
     if reader.forward_lookup(&hit.anchor).len() == 1 {
         return hit.anchor.clone();
@@ -278,7 +275,6 @@ pub fn run_at(args: &LowArgs) -> Result<u8, String> {
         } else {
             Vec::new()
         };
-        // [[rr:doc/ad/0004-output-contract.md#Decision outcome]]
         let forms: Vec<(String, &AnchorHit)> = emitted
             .iter()
             .map(|h| (minimal_form(reader, h), *h))
@@ -318,7 +314,7 @@ fn at_text(forms: &[(String, &AnchorHit)]) -> String {
 }
 
 /// JSON `data` for `rr at`
-/// (`[[rr:doc/ad/0004-output-contract.md#Decision outcome]]`). Returned (not
+/// (`[[rr:AD-4#Decision outcome]]`). Returned (not
 /// printed) so the exact document can be asserted in tests.
 fn at_json(forms: &[(String, &AnchorHit)]) -> String {
     let mut out = String::from(r#"{"anchors":["#);
@@ -428,7 +424,7 @@ pub fn run_search(args: &LowArgs) -> Result<u8, String> {
     let root = Path::new(".");
     let cfg = config::load(root);
     let matcher = config::scope_matcher(root, &cfg)?;
-    // [[rr:doc/ad/0003-cli-verbs.md#Decision outcome]]
+    // [[rr:AD-3#Decision outcome]]
     let takes_anchor = !(args.markers || args.mentions);
     let (filter, paths) = match args.positional.split_first() {
         Some((first, rest)) if takes_anchor => (
@@ -612,7 +608,7 @@ pub fn run_verify(args: &LowArgs) -> Result<u8, String> {
                         }
                     }
                     What::Mention { token, line_ref } => {
-                        // [[rr:doc/ad/0005-path-mentions.md#Decision outcome]]
+                        // [[rr:AD-5#Decision outcome]]
                         let first = token.split('/').next().unwrap_or("");
                         if first.is_empty() || !root.join(first).is_dir() {
                             continue;
@@ -708,7 +704,7 @@ fn push_location(out: &mut String, file: &str, start: u64, end: u64) {
     out.push_str(&format!(",\"start_line\":{start},\"end_line\":{end}}}"));
 }
 
-/// `[[rr:doc/ad/0002-marker-syntax.md#Decision drivers]]`
+/// `[[rr:AD-2#Decision drivers]]`
 fn push_json_str(out: &mut String, s: &str) {
     out.push('"');
     for c in s.chars() {
@@ -877,7 +873,7 @@ mod tests {
 
     #[test]
     fn at_json_escapes_anchor_text() {
-        // [[rr:doc/ad/0002-marker-syntax.md#Decision drivers]]
+        // [[rr:AD-2#Decision drivers]]
         let h = hit(r#"x.feature#say "hi""#, "x.feature", 3, 3);
         let forms = vec![(h.anchor.clone(), &h)];
         let doc = at_json(&forms);

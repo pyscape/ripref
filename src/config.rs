@@ -27,7 +27,7 @@ pub struct Config {
     pub scan: Vec<(String, Vec<String>)>,
 }
 
-/// `[[rr:doc/ad/0001-domain-model.md#Decision outcome]]`
+/// `[[rr:AD-1#Decision outcome]]`
 pub fn load(root: &Path) -> Config {
     let mut cfg = Config {
         verify_in_scope: Vec::new(),

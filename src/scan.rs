@@ -5,8 +5,10 @@ Lexical scanners for markers and path mentions.
 runs the mention half to fill the mention table `[[rr:AD-5]]`. The region
 rules are `[[rr:AD-2]]`'s: in a Markdown host, prose and inline code spans
 whose content begins with the marker opener are read and fenced blocks are
-invisible; a structureless host is read per raw line. Mentions qualify only
-in prose, and marker interiors are excluded from the mention scan.
+invisible; a comment host reads a run of comment lines the same way
+(`[[rr:ripref (rr)#Anchors]]`); a structureless host is read per raw line.
+Mentions qualify only in prose, and marker interiors are excluded from the
+mention scan.
 */
 
 use crate::config::Config;
@@ -30,7 +32,7 @@ pub enum What {
     Malformed {
         reason: String,
     },
-    /// `[[rr:doc/ad/0005-path-mentions.md#Decision outcome]]`
+    /// `[[rr:AD-5#Decision outcome]]`
     Mention {
         token: String,
         line_ref: bool,
@@ -41,10 +43,11 @@ pub enum What {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Host {
     /// Markdown regions, per
-    /// `[[rr:doc/ad/0002-marker-syntax.md#Decision outcome]]`.
+    /// `[[rr:AD-2#Decision outcome]]`.
     Markdown,
-    /// A `[scan.<lang>]` comment host: the text after `syntax.line` per raw
-    /// line is read as prose; everything else on the line is invisible.
+    /// A `[scan.<lang>]` comment host: the comment text is read as Markdown
+    /// prose (`[[rr:ripref (rr)#Anchors]]`); the rest of the line is
+    /// invisible.
     Comments(&'static CommentSyntax),
     /// No declared structure: every raw line is scanned.
     Plain,
@@ -241,8 +244,8 @@ fn line_comment_text<'a>(line: &'a str, syntax: &CommentSyntax) -> Option<&'a st
     }
 }
 
-/// `[[rr:doc/ad/0002-marker-syntax.md#Decision outcome]]`
-/// `[[rr:doc/ad/0005-path-mentions.md#Decision outcome]]`
+/// `[[rr:AD-2#Decision outcome]]`
+/// `[[rr:AD-5#Decision outcome]]`
 pub fn scan(content: &str, host: Host) -> Vec<Found> {
     let mut out = Vec::new();
     let mut fence: Option<&str> = None; // the delimiter that opened the fence
@@ -279,8 +282,7 @@ pub fn scan(content: &str, host: Host) -> Vec<Found> {
                 }
                 extend_paragraph(&mut paragraph, lineno, line);
             }
-            // Comment text is read exactly as a Plain line is, so mentions
-            // qualify there too, per [[rr:AD-5]].
+            // [[rr:AD-5#Decision outcome]]
             Host::Comments(syntax) => {
                 let mut pos = 0;
                 let mut commented = false;
@@ -309,6 +311,7 @@ pub fn scan(content: &str, host: Host) -> Vec<Found> {
                                 awaiting_close = Some(close);
                             }
                             Some((off, CommentStart::Line { len })) => {
+                                // `//!` and `#!` are prefixes too.
                                 let mut body = &line[pos + off + len..];
                                 let last = syntax.line.as_bytes()[syntax.line.len() - 1];
                                 while body
@@ -342,6 +345,8 @@ struct Paragraph {
     text: String,
 }
 
+/// CommonMark drops a continuation line's indent, so a span split there
+/// reads with one space at the break.
 fn extend_paragraph(paragraph: &mut Option<Paragraph>, lineno: u64, line: &str) {
     match paragraph {
         Some(p) => {
@@ -357,6 +362,8 @@ fn extend_paragraph(paragraph: &mut Option<Paragraph>, lineno: u64, line: &str) 
     }
 }
 
+/// `[[rr:ripref (rr)#Anchors]]`
+/// `[[rr:AD-2#Decision outcome]]`
 fn flush_paragraph(paragraph: &mut Option<Paragraph>, out: &mut Vec<Found>) {
     let Some(Paragraph { first_line, text }) = paragraph.take() else {
         return;
@@ -377,7 +384,7 @@ fn flush_paragraph(paragraph: &mut Option<Paragraph>, out: &mut Vec<Found>) {
 }
 
 /// Scan one region segment. The code-span rule is
-/// `[[rr:doc/ad/0005-path-mentions.md#Decision outcome]]`.
+/// `[[rr:AD-5#Decision outcome]]`.
 fn scan_segment(text: &str, is_span: bool, lineno: u64, out: &mut Vec<Found>) {
     if is_span {
         if text.starts_with(marker::OPENER) {
@@ -398,7 +405,7 @@ fn scan_segment(text: &str, is_span: bool, lineno: u64, out: &mut Vec<Found>) {
         return;
     }
 
-    // [[rr:doc/ad/0005-path-mentions.md#Decision outcome]]
+    // [[rr:AD-5#Decision outcome]]
     let mut covered: Vec<(usize, usize)> = Vec::new();
     let mut from = 0;
     while let Some(rel) = text[from..].find(marker::OPENER) {
@@ -482,7 +489,7 @@ pub fn is_path_shaped(token: &str) -> bool {
             .all(|s| !s.is_empty() && s != "." && s != "..")
 }
 
-/// Split one Markdown line into prose and inline-code-span segments. Spans
+/// Split Markdown text into prose and inline-code-span byte ranges. Spans
 /// follow the backtick-run rule: an opener of N backticks closes at the next
 /// run of exactly N; an unclosed opener is literal prose.
 fn split_inline(text: &str) -> Vec<(std::ops::Range<usize>, bool)> {

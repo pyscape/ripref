@@ -2,7 +2,7 @@
 //! index, `rr read` and `rr at` invert each other over it, `rr search` lists
 //! markers with no index at all, and `rr verify` judges the references scoped
 //! text writes. Exit codes follow the one model of the output contract
-//! (`[[rr:doc/ad/0004-output-contract.md#Decision outcome]]`).
+//! (`[[rr:AD-4#Decision outcome]]`).
 //!
 //! Drives the real `rr` binary in a throwaway `Dir` so the whole pipeline
 //! (walk -> extract -> serialize -> mmap -> resolve -> judge) is exercised
@@ -19,7 +19,7 @@ use common::{code, Dir, TestCommand};
 
 // Pins the index summary format (anchors, mentions, files) and the read
 // output (`file:start-end`, one definition per line). The heading's span is
-// the rule of [[rr:doc/ad/0001-domain-model.md#Decision outcome]].
+// the rule of [[rr:AD-1#Decision outcome]].
 rrtest!(
     index_then_read_roundtrip,
     |mut dir: Dir, mut cmd: TestCommand| {
@@ -63,7 +63,7 @@ rrtest!(
         assert!(stdout.contains("a.md:1-3"), "{stdout}");
         assert!(stdout.contains("b.md:1-3"), "{stdout}");
 
-        // [[rr:doc/ad/0001-domain-model.md#Decision outcome]]: both spellings
+        // [[rr:AD-1#Decision outcome]]: both spellings
         // resolve.
         let one = cmd.args(["read", "a.md#Dup"]).stdout();
         assert_eq!(one.trim(), "a.md:1-3");
@@ -72,7 +72,7 @@ rrtest!(
     }
 );
 
-// The record kind of [[rr:doc/ad/0001-domain-model.md#Decision outcome]].
+// The record kind of [[rr:AD-1#Decision outcome]].
 rrtest!(
     record_title_defines_the_id,
     |mut dir: Dir, mut cmd: TestCommand| {
@@ -89,7 +89,7 @@ rrtest!(
         cmd.args(["read", "AD-7: A worked decision"])
             .assert_exit_code(1);
 
-        // [[rr:doc/ad/0003-cli-verbs.md#Decision outcome]]
+        // [[rr:AD-3#Decision outcome]]
         let at = cmd.args(["at", "doc/x.md:3"]).stdout();
         assert_eq!(at.trim(), "[[rr:AD-7]]");
     }
@@ -134,7 +134,7 @@ rrtest!(
     }
 );
 
-// [[rr:doc/ad/0001-domain-model.md#Decision outcome]]
+// [[rr:AD-1#Decision outcome]]
 rrtest!(
     email_anchor_reads_literally,
     |mut dir: Dir, mut cmd: TestCommand| {
@@ -147,7 +147,7 @@ rrtest!(
 
 // --- at: the inverse path -----------------------------------------------------
 
-// [[rr:doc/ad/0004-output-contract.md#Decision outcome]]
+// [[rr:AD-4#Decision outcome]]
 rrtest!(
     at_prints_marker_innermost_and_all_nest,
     |mut dir: Dir, mut cmd: TestCommand| {
@@ -171,7 +171,7 @@ rrtest!(
     }
 );
 
-// [[rr:doc/ad/0004-output-contract.md#Decision outcome]]
+// [[rr:AD-4#Decision outcome]]
 rrtest!(
     at_qualifies_an_ambiguous_identity,
     |mut dir: Dir, mut cmd: TestCommand| {
@@ -186,6 +186,7 @@ rrtest!(
     }
 );
 
+// [[rr:AD-6#Decision outcome]]
 rrtest!(
     at_prefers_an_anchor_qualifier_and_it_survives_a_move,
     |mut dir: Dir, mut cmd: TestCommand| {
@@ -226,6 +227,7 @@ rrtest!(
     }
 );
 
+// [[rr:AD-6#Decision outcome]]
 rrtest!(
     anchor_qualifier_must_name_one_definition,
     |mut dir: Dir, mut cmd: TestCommand| {
@@ -257,7 +259,7 @@ rrtest!(
     at_line_with_no_anchor_exits_one,
     |mut dir: Dir, mut cmd: TestCommand| {
         // A text file defines no anchors at all, so every line is uncovered
-        // [[rr:doc/ad/0004-output-contract.md#Decision outcome]]
+        // [[rr:AD-4#Decision outcome]]
         dir.file("solo.txt", "the only line\n");
         cmd.arg("index").assert_exit_code(0);
         let out = cmd.args(["at", "solo.txt:1"]).run();
@@ -289,7 +291,7 @@ rrtest!(
     }
 );
 
-// [[rr:doc/ad/0004-output-contract.md#Decision outcome]]
+// [[rr:AD-4#Decision outcome]]
 rrtest!(at_json_envelope, |mut dir: Dir, mut cmd: TestCommand| {
     dir.file("guide.md", "# Guide\n\nbody\n");
     cmd.arg("index").assert_exit_code(0);
@@ -331,7 +333,7 @@ rrtest!(
 );
 
 // A token that opens like a marker but is not one
-// ([[rr:doc/ad/0002-marker-syntax.md#Decision outcome]]) is a usage error,
+// ([[rr:AD-2#Decision outcome]]) is a usage error,
 // never a silent fall-through to bare parsing.
 rrtest!(
     read_malformed_marker_exits_two,
@@ -344,7 +346,7 @@ rrtest!(
 
 // --- search: lexical, index-free ----------------------------------------------
 
-// [[rr:doc/ad/0003-cli-verbs.md#Decision outcome]]
+// [[rr:AD-3#Decision outcome]]
 rrtest!(
     search_lists_and_filters_without_an_index,
     |mut dir: Dir, mut cmd: TestCommand| {
@@ -415,7 +417,7 @@ rrtest!(
 
 // --- verify: the gate ----------------------------------------------------------
 
-// [[rr:doc/ad/0003-cli-verbs.md#Decision outcome]], one fixture: the corpus
+// [[rr:AD-3#Decision outcome]], one fixture: the corpus
 // under tests/data carries one violation per line plus a clean section that
 // must produce nothing.
 rrtest!(
@@ -506,7 +508,7 @@ rrtest!(
 rrtest!(
     verify_rules_select_the_reported_kinds,
     |mut dir: Dir, mut cmd: TestCommand| {
-        // [[rr:doc/ad/0005-path-mentions.md#Decision outcome]], hence the
+        // [[rr:AD-5#Decision outcome]], hence the
         // qualified path and the real directory beside it.
         dir.file("src/parser.go", "package x\n")
             .file("a.md", "# T\n\nbad [[rr:nope]] and src/parser.go:42 here\n");
@@ -737,7 +739,7 @@ fn index_body(dir: &Dir) -> Vec<u8> {
 }
 
 // The on-disk format: `refidx v2`, three sections, and no content-addressing
-// fields ([[rr:doc/ad/0003-cli-verbs.md#Decision outcome]]).
+// fields ([[rr:AD-3#Decision outcome]]).
 rrtest!(index_is_refidx_v2, |mut dir: Dir, mut cmd: TestCommand| {
     dir.file("src/main.rs", "fn main() {}\n")
         .file("README.md", "# title\n\nsee src/main.rs here\n");
@@ -996,7 +998,7 @@ rrtest!(
         );
 
         // The records write markers of each other.
-        // [[rr:doc/ad/0003-cli-verbs.md#Decision outcome]]
+        // [[rr:AD-3#Decision outcome]]
         let search = run(&["search", "AD-1"]);
         assert_eq!(code(&search), 0, "search over own tree: {search:?}");
         let listing = String::from_utf8_lossy(&search.stdout);

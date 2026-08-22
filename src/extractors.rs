@@ -14,7 +14,7 @@ use crate::refidx::ForwardEntry;
 /// should produce an empty result, not a panic.
 pub trait Extractor: Sync {
     fn supports(&self, ext: Option<&str>) -> bool;
-    /// `[[rr:doc/ad/0001-domain-model.md#Decision outcome]]`
+    /// `[[rr:AD-1#Decision outcome]]`
     fn extract(&self, rel_path: &str, disk_path: &Path) -> Vec<ForwardEntry>;
 }
 

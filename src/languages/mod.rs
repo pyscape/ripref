@@ -34,13 +34,13 @@ type TitleFinder = fn(&str) -> Vec<(String, u64)>;
 /// How a language's captures become anchors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
-    /// `[[rr:doc/ad/0001-domain-model.md#Decision outcome]]`: each match is
+    /// `[[rr:AD-1#Decision outcome]]`: each match is
     /// one anchor whose span is the `@span` node (the whole item), or the
     /// `@anchor` node when no `@span` exists.
     Symbols,
     /// Titled regions: each `@anchor` capture is a title; the span and
     /// record identity rules are
-    /// `[[rr:doc/ad/0001-domain-model.md#Decision outcome]]`.
+    /// `[[rr:AD-1#Decision outcome]]`.
     Sections,
 }
 
@@ -217,7 +217,7 @@ fn sections(
         .collect()
 }
 
-/// `[[rr:doc/ad/0001-domain-model.md#Decision outcome]]`, except that the
+/// `[[rr:AD-1#Decision outcome]]`, except that the
 /// ID's first segment also accepts digits after its first letter, so `AD2-9`
 /// and `COVID-19` both parse. The record says letters.
 pub fn record_id(title: &str) -> Option<&str> {

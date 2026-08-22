@@ -1,5 +1,5 @@
 //! Markdown: ATX headings (`# ...` through `###### ...`) as the titled
-//! regions of `[[rr:doc/ad/0001-domain-model.md#Decision outcome]]`, via the
+//! regions of `[[rr:AD-1#Decision outcome]]`, via the
 //! `tree-sitter-md` block grammar. Editing the query below changes what
 //! counts as a title, nothing else.
 

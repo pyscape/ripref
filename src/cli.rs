@@ -518,7 +518,7 @@ fn validate(args: &LowArgs) -> Result<(), String> {
             0 => Err("at requires a <file>:<line> argument".to_string()),
             // Resolved now, before any command touches the index, so a
             // malformed `file:line` is
-            // [[rr:doc/ad/0004-output-contract.md#Decision outcome]].
+            // [[rr:AD-4#Decision outcome]].
             1 => parse_position(&args.positional[0].to_string_lossy()).map(|_| ()),
             _ => Err("at takes exactly one <file>:<line>".to_string()),
         },

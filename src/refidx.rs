@@ -17,7 +17,7 @@ use std::collections::HashMap;
 
 pub const MAGIC: &str = "refidx v2";
 
-/// `[[rr:doc/ad/0001-domain-model.md#Decision outcome]]`
+/// `[[rr:AD-1#Decision outcome]]`
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ForwardEntry {
     pub anchor: String,
@@ -25,7 +25,7 @@ pub struct ForwardEntry {
     pub location: String,
 }
 
-/// `[[rr:doc/ad/0005-path-mentions.md#Decision outcome]]`
+/// `[[rr:AD-5#Decision outcome]]`
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MentionEntry {
     pub token: String,
@@ -45,7 +45,7 @@ pub struct AnchorHit {
     pub end_line: u64,
 }
 
-/// `[[rr:doc/ad/0001-domain-model.md#Decision outcome]]`, before/after
+/// `[[rr:AD-1#Decision outcome]]`, before/after
 /// (de)serialization.
 #[derive(Clone, Debug, Default)]
 pub struct IndexData {
@@ -240,7 +240,7 @@ impl<'a> Reader<'a> {
     }
 
     /// Resolve an anchor through the forward map.
-    /// `[[rr:doc/ad/0001-domain-model.md#Decision outcome]]`
+    /// `[[rr:AD-1#Decision outcome]]`
     pub fn forward_lookup(&self, anchor: &str) -> Vec<String> {
         let slice = self.section("forward");
         let lines: Vec<&[u8]> = split_records(slice);

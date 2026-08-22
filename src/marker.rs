@@ -18,7 +18,7 @@ backslash-parity boundary is cleaner hand-rolled and matches the crate's
 no-`regex` ethos.
 */
 
-/// The opener of `[[rr:doc/ad/0002-marker-syntax.md#Decision outcome]]`.
+/// The opener of `[[rr:AD-2#Decision outcome]]`.
 pub const OPENER: &str = "[[rr:";
 
 /// How [`decode`] interprets one reader CLI token.
@@ -26,7 +26,7 @@ pub const OPENER: &str = "[[rr:";
 pub enum Decoded {
     /// No opener: an ordinary bare anchor. The caller owns it unchanged.
     Bare,
-    /// `[[rr:doc/ad/0002-marker-syntax.md#Decision outcome]]`. The string is
+    /// `[[rr:AD-2#Decision outcome]]`. The string is
     /// the human-facing reason.
     Malformed(String),
     /// A well-formed marker: the unescaped anchor it delimits.
@@ -49,7 +49,7 @@ pub fn wrap(anchor: &str) -> String {
 
 /// Escape every literal `\`, `[`, and `]` so the body has exactly one
 /// unescaped `]]` (its terminator). Why per byte rather than per `]]` run:
-/// `[[rr:doc/ad/0002-marker-syntax.md#Decision outcome]]`.
+/// `[[rr:AD-2#Decision outcome]]`.
 fn escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + OPENER.len() + 2);
     for c in s.chars() {
