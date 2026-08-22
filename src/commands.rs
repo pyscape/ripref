@@ -1,12 +1,12 @@
 /*!
-Command implementations for the five verbs of `[[rr:AD-3]]`: the single
+Command implementations for the five verbs of [[rr:AD-3]]: the single
 writer (`index`), the index readers (`read`, `at`), the lexical lister
 (`search`), and the gate (`verify`).
 
 Each returns `Ok(exit_code)` for a normal outcome (including adverse and
 stale, which are non-zero but not errors) or `Err(message)` for a
 usage-level failure the caller reports as exit `2`. Output shapes and exit
-codes follow `[[rr:AD-4]]`.
+codes follow [[rr:AD-4]].
 */
 
 use std::collections::HashSet;
@@ -168,7 +168,7 @@ fn fresh(reader: &Reader, root: &Path, skip_freshness: bool) -> bool {
 /// Resolve one anchor to its definition locations, structured. The whole
 /// token is tried as an identity first, so an identity that itself contains
 /// `#` resolves literally; only then does the path qualifier of
-/// `[[rr:AD-1]]` split, and the identity's definitions filter to the
+/// [[rr:AD-1]] split, and the identity's definitions filter to the
 /// qualifying file.
 fn resolve(reader: &Reader, anchor: &str) -> Vec<(String, u64, u64)> {
     let parse_all = |locs: Vec<String>| -> Vec<(String, u64, u64)> {
@@ -191,8 +191,8 @@ fn resolve(reader: &Reader, anchor: &str) -> Vec<(String, u64, u64)> {
 }
 
 /// `rr read <ref>` — resolve a marker, or a bare anchor, to the anchor's
-/// definition locations. The reader strips a pasted `[[rr:...]]` wrapper and
-/// unescapes before resolving (`[[rr:AD-2]]`); a token that opens like a
+/// definition locations. The reader strips a pasted marker's wrapper and
+/// unescapes before resolving [[rr:AD-2]]; a token that opens like a
 /// marker but is not one is a usage error, never a silent reparse.
 pub fn run_read(args: &LowArgs) -> Result<u8, String> {
     let root = Path::new(".");
@@ -297,7 +297,7 @@ pub fn run_at(args: &LowArgs) -> Result<u8, String> {
 }
 
 /// Text rendering for `rr at`: one marker per line, the document form a
-/// person pastes (`[[rr:AD-4]]`). Returned rather than printed so it is
+/// person pastes [[rr:AD-4]]. Returned rather than printed so it is
 /// unit-testable; `run_at` does the I/O.
 fn at_text(forms: &[(String, &AnchorHit)]) -> String {
     forms
@@ -500,7 +500,7 @@ pub fn run_search(args: &LowArgs) -> Result<u8, String> {
 
 /// Whether a search filter matches a decoded marker anchor: an unqualified
 /// argument matches every marker whose identity equals it, path-qualified or
-/// not; a qualified argument matches exactly (`[[rr:AD-3]]`).
+/// not; a qualified argument matches exactly [[rr:AD-3]].
 fn filter_matches(want: &str, anchor: &str) -> bool {
     if want == anchor {
         return true;
@@ -513,7 +513,7 @@ fn filter_matches(want: &str, anchor: &str) -> bool {
     false
 }
 
-/// One of the six finding kinds of `[[rr:AD-3]]`: the `rr.toml` name a
+/// One of the six finding kinds of [[rr:AD-3]]: the `rr.toml` name a
 /// profile selects it by, beside the text a person reads.
 #[derive(Clone, Copy)]
 struct Rule {
@@ -563,7 +563,7 @@ struct Finding {
 }
 
 /// `rr verify` — the gate: judge the references scoped text writes and
-/// report findings of the six kinds of `[[rr:AD-3]]`. Resolution judgments
+/// report findings of the six kinds of [[rr:AD-3]]. Resolution judgments
 /// need the index, so a stale index exits 3 rather than judging from stale
 /// data; mention judgments run against the live tree.
 pub fn run_verify(args: &LowArgs) -> Result<u8, String> {
@@ -688,7 +688,7 @@ fn emit_to<W: Write>(
 }
 
 /// The one `rr-json` envelope every verb prints under `--format json`
-/// (`[[rr:AD-4]]`). Hand-rolled because the crate has no serde dependency
+/// [[rr:AD-4]]. Hand-rolled because the crate has no serde dependency
 /// and the schema is a hand-written source of truth.
 fn envelope(command: &str, data: &str) -> String {
     format!(r#"{{"format":"rr-json","version":1,"command":"{command}","data":{data}}}"#)
