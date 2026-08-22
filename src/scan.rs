@@ -606,6 +606,33 @@ mod tests {
         assert_eq!(got, vec!["4:marker:m"], "{got:?}");
     }
 
+    // Known limits of the line-local quote/block model, pinned rather than
+    // fixed: real nesting and cross-line string state would need a lexer
+    // per language, which is disproportionate to how rarely these shapes
+    // occur. If one of these ever starts failing, that's a design change,
+    // not a regression.
+
+    #[test]
+    fn nested_block_comment_closes_at_its_first_close() {
+        let rust = comment_syntax("rust").unwrap();
+        let got = kinds("/* /* */ [[rr:o]] */\n", Host::Comments(rust));
+        assert_eq!(got, Vec::<String>::new(), "{got:?}");
+    }
+
+    #[test]
+    fn embedded_newline_in_a_string_reads_as_a_fresh_comment_line() {
+        let rust = comment_syntax("rust").unwrap();
+        let got = kinds("let s = \"a\n// [[rr:p]]\n\";\n", Host::Comments(rust));
+        assert_eq!(got, vec!["2:marker:p"], "{got:?}");
+    }
+
+    #[test]
+    fn raw_string_inner_quote_closes_the_tracked_quote_early() {
+        let rust = comment_syntax("rust").unwrap();
+        let got = kinds("let r = r#\"a \" b\"#; // [[rr:f]]\n", Host::Comments(rust));
+        assert_eq!(got, Vec::<String>::new(), "{got:?}");
+    }
+
     #[test]
     fn finds_markers_in_prose_and_qualifying_spans() {
         let text = "see [[rr:AD-1]] and `[[rr:AD-2]]` and `rg '\\[\\[rr:'` here\n";

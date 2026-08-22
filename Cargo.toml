@@ -17,9 +17,11 @@ readme = "README.md"
 keywords = ["markers", "anchors", "code-search", "tree-sitter", "grep"]
 categories = ["command-line-utilities", "development-tools"]
 # Kept out of the published tarball: the 400K prebuilt grammar artifact (only
-# the `wasm` feature bench reads it), the integration fixtures, and the
-# benchmark write-up. None are needed to build the crate.
-exclude = ["benches/wasm/**", "tests/data/**", "BENCHMARKS.md"]
+# the `wasm` feature bench reads it) and the benchmark write-up. Neither is
+# needed to build or test the crate. tests/data/** stays in: tests/cli.rs
+# copies fixtures from it at run time, so excluding it built fine but broke
+# `cargo test` on the published source.
+exclude = ["benches/wasm/**", "BENCHMARKS.md"]
 default-run = "rr"
 
 # The binary name for ripref is `rr` (see README §Installation).

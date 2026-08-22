@@ -63,12 +63,14 @@ fn apply(text: &str, cfg: &mut Config) {
             continue;
         };
         let key = key.trim();
-        // Gather a multiline array until the brackets balance.
-        let mut value = value.trim().to_string();
+        // Stripped per line, before joining: once lines are joined there's
+        // no line boundary left to stop a later line's content from being
+        // read as part of an earlier line's "# ...".
+        let mut value = strip_comment(value).trim().to_string();
         while open_brackets(&value) > 0 {
             let Some(next) = lines.next() else { break };
             value.push(' ');
-            value.push_str(next.trim());
+            value.push_str(strip_comment(next).trim());
         }
         if section == "verify" {
             match key {
@@ -77,6 +79,9 @@ fn apply(text: &str, cfg: &mut Config) {
                 _ => {}
             }
         } else if let Some(lang) = section.strip_prefix("scan.") {
+            // A quoted table key (`[scan."python"]`), valid TOML, still
+            // names the language "python".
+            let lang = lang.trim_matches(|c| c == '"' || c == '\'');
             if key == "eligible" {
                 let eligible = strings_in(&value);
                 match cfg.scan.iter_mut().find(|(l, _)| l == lang) {
@@ -88,14 +93,27 @@ fn apply(text: &str, cfg: &mut Config) {
     }
 }
 
-/// Net unclosed `[` count outside quoted strings.
+fn strip_comment(line: &str) -> &str {
+    let mut in_str = false;
+    for (i, c) in line.char_indices() {
+        match c {
+            '"' => in_str = !in_str,
+            '#' if !in_str => return &line[..i],
+            _ => {}
+        }
+    }
+    line
+}
+
+/// `value` is always already comment-free (`apply` strips each line
+/// before it's kept), so unlike `strip_comment` this never needs to watch
+/// for `#`.
 fn open_brackets(value: &str) -> i32 {
     let mut depth = 0;
     let mut in_str = false;
     for c in value.chars() {
         match c {
             '"' => in_str = !in_str,
-            '#' if !in_str => break, // a trailing comment ends the value
             '[' if !in_str => depth += 1,
             ']' if !in_str => depth -= 1,
             _ => {}
@@ -193,6 +211,37 @@ mod tests {
         assert_eq!(
             cfg.scan,
             vec![("python".to_string(), vec!["prose".to_string()])]
+        );
+    }
+
+    #[test]
+    fn quoted_table_key_names_the_language() {
+        let mut cfg = Config {
+            verify_in_scope: Vec::new(),
+            verify_exclude: Vec::new(),
+            scan: Vec::new(),
+        };
+        apply("[scan.\"python\"]\neligible = [\"comments\"]\n", &mut cfg);
+        assert_eq!(
+            cfg.scan,
+            vec![("python".to_string(), vec!["comments".to_string()])]
+        );
+    }
+
+    #[test]
+    fn trailing_comment_after_the_array_is_not_parsed_as_more_strings() {
+        let mut cfg = Config {
+            verify_in_scope: Vec::new(),
+            verify_exclude: Vec::new(),
+            scan: Vec::new(),
+        };
+        apply(
+            "[scan.rust]\neligible = [\"comments\"] # not \"all\"\n",
+            &mut cfg,
+        );
+        assert_eq!(
+            cfg.scan,
+            vec![("rust".to_string(), vec!["comments".to_string()])]
         );
     }
 
