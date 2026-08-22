@@ -255,6 +255,25 @@ rrtest!(
     }
 );
 
+// [[rr:AD-6#Decision outcome]]
+rrtest!(
+    at_rejects_a_qualifier_that_resolves_elsewhere,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        // The heading names another file, so the qualified form would resolve
+        // by path to q.md's definition rather than back to the hit.
+        dir.file("q.md", "## Dup\n\ntext\n")
+            .file("z.md", "# q.md\n\nintro\n\n## Dup\n\nother\n");
+        cmd.arg("index").assert_exit_code(0);
+
+        let marker = cmd.args(["at", "z.md:5"]).stdout();
+        assert_eq!(marker.trim(), "[[rr:z.md#Dup]]");
+        assert_eq!(
+            cmd.args(["read", marker.trim()]).stdout().trim(),
+            "z.md:5-7"
+        );
+    }
+);
+
 rrtest!(
     at_line_with_no_anchor_exits_one,
     |mut dir: Dir, mut cmd: TestCommand| {

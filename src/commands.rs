@@ -191,6 +191,9 @@ fn resolve(reader: &Reader, anchor: &str) -> Vec<Location> {
 
 /// `[[rr:AD-6#Decision outcome]]`
 fn minimal_form(reader: &Reader, hit: &AnchorHit) -> String {
+    // A candidate that resolves to exactly one definition is not enough: the
+    // one it lands on has to be this hit.
+    let target: Location = (hit.file.clone(), hit.start_line, hit.end_line);
     if reader.forward_lookup(&hit.anchor).len() == 1 {
         return hit.anchor.clone();
     }
@@ -204,7 +207,7 @@ fn minimal_form(reader: &Reader, hit: &AnchorHit) -> String {
         })
         .filter(|q| reader.forward_lookup(&q.anchor).len() == 1)
         .map(|q| format!("{}#{}", q.anchor, hit.anchor))
-        .find(|form| resolve(reader, form).len() == 1);
+        .find(|form| resolve(reader, form).as_slice() == [target.clone()]);
     enclosing.unwrap_or_else(|| format!("{}#{}", hit.file, hit.anchor))
 }
 
