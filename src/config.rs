@@ -99,14 +99,35 @@ fn apply(text: &str, cfg: &mut Config) {
     }
 }
 
-fn strip_comment(line: &str) -> &str {
-    let mut in_str = false;
-    for (i, c) in line.char_indices() {
-        match c {
-            '"' => in_str = !in_str,
-            '#' if !in_str => return &line[..i],
-            _ => {}
+/// Which string a scan is inside, if any. TOML quotes with `"` or `'`, and
+/// `#`, `[`, `]` inside either are literal, so every scan here tracks both:
+/// reading only `"` makes `rules = ['path-line']` an empty list, silently
+/// disabling the gate.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Quote {
+    Outside,
+    Double,
+    Single,
+}
+
+impl Quote {
+    fn step(self, c: char) -> Quote {
+        match (self, c) {
+            (Quote::Outside, '"') => Quote::Double,
+            (Quote::Outside, '\'') => Quote::Single,
+            (Quote::Double, '"') | (Quote::Single, '\'') => Quote::Outside,
+            _ => self,
         }
+    }
+}
+
+fn strip_comment(line: &str) -> &str {
+    let mut quote = Quote::Outside;
+    for (i, c) in line.char_indices() {
+        if c == '#' && quote == Quote::Outside {
+            return &line[..i];
+        }
+        quote = quote.step(c);
     }
     line
 }
@@ -116,27 +137,31 @@ fn strip_comment(line: &str) -> &str {
 /// for `#`.
 fn open_brackets(value: &str) -> i32 {
     let mut depth = 0;
-    let mut in_str = false;
+    let mut quote = Quote::Outside;
     for c in value.chars() {
         match c {
-            '"' => in_str = !in_str,
-            '[' if !in_str => depth += 1,
-            ']' if !in_str => depth -= 1,
+            '[' if quote == Quote::Outside => depth += 1,
+            ']' if quote == Quote::Outside => depth -= 1,
             _ => {}
         }
+        quote = quote.step(c);
     }
     depth
 }
 
-/// Every double-quoted string in `value`, in order.
+/// Every quoted string in `value`, in order. A string closes on the quote
+/// that opened it, so `"it's"` is one string, not an unterminated `'`.
 fn strings_in(value: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut rest = value;
-    while let Some(open) = rest.find('"') {
-        let after = &rest[open + 1..];
-        let Some(close) = after.find('"') else { break };
+    while let Some(open) = rest.find(['"', '\'']) {
+        let delim = rest[open..].chars().next().unwrap_or('"');
+        let after = &rest[open + delim.len_utf8()..];
+        let Some(close) = after.find(delim) else {
+            break;
+        };
         out.push(after[..close].to_string());
-        rest = &after[close + 1..];
+        rest = &after[close + delim.len_utf8()..];
     }
     out
 }
@@ -176,6 +201,33 @@ mod tests {
         apply(DEFAULTS, &mut cfg);
         assert_eq!(cfg.verify_in_scope, vec!["**/*.md"]);
         assert!(cfg.verify_exclude.is_empty());
+    }
+
+    #[test]
+    fn literal_strings_parse_like_basic_ones() {
+        // Reading only `"` made a literal-string list empty, which for
+        // `rules` silently disabled the gate.
+        assert_eq!(strings_in(r#"['a', 'b']"#), ["a", "b"]);
+        assert_eq!(strings_in(r#"["a", 'b']"#), ["a", "b"]);
+        // A string closes on its own quote, so the other one is content.
+        assert_eq!(strings_in(r#"["it's"]"#), ["it's"]);
+        assert_eq!(strings_in(r#"['say "hi"']"#), [r#"say "hi""#]);
+        // `#` and brackets inside either quote are content, not syntax.
+        assert_eq!(strip_comment("k = ['a#b'] # c"), "k = ['a#b'] ");
+        assert_eq!(open_brackets("k = ['a['"), 1);
+
+        let mut cfg = Config {
+            verify_in_scope: Vec::new(),
+            verify_exclude: Vec::new(),
+            verify_rules: Vec::new(),
+            scan: Vec::new(),
+        };
+        apply(
+            "[verify]\nin-scope = ['**/*.md']\nrules = ['path-line']\n",
+            &mut cfg,
+        );
+        assert_eq!(cfg.verify_in_scope, ["**/*.md"]);
+        assert_eq!(cfg.verify_rules, ["path-line"]);
     }
 
     #[test]
