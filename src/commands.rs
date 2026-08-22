@@ -664,14 +664,22 @@ pub fn run_verify(args: &LowArgs) -> Result<u8, String> {
     })
 }
 
+fn emit(code: u8, write: impl FnOnce(&mut dyn Write) -> std::io::Result<()>) -> Result<u8, String> {
+    let stdout = std::io::stdout();
+    emit_to(BufWriter::new(stdout.lock()), code, write)
+}
+
 /// A reader that closed the pipe (`rr verify | head`) has what it asked for,
 /// so `BrokenPipe` keeps `code` rather than failing the run: [[rr:AD-4]]
 /// codes report how the question was answered, not whether anyone read the
 /// whole answer. Flushed explicitly because `BufWriter`'s drop discards the
-/// error this exists to catch.
-fn emit(code: u8, write: impl FnOnce(&mut dyn Write) -> std::io::Result<()>) -> Result<u8, String> {
-    let stdout = std::io::stdout();
-    let mut out = BufWriter::new(stdout.lock());
+/// error this exists to catch. Generic over the writer so both branches are
+/// reachable without a real pipe.
+fn emit_to<W: Write>(
+    mut out: W,
+    code: u8,
+    write: impl FnOnce(&mut dyn Write) -> std::io::Result<()>,
+) -> Result<u8, String> {
     match write(&mut out).and_then(|()| out.flush()) {
         Ok(()) => Ok(code),
         Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(code),
@@ -715,6 +723,74 @@ fn push_json_str(out: &mut String, s: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Fails one operation with one kind, so every `emit_to` branch is
+    /// reachable without a real pipe. `on_flush` writes cleanly and fails
+    /// only at the flush, which is where a buffered error actually surfaces.
+    struct FailingWriter {
+        kind: std::io::ErrorKind,
+        writes_ok: bool,
+    }
+
+    impl FailingWriter {
+        fn on_write(kind: std::io::ErrorKind) -> Self {
+            FailingWriter {
+                kind,
+                writes_ok: false,
+            }
+        }
+        fn on_flush(kind: std::io::ErrorKind) -> Self {
+            FailingWriter {
+                kind,
+                writes_ok: true,
+            }
+        }
+    }
+
+    impl Write for FailingWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if self.writes_ok {
+                Ok(buf.len())
+            } else {
+                Err(std::io::Error::from(self.kind))
+            }
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::from(self.kind))
+        }
+    }
+
+    #[test]
+    fn emit_keeps_the_code_on_broken_pipe_and_errors_otherwise() {
+        use std::io::ErrorKind::{BrokenPipe, PermissionDenied};
+
+        let mut sink = Vec::new();
+        assert_eq!(
+            emit_to(&mut sink, exit::ADVERSE, |w| writeln!(w, "one")),
+            Ok(exit::ADVERSE),
+            "the answer's code survives a whole write"
+        );
+        assert_eq!(sink, b"one\n");
+
+        for hung_up in [
+            FailingWriter::on_write(BrokenPipe),
+            FailingWriter::on_flush(BrokenPipe),
+        ] {
+            assert_eq!(
+                emit_to(hung_up, exit::ADVERSE, |w| writeln!(w, "one")),
+                Ok(exit::ADVERSE),
+                "a reader that stopped reading still got its answer"
+            );
+        }
+
+        for refused in [
+            FailingWriter::on_write(PermissionDenied),
+            FailingWriter::on_flush(PermissionDenied),
+        ] {
+            let err = emit_to(refused, exit::ADVERSE, |w| writeln!(w, "one"));
+            assert!(err.is_err(), "any other kind is a real failure: {err:?}");
+        }
+    }
 
     fn hit(anchor: &str, file: &str, start_line: u64, end_line: u64) -> AnchorHit {
         AnchorHit {
