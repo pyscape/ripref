@@ -65,23 +65,18 @@ pub fn host_for(ext: Option<&str>, cfg: &Config) -> Host {
 }
 
 /// A language's comment delimiters: the region a `[scan.<lang>]` table with
-/// `eligible = ["comments"]` reads (`[[rr:AD-2]]`). A comment is itself a
-/// structureless host, so `scan` still runs per raw line within it.
+/// `eligible = ["comments"]` reads, per [[rr:AD-2]].
 #[derive(Debug, PartialEq, Eq)]
 pub struct CommentSyntax {
     pub line: &'static str,
-    pub block: Option<(&'static str, &'static str)>,
-    /// Whether `block`'s span is comment text (Rust's `/* */`) or a string
-    /// (Python's `"""`/`'''`, hardening against a `#` inside a docstring
-    /// reading as a comment). Meaningless when `block` is `None`.
+    /// Only the closer matching whichever opener started the block ends it,
+    /// so a `'''` docstring survives a stray `"""` inside it.
+    pub block: &'static [(&'static str, &'static str)],
+    /// False for a Python docstring, which is a string rather than a
+    /// comment, so a # inside it must not read as one.
     pub block_is_comment: bool,
-    /// Whether a lone `'` opens a quoted string (Python) or is Rust's
-    /// overloaded token: a self-terminating char literal (`'x'`, `'\n'`,
-    /// `'\u{2764}'`) if it validates as one, otherwise a lifetime or loop
-    /// label (`'static`, `'a`, `'outer:`) that never opens anything. Treating
-    /// every `'` as a plain quote opener makes a lone lifetime/label swallow
-    /// the rest of the line (and beyond, via `in_block`-less line scanning)
-    /// as an unterminated string, hiding a trailing `//` comment from scan.
+    /// True where `'` may be a lifetime or loop label rather than a quote.
+    /// Quoting on every `'` leaves `&'a str` open and swallows the //.
     pub tick_is_char_literal: bool,
 }
 
@@ -91,7 +86,7 @@ const COMMENT_SYNTAX: &[(&str, &[&str], CommentSyntax)] = &[
         &["rs"],
         CommentSyntax {
             line: "//",
-            block: Some(("/*", "*/")),
+            block: &[("/*", "*/")],
             block_is_comment: true,
             tick_is_char_literal: true,
         },
@@ -101,7 +96,7 @@ const COMMENT_SYNTAX: &[(&str, &[&str], CommentSyntax)] = &[
         &["py"],
         CommentSyntax {
             line: "#",
-            block: Some(("\"\"\"", "\"\"\"")),
+            block: &[("\"\"\"", "\"\"\""), ("'''", "'''")],
             block_is_comment: false,
             tick_is_char_literal: false,
         },
@@ -117,15 +112,13 @@ pub fn comment_syntax(lang: &str) -> Option<&'static CommentSyntax> {
         .map(|(_, _, syntax)| syntax)
 }
 
-/// The byte length of a Rust char literal starting at `s[0]` (which must be
-/// `'`), or `None` if what follows doesn't validate as one. A lone `'` is
-/// Rust's overloaded token: `'x'`, `'\n'`, `'\x41'` and `'\u{2764}'` are char
-/// literals (self-terminating, so never left open across the marker/comment
-/// search); `'static`, `'a`, `'outer:` are lifetimes and loop labels, which
-/// never close and so never open a quote at all (`tick_is_char_literal`).
+/// The byte length of the Rust char literal at the start of s, or None
+/// if it is not one, which is how `'a` is told from `'x'`.
 fn char_literal_len(s: &str) -> Option<usize> {
     let mut chars = s.chars();
-    debug_assert_eq!(chars.next(), Some('\''));
+    if chars.next() != Some('\'') {
+        return None;
+    }
     let mut len = 1;
     let c = chars.next()?;
     len += c.len_utf8();
@@ -170,11 +163,8 @@ fn char_literal_len(s: &str) -> Option<usize> {
 }
 
 /// The text after `syntax.line` on a line, or `None` if the marker never
-/// appears outside a quoted string. `"` toggles quote state and `\` skips
-/// the next byte, so an escaped quote or a marker inside a string literal
-/// (`"http://x"`) doesn't start the comment early. `'` does the same only
-/// when `!syntax.tick_is_char_literal`; otherwise it's Rust's overloaded
-/// token (see `char_literal_len`).
+/// appears outside a quoted string, so a marker inside a string literal
+/// (`"http://x"`) doesn't start the comment early.
 pub fn comment_text<'a>(line: &'a str, syntax: &CommentSyntax) -> Option<&'a str> {
     let bytes = line.as_bytes();
     let marker = syntax.line.as_bytes();
@@ -203,14 +193,16 @@ pub fn comment_text<'a>(line: &'a str, syntax: &CommentSyntax) -> Option<&'a str
     None
 }
 
-/// The first of `syntax.line` or `syntax.block`'s opener found outside a
-/// quoted string, as (byte offset, is_block, marker len). Same quote
-/// tracking as `comment_text`; whichever marker occurs first (left to
-/// right) wins.
-fn next_comment_start(line: &str, syntax: &CommentSyntax) -> Option<(usize, bool, usize)> {
+enum CommentStart {
+    Line { len: usize },
+    Block { len: usize, close: &'static str },
+}
+
+/// The leftmost syntax.line or syntax.block opener outside a quoted
+/// string, with its byte offset.
+fn next_comment_start(line: &str, syntax: &CommentSyntax) -> Option<(usize, CommentStart)> {
     let bytes = line.as_bytes();
     let line_marker = syntax.line.as_bytes();
-    let block_open = syntax.block.map(|(open, _)| open.as_bytes());
     let mut quote: Option<u8> = None;
     let mut i = 0;
     while i < bytes.len() {
@@ -223,13 +215,27 @@ fn next_comment_start(line: &str, syntax: &CommentSyntax) -> Option<(usize, bool
             if b == q {
                 quote = None;
             }
-        } else if block_open.is_some_and(|o| bytes[i..].starts_with(o)) {
-            // Checked ahead of the single-quote toggle below: `"""` must not
-            // be read as an ordinary quote opening (which would immediately
-            // close on its own second byte).
-            return Some((i, true, block_open.unwrap().len()));
+        } else if let Some(&(open, close)) = syntax
+            .block
+            .iter()
+            .find(|(open, _)| bytes[i..].starts_with(open.as_bytes()))
+        {
+            // Must come before the quote arm. Read one byte at a time,
+            // """ looks like an empty string plus a dangling quote.
+            return Some((
+                i,
+                CommentStart::Block {
+                    len: open.len(),
+                    close,
+                },
+            ));
         } else if bytes[i..].starts_with(line_marker) {
-            return Some((i, false, line_marker.len()));
+            return Some((
+                i,
+                CommentStart::Line {
+                    len: line_marker.len(),
+                },
+            ));
         } else if b == b'\'' && syntax.tick_is_char_literal {
             i += char_literal_len(&line[i..]).unwrap_or(1);
             continue;
@@ -246,7 +252,7 @@ fn next_comment_start(line: &str, syntax: &CommentSyntax) -> Option<(usize, bool
 pub fn scan(content: &str, host: Host) -> Vec<Found> {
     let mut out = Vec::new();
     let mut fence: Option<&str> = None; // the delimiter that opened the fence
-    let mut in_block = false; // inside a block comment carried from a prior line
+    let mut awaiting_close: Option<&'static str> = None;
     for (i, line) in content.lines().enumerate() {
         let lineno = (i + 1) as u64;
         match host {
@@ -275,27 +281,19 @@ pub fn scan(content: &str, host: Host) -> Vec<Found> {
                     scan_segment(text, is_span, lineno, &mut out);
                 }
             }
-            // The comment is itself a structureless region: comment text is
-            // read exactly as a Plain line is, so mentions qualify there too
-            // ([[rr:AD-5]]). A block comment (`/* ... */`) may span several
-            // lines; once open, a line's text up to the close (or all of it,
-            // if the close is later still) is comment text in full -- quotes
-            // don't apply inside an already-open comment. Python's block is
-            // instead a triple-quoted string (`block_is_comment: false`): the
-            // same open/close tracking carries it across lines, but its text
-            // is never scanned, so a `#` inside a docstring isn't a comment.
+            // Comment text is read exactly as a Plain line is, so mentions
+            // qualify there too, per [[rr:AD-5]].
             Host::Comments(syntax) => {
                 let mut pos = 0;
                 loop {
-                    if in_block {
-                        let close = syntax.block.unwrap().1;
+                    if let Some(close) = awaiting_close {
                         match line[pos..].find(close) {
                             Some(idx) => {
                                 if syntax.block_is_comment {
                                     scan_segment(&line[pos..pos + idx], false, lineno, &mut out);
                                 }
                                 pos += idx + close.len();
-                                in_block = false;
+                                awaiting_close = None;
                             }
                             None => {
                                 if syntax.block_is_comment {
@@ -306,11 +304,11 @@ pub fn scan(content: &str, host: Host) -> Vec<Found> {
                         }
                     } else {
                         match next_comment_start(&line[pos..], syntax) {
-                            Some((off, true, len)) => {
+                            Some((off, CommentStart::Block { len, close })) => {
                                 pos += off + len;
-                                in_block = true;
+                                awaiting_close = Some(close);
                             }
-                            Some((off, false, len)) => {
+                            Some((off, CommentStart::Line { len })) => {
                                 scan_segment(&line[pos + off + len..], false, lineno, &mut out);
                                 break;
                             }
@@ -541,10 +539,6 @@ mod tests {
         assert_eq!(comment_text("let x = 1;", rust), None);
     }
 
-    // A lone `'` outside a string is Rust's overloaded token: a lifetime or
-    // loop label (never closes) or a self-terminating char literal. Treating
-    // every `'` as a plain quote opener leaves a lifetime's tick "open" for
-    // the rest of the line, hiding a trailing `//` comment from the scan.
     #[test]
     fn lifetimes_and_loop_labels_do_not_open_a_quote() {
         let rust = comment_syntax("rust").unwrap();
@@ -564,6 +558,9 @@ mod tests {
             comment_text(r"let h = '\u{2764}'; // ok3", rust),
             Some("ok3")
         );
+        // Fails unless the literal is consumed whole: the " would open a
+        // string and eat the comment.
+        assert_eq!(comment_text("let q = '\"'; // ok4", rust), Some("ok4"));
     }
 
     #[test]
@@ -602,6 +599,22 @@ mod tests {
         let text = "\"\"\"\n# [[rr:x]] not a comment\n\"\"\"\n# [[rr:y]] a real comment\n";
         let got = kinds(text, Host::Comments(py));
         assert_eq!(got, vec!["4:marker:y"], "{got:?}");
+    }
+
+    #[test]
+    fn single_quote_docstring_hash_is_not_a_comment() {
+        let py = comment_syntax("python").unwrap();
+        let text = "'''\n# [[rr:k]] hidden\n'''\n# [[rr:m]] real\n";
+        let got = kinds(text, Host::Comments(py));
+        assert_eq!(got, vec!["4:marker:m"], "{got:?}");
+    }
+
+    #[test]
+    fn mismatched_triple_quote_does_not_close_the_block() {
+        let py = comment_syntax("python").unwrap();
+        let text = "'''\n\"\"\" # [[rr:still-hidden]]\n'''\n# [[rr:m]] real\n";
+        let got = kinds(text, Host::Comments(py));
+        assert_eq!(got, vec!["4:marker:m"], "{got:?}");
     }
 
     #[test]

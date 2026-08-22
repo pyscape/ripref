@@ -205,6 +205,11 @@ path written in plain prose needs no wrapper at all: it is a **path
 mention**, which the index records and `rr verify` keeps honest
 (`[[rr:AD-5]]`).
 
+House style backtick-wraps a marker in Markdown, which keeps wiki-link and
+autolink renderers from eating it; the span rule of `[[rr:AD-2]]` means the
+wrapping costs no findability. In a code comment or a commit message nothing
+renders, so write it bare.
+
 ### How it works
 
 ripref splits cleanly into one writer and many readers.
