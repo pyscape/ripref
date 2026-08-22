@@ -107,6 +107,8 @@ pub struct LowArgs {
     pub all: bool,
     /// `rr search --mentions`: list path mentions instead of markers.
     pub mentions: bool,
+    /// `rr search --markers`: list every marker, freeing the anchor slot.
+    pub markers: bool,
     /// Positional arguments (e.g. the anchor for `read`).
     pub positional: Vec<OsString>,
 }
@@ -122,6 +124,7 @@ impl LowArgs {
             no_freshness: false,
             all: false,
             mentions: false,
+            markers: false,
             positional: Vec::new(),
         }
     }
@@ -348,6 +351,26 @@ impl Flag for MentionsFlag {
     }
 }
 
+struct MarkersFlag;
+impl Flag for MarkersFlag {
+    fn is_switch(&self) -> bool {
+        true
+    }
+    fn name_long(&self) -> &'static str {
+        "markers"
+    }
+    fn doc_category(&self) -> &'static str {
+        "output"
+    }
+    fn doc_short(&self) -> &'static str {
+        "rr search: list every marker, taking no <anchor>."
+    }
+    fn update(&self, _value: FlagValue, args: &mut LowArgs) -> Result<(), String> {
+        args.markers = true;
+        Ok(())
+    }
+}
+
 /// The global flag registry: every optional flag, as a trait object.
 static FLAGS: &[&dyn Flag] = &[
     &IndexFlag,
@@ -358,6 +381,7 @@ static FLAGS: &[&dyn Flag] = &[
     &NoFreshnessFlag,
     &AllFlag,
     &MentionsFlag,
+    &MarkersFlag,
 ];
 
 fn lookup_long(name: &str) -> Option<&'static dyn Flag> {
@@ -470,10 +494,10 @@ fn validate(args: &LowArgs) -> Result<(), String> {
                 Err("index takes no positional arguments".to_string())
             }
         }
-        Subcommand::Search => match args.positional.len() {
-            0 | 1 => Ok(()),
-            _ => Err("search takes at most one <anchor>".to_string()),
-        },
+        Subcommand::Search if args.markers && args.mentions => {
+            Err("search takes --markers or --mentions, not both".to_string())
+        }
+        Subcommand::Search => Ok(()),
         Subcommand::Verify => Ok(()),
     }
 }
@@ -679,6 +703,7 @@ mod tests {
     fn selection_flags_parse() {
         assert!(parse_run(&["at", "a.rs:1", "--all"]).all);
         assert!(parse_run(&["search", "--mentions"]).mentions);
+        assert!(parse_run(&["search", "--markers"]).markers);
         assert!(parse_run(&["read", "a", "--no-freshness"]).no_freshness);
     }
 
@@ -699,7 +724,11 @@ mod tests {
         assert!(parse_err(&["at", "a.rs"]).contains("<file>:<line>"));
         assert!(parse_err(&["at", "a.rs:xyz"]).contains("number"));
         assert!(parse_err(&["index", "stray"]).contains("no positional"));
-        assert!(parse_err(&["search", "a", "b"]).contains("at most one"));
+        assert_eq!(
+            parse_run(&["search", "a", "b"]).positional,
+            vec![OsString::from("a"), OsString::from("b")]
+        );
+        assert!(parse_err(&["search", "--markers", "--mentions"]).contains("not both"));
         assert_eq!(
             parse_run(&["verify", "stray"]).positional,
             vec![OsString::from("stray")]
