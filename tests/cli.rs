@@ -443,6 +443,48 @@ rrtest!(
     }
 );
 
+// Which of the six kinds a profile reports is the profile's business; the
+// six themselves stay fixed by [[rr:AD-3]].
+rrtest!(
+    verify_rules_select_the_reported_kinds,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        // AD-5 judges a `path:line` only when its first segment is a real
+        // directory, so the reference is qualified and `src/` exists.
+        dir.file("src/parser.go", "package x\n")
+            .file("a.md", "# T\n\nbad [[rr:nope]] and src/parser.go:42 here\n");
+        let rules = |list: &str| format!("[verify]\nrules = [{list}]\n");
+
+        cmd.arg("index").assert_exit_code(0);
+        let out = cmd.arg("verify").run();
+        assert_eq!(code(&out), 1, "{out:?}");
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("2 findings"),
+            "{out:?}"
+        );
+
+        dir.write(".rr.toml", &rules("\"dangling-marker\""));
+        cmd.arg("index").assert_exit_code(0);
+        let out = cmd.arg("verify").run();
+        assert_eq!(code(&out), 1, "{out:?}");
+        let s = String::from_utf8_lossy(&out.stdout);
+        assert!(s.contains("1 findings"), "{s}");
+        assert!(s.contains("dangling marker"), "{s}");
+
+        dir.write(".rr.toml", &rules(""));
+        cmd.arg("index").assert_exit_code(0);
+        let out = cmd.arg("verify").run();
+        assert_eq!(code(&out), 0, "an empty list disables the gate: {out:?}");
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("0 findings"),
+            "{out:?}"
+        );
+
+        // A name matching none of the six is a typo, not a silent no-op.
+        dir.write(".rr.toml", &rules("\"dangling-markers\""));
+        cmd.arg("verify").assert_exit_code(2);
+    }
+);
+
 // A [scan.python] table with eligible = ["comments"] makes the comment (not
 // the whole file) the region: a marker inside a string literal is invisible,
 // while one in a trailing comment is read and judged like any other.
