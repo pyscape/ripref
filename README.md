@@ -110,6 +110,23 @@ README.md:88: bare path:line reference: parser.go:42
 2 findings
 ```
 
+Both `verify` and `search` also take paths, which judge or list exactly
+those files instead of walking:
+
+```
+$ rr verify docs/data-model.md
+docs/data-model.md:51: dangling marker: [[rr:legacy.Account]]
+1 findings
+
+$ rr search --markers docs/data-model.md
+docs/data-model.md:51: [[rr:legacy.Account]]
+1 markers
+```
+
+A named path is judged as named, so `in-scope` and `exclude` apply to the
+walk, not to the paths a caller passes (`[[rr:AD-3]]`). That is what lets a
+write-time hook judge the one file it just wrote.
+
 Emit JSON instead of text for piping into other tools:
 
 ```
@@ -195,6 +212,16 @@ kind of reference `rr verify` exists to retire. Which kinds exist and which
 patterns define them is configuration, not hardcoded (see
 [Configuration](#configuration)); the invariants every kind obeys, an
 identity is never a bare path among them, are fixed by `[[rr:AD-1]]`.
+
+A kind declaration names which files it reads, what defines an anchor
+there, and how far a definition extends (`[[rr:AD-1]]`). Record and heading
+both define anchors in titled regions, so a numbered item inside a section,
+a decision ID in a list, is not an anchor: the ID may read like a record's,
+but a list item is not a titled region, and the default profile declares no
+kind that defines an anchor there. The reference for such an item is its
+enclosing heading's marker, which `rr at <file>:<line>` mints,
+path-qualified when the title repeats across files. A project that wants
+item-level anchors promotes the item to a heading.
 
 An anchor plays two roles. On the CLI it is written bare: the argument to
 `rr read` or `rr search`. Written into a document (prose, a comment, a commit
@@ -323,6 +350,27 @@ eligible = ["comments"]
 Additional languages
 are a Tree-sitter grammar plus a query, built in or loaded from WebAssembly.
 
+`[verify] rules` names which of the six finding kinds the gate reports. The
+six themselves are fixed by `[[rr:AD-3]]`; which ones a profile reports is
+the profile's business, which is what makes adoption incremental. Turn on
+the marker kinds first and the gate is green from day one, then add the
+mention kinds as the backlog clears:
+
+```
+[verify]
+rules = [
+  "malformed-marker",
+  "dangling-marker",
+  "ambiguous-marker",
+  "path-only-marker",
+  # "path-line",     # add once the bare file:line backlog is cleared
+  # "stale-mention", # add once prose paths are current
+]
+```
+
+An empty list disables the gate. A name that matches none of the six is a
+usage error, so a typo cannot silently disable nothing.
+
 ### Shared options
 
 Every command accepts:
@@ -346,6 +394,11 @@ the code reports how it was answered.
 - `2`: usage error.
 - `3`: the index is stale; rebuild with `rr index`, fall back to ripgrep, or
   pass `--no-freshness`. `search` reads no index and never returns 3.
+
+The code survives the reader hanging up: `rr verify | head` still exits 1
+when there were findings, rather than dying on the broken pipe. A hook or
+script that reads part of the output and closes it gets the answer's code,
+which is the contract `set -o pipefail` relies on.
 
 ### Installation
 

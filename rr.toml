@@ -23,7 +23,10 @@ exclude = []
 in-scope = ["**/*.md"]
 exclude = []
 # The six finding kinds of `[[rr:AD-3]]`, all reported by default. A project
-# may disable one during adoption; an empty list disables the gate.
+# may disable one during adoption: turn on the marker kinds first and the
+# gate is green from day one, then add the mention kinds as the backlog
+# clears. An empty list disables the gate. A name that matches none of the
+# six is a usage error, so a typo cannot silently disable nothing.
 rules = [
   "malformed-marker",
   "dangling-marker",

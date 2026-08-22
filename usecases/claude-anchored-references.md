@@ -42,26 +42,47 @@ resolves after the table grows and every line number under it shifts.
 Hooks act on tool calls, not on the model's prose, so the guardrails come
 in two layers.
 
-**At write time.** A `PreToolUse` hook on `Edit` and `Write` scans the new
-content outside fenced code blocks and rejects a bare `name.ext:line`
-pattern, except on lines invoking `rr at` or `rr read`, which carry a
-`file:line` on purpose. The rejection tells the agent the fix. Condensed:
+**At write time.** A `PreToolUse` hook on `Edit` and `Write` judges the
+markers in the content before it lands. The content is not on disk yet, so
+the hook cannot run `rr verify` on it; it does two things instead. First,
+find the markers with the canonical extraction regex of `[[rr:AD-2]]`,
+which has no false positives in prose because of the `rr:` sentinel:
 
-```
-# ~/.claude/hooks/block-line-refs.py   (PreToolUse: Edit, Write)
-# Scan the tool input's new content, skipping fenced code blocks.
-# Reject a bare name.ext:line token unless the line invokes rr at or
-# rr read (those carry a file:line on purpose). On rejection, exit
-# non-zero with:
-#   "run: rr at <file>:<line> and paste the marker it prints"
+```python
+# ~/.claude/hooks/check-markers.py   (PreToolUse: Edit, Write)
+import re, subprocess, sys
+
+MARKER = re.compile(r'\[\[rr:(?:\\[\\\[\]]|[^\\\]\[\t\n\r])*?\]\]')
 ```
 
+Then resolve each one with `rr read`, and read the exit code. `rr read`
+answers 0 for a marker that resolves to exactly one definition, 1 for the
+adverse answer (dangling, or ambiguous across several definitions), and 3
+when the index is stale, which is not the writer's fault:
+
+```python
+for marker in MARKER.findall(new_content):
+    code = subprocess.run(['rr', 'read', marker],
+                          capture_output=True).returncode
+    if code == 3:
+        sys.exit('index is stale: run `rr index`, then retry')
+    if code == 1:
+        sys.exit(f'{marker} does not resolve to one definition: run '
+                 f'`rr at <file>:<line>` and paste the marker it prints')
 ```
-# settings.json
-"hooks": { "PreToolUse": [ { "matcher": "Edit|Write",
+
+Pass the marker to `rr read` exactly as written, and quote it in a shell:
+the brackets are glob metacharacters. Wire the hook up with:
+
+```json
+{ "hooks": { "PreToolUse": [ { "matcher": "Edit|Write",
   "hooks": [ { "type": "command",
-    "command": "python ~/.claude/hooks/block-line-refs.py" } ] } ] }
+    "command": "python ~/.claude/hooks/check-markers.py" } ] } ] } }
 ```
+
+After the write lands, the file is on disk and the whole gate applies to
+it: `rr verify <path>` judges exactly the paths named, without walking the
+tree. CI runs bare `rr verify` over the whole scope.
 
 **In chat.** No hook intercepts what the model prints, so a standing memory
 rule shapes the prose side: reference with markers, never a bare anchor and
@@ -76,6 +97,23 @@ and ambiguous markers, a marker wrapping a bare path, a bare `path:line`
 reference, and a stale path mention (`[[rr:AD-3]]`). Exit codes are uniform
 across the five verbs: 0 is the answer, 1 the adverse answer, 2 a usage
 error, and 3 a stale index, which `rr index` rebuilds.
+
+An existing codebase starts with a backlog of bare `file:line` references
+and stale prose paths, which would leave CI red until it is all cleaned up.
+`[verify] rules` is the way in: name the marker kinds on day one so the
+gate is green, and add the mention kinds as the backlog clears.
+
+```toml
+# .rr.toml, day one
+[verify]
+rules = ["malformed-marker", "dangling-marker",
+         "ambiguous-marker", "path-only-marker"]
+```
+
+```
+$ rr verify        # CI, over the whole scope
+0 findings
+```
 
 ## Why it is worth it
 
