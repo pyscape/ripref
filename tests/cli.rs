@@ -176,8 +176,7 @@ rrtest!(
     }
 );
 
-// The minimal unambiguous form: an identity defined twice is emitted
-// path-qualified, so the pasted marker resolves uniquely.
+// [[rr:doc/ad/0004-output-contract.md#Decision outcome]]
 rrtest!(
     at_qualifies_an_ambiguous_identity,
     |mut dir: Dir, mut cmd: TestCommand| {

@@ -256,8 +256,7 @@ pub fn run_at(args: &LowArgs) -> Result<u8, String> {
         } else {
             Vec::new()
         };
-        // The minimal unambiguous form: unqualified while the identity
-        // resolves uniquely, path-qualified when it does not.
+        // [[rr:doc/ad/0004-output-contract.md#Decision outcome]]
         let forms: Vec<(String, &AnchorHit)> = emitted
             .iter()
             .map(|h| {
