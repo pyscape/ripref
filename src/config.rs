@@ -3,7 +3,7 @@ The layered profile: compiled-in defaults from rr.toml, merged under a
 project's `.rr.toml` (`[[rr:AD-1]]` puts kinds and scope in configuration).
 
 This is a deliberate subset of TOML, hand-rolled per the crate's no-new-crates
-ethos: section headers, quoted strings, and string arrays (possibly
+ethos: section headers, quoted keys and strings, and string arrays (possibly
 multiline). It reads only the keys the binary consumes; unknown keys pass
 through unread, so the shipped rr.toml can document more than the code yet
 honors.
@@ -67,7 +67,7 @@ fn apply(text: &str, cfg: &mut Config) {
         let Some((key, value)) = line.split_once('=') else {
             continue;
         };
-        let key = key.trim();
+        let key = unquote(key.trim());
         // Stripped per line, before joining: once lines are joined there's
         // no line boundary left to stop a later line's content from being
         // read as part of an earlier line's "# ...".
@@ -85,9 +85,7 @@ fn apply(text: &str, cfg: &mut Config) {
                 _ => {}
             }
         } else if let Some(lang) = section.strip_prefix("scan.") {
-            // A quoted table key (`[scan."python"]`), valid TOML, still
-            // names the language "python".
-            let lang = lang.trim_matches(|c| c == '"' || c == '\'');
+            let lang = unquote(lang);
             if key == "eligible" {
                 let eligible = strings_in(&value);
                 match cfg.scan.iter_mut().find(|(l, _)| l == lang) {
@@ -97,6 +95,17 @@ fn apply(text: &str, cfg: &mut Config) {
             }
         }
     }
+}
+
+/// TOML lets a key or table name be quoted, naming the same thing as the
+/// bare form. One matching pair only, so a quote inside the name survives.
+fn unquote(s: &str) -> &str {
+    for q in ['"', '\''] {
+        if let Some(inner) = s.strip_prefix(q).and_then(|rest| rest.strip_suffix(q)) {
+            return inner;
+        }
+    }
+    s
 }
 
 /// Which string a scan is inside, if any. TOML quotes with `"` or `'`, and
@@ -323,6 +332,33 @@ mod tests {
             scan: Vec::new(),
         };
         apply("[scan.\"python\"]\neligible = [\"comments\"]\n", &mut cfg);
+        assert_eq!(
+            cfg.scan,
+            vec![("python".to_string(), vec!["comments".to_string()])]
+        );
+    }
+
+    #[test]
+    fn a_quoted_key_names_the_same_key() {
+        // Ignoring the quoted form silently left the defaults standing.
+        assert_eq!(unquote("\"rules\""), "rules");
+        assert_eq!(unquote("'rules'"), "rules");
+        assert_eq!(unquote("rules"), "rules");
+        assert_eq!(unquote("\"say \"hi\"\""), "say \"hi\"", "one pair only");
+
+        let mut cfg = Config {
+            verify_in_scope: Vec::new(),
+            verify_exclude: Vec::new(),
+            verify_rules: Vec::new(),
+            scan: Vec::new(),
+        };
+        apply(
+            "[verify]\n\"in-scope\" = [\"a/**\"]\n'rules' = [\"path-line\"]\n\n\
+             [scan.python]\n\"eligible\" = [\"comments\"]\n",
+            &mut cfg,
+        );
+        assert_eq!(cfg.verify_in_scope, ["a/**"]);
+        assert_eq!(cfg.verify_rules, ["path-line"]);
         assert_eq!(
             cfg.scan,
             vec![("python".to_string(), vec!["comments".to_string()])]
