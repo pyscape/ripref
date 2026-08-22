@@ -42,10 +42,32 @@ jobs:
             cp target/release/rr "$name/"
             tar czf "$name.tar.gz" "$name"
           fi
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: archive-${{ matrix.os }}
+          path: |
+            rr-*.tar.gz
+            rr-*.zip
+          if-no-files-found: ignore
+
+  # One release job, not one per matrix job: action-gh-release creates the
+  # draft on its first call, and a draft has no tag ref for a second
+  # concurrent call to find, so three parallel callers can duplicate or race.
+  release:
+    name: release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: archive-*
+          path: dist
+          merge-multiple: true
       - name: Attach to draft release
         uses: softprops/action-gh-release@v2
         with:
           draft: true
           files: |
-            rr-*.tar.gz
-            rr-*.zip
+            dist/rr-*.tar.gz
+            dist/rr-*.zip

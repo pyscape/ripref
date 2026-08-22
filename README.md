@@ -309,9 +309,12 @@ scope but not listed is read per raw line, same as `[scan.text]`. A
 Python/Rust project opts a language's comments in with:
 
 ```
+[verify]
+in-scope = ["**/*.md", "**/*.rs"]
+
 [scan.rust]
 eligible = ["comments"]
-# [scan.python] takes the identical two lines
+# [scan.python] takes the identical two lines, plus its own extension above
 ```
 
 Additional languages

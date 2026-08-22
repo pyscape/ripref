@@ -162,37 +162,6 @@ fn char_literal_len(s: &str) -> Option<usize> {
     }
 }
 
-/// The text after `syntax.line` on a line, or `None` if the marker never
-/// appears outside a quoted string, so a marker inside a string literal
-/// (`"http://x"`) doesn't start the comment early.
-pub fn comment_text<'a>(line: &'a str, syntax: &CommentSyntax) -> Option<&'a str> {
-    let bytes = line.as_bytes();
-    let marker = syntax.line.as_bytes();
-    let mut quote: Option<u8> = None;
-    let mut i = 0;
-    while i < bytes.len() {
-        let b = bytes[i];
-        if let Some(q) = quote {
-            if b == b'\\' {
-                i += 2;
-                continue;
-            }
-            if b == q {
-                quote = None;
-            }
-        } else if b == b'\'' && syntax.tick_is_char_literal {
-            i += char_literal_len(&line[i..]).unwrap_or(1);
-            continue;
-        } else if b == b'"' || b == b'\'' {
-            quote = Some(b);
-        } else if bytes[i..].starts_with(marker) {
-            return Some(line[i + marker.len()..].trim());
-        }
-        i += 1;
-    }
-    None
-}
-
 enum CommentStart {
     Line { len: usize },
     Block { len: usize, close: &'static str },
@@ -245,6 +214,17 @@ fn next_comment_start(line: &str, syntax: &CommentSyntax) -> Option<(usize, Comm
         i += 1;
     }
     None
+}
+
+/// Test-only: the text after a line-comment opener, via the same scan
+/// `next_comment_start` gives the shipped path. `None` for a block opener
+/// or no opener on the line.
+#[cfg(test)]
+fn line_comment_text<'a>(line: &'a str, syntax: &CommentSyntax) -> Option<&'a str> {
+    match next_comment_start(line, syntax)? {
+        (off, CommentStart::Line { len }) => Some(line[off + len..].trim()),
+        (_, CommentStart::Block { .. }) => None,
+    }
 }
 
 /// Scan one file's content. Markers and malformed openers come from every
@@ -533,34 +513,43 @@ mod tests {
     fn comment_text_is_quote_aware() {
         let py = comment_syntax("python").unwrap();
         let rust = comment_syntax("rust").unwrap();
-        assert_eq!(comment_text("# x", py), Some("x"));
-        assert_eq!(comment_text(r#"s = "a # b" # c"#, py), Some("c"));
-        assert_eq!(comment_text(r#"let u = "http://x"; // y"#, rust), Some("y"));
-        assert_eq!(comment_text("let x = 1;", rust), None);
+        assert_eq!(line_comment_text("# x", py), Some("x"));
+        assert_eq!(line_comment_text(r#"s = "a # b" # c"#, py), Some("c"));
+        assert_eq!(
+            line_comment_text(r#"let u = "http://x"; // y"#, rust),
+            Some("y")
+        );
+        assert_eq!(line_comment_text("let x = 1;", rust), None);
     }
 
     #[test]
     fn lifetimes_and_loop_labels_do_not_open_a_quote() {
         let rust = comment_syntax("rust").unwrap();
         assert_eq!(
-            comment_text("fn f() -> &'static str { \"x\" } // gone-rust", rust),
+            line_comment_text("fn f() -> &'static str { \"x\" } // gone-rust", rust),
             Some("gone-rust")
         );
         assert_eq!(
-            comment_text("fn f<'a>(x: &'a str, y: &'a str) {} // gone2", rust),
+            line_comment_text("fn f<'a>(x: &'a str, y: &'a str) {} // gone2", rust),
             Some("gone2")
         );
-        assert_eq!(comment_text("'outer: loop { // gone3", rust), Some("gone3"));
-        // Char literals still validate and self-terminate as before.
-        assert_eq!(comment_text("let c = 'x'; // ok", rust), Some("ok"));
-        assert_eq!(comment_text(r"let n = '\n'; // ok2", rust), Some("ok2"));
         assert_eq!(
-            comment_text(r"let h = '\u{2764}'; // ok3", rust),
+            line_comment_text("'outer: loop { // gone3", rust),
+            Some("gone3")
+        );
+        // Char literals still validate and self-terminate as before.
+        assert_eq!(line_comment_text("let c = 'x'; // ok", rust), Some("ok"));
+        assert_eq!(
+            line_comment_text(r"let n = '\n'; // ok2", rust),
+            Some("ok2")
+        );
+        assert_eq!(
+            line_comment_text(r"let h = '\u{2764}'; // ok3", rust),
             Some("ok3")
         );
         // Fails unless the literal is consumed whole: the " would open a
         // string and eat the comment.
-        assert_eq!(comment_text("let q = '\"'; // ok4", rust), Some("ok4"));
+        assert_eq!(line_comment_text("let q = '\"'; // ok4", rust), Some("ok4"));
     }
 
     #[test]

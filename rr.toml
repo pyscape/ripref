@@ -76,7 +76,8 @@ files = ["**/*.{yaml,yml,json}"]
 # Scan regions: which byte ranges are read for markers and path mentions
 # (`[[rr:AD-2]]`, `[[rr:AD-5]]`). Conservative: only contexts rr understands
 # structurally, so code and string literals are never mis-read as prose.
-# Unknown file types are not scanned until a rule declares their regions.
+# A file type not declared here is still scanned, per raw line in full; a
+# [scan.<lang>] entry narrows that to a region (comments, prose).
 # ---------------------------------------------------------------------------
 
 [scan.markdown]

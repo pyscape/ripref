@@ -4,13 +4,13 @@ version = "0.0.1"
 edition = "2021"
 # MSRV policy: track a stable release roughly 4-7 months old rather than the
 # bare floor a feature needs, giving distros and downstreams time to catch up
-# (the cadence ripgrep follows). 1.93.0 shipped 2026-01-22; revisit once it
+# (the cadence ripgrep follows). 1.95.0 shipped 2026-04-16; revisit once it
 # ages past ~7 months.
 # Hard floor independent of the policy: src/atomic.rs needs std::fs::rename's
 # POSIX-semantics replace on Windows (stabilized in 1.85), so the MSRV can never
 # drop below 1.85 without breaking atomic cross-platform replacement.
-rust-version = "1.93"
-description = "Cite code by stable anchors instead of fragile line numbers."
+rust-version = "1.95"
+description = "Reference code and prose by stable anchors instead of fragile line numbers."
 license = "MIT OR Unlicense"
 repository = "https://github.com/pyscape/ripref"
 readme = "README.md"
@@ -66,11 +66,11 @@ ignore = "0.4"      # gitignore-aware parallel tree walk
 memmap2 = "0.9"    # the reader memory-maps the index, never deserializes it
 
 # Tree-sitter runtime + grammars. First-class languages come from their own
-# grammar crates (below) and run natively — no vendored C, no WASM toolchain.
+# grammar crates (below) and run natively: no vendored C, no WASM toolchain.
 # The WASM benchmark (benches/grammar_loader.rs --features wasm) uses a prebuilt
 # .wasm of the same markdown grammar, under benches/wasm/.
 tree-sitter = "0.26"
-tree-sitter-language = "0.1"     # LanguageFn — the typed grammar function pointer
+tree-sitter-language = "0.1"     # LanguageFn (the typed grammar function pointer)
 streaming-iterator = "0.1"       # required by tree-sitter 0.26 query iteration API
 tree-sitter-rust = "0.24.2"      # first-class language grammar
 tree-sitter-md = "0.5.3"         # first-class language grammar (markdown)
