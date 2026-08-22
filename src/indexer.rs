@@ -155,10 +155,8 @@ fn to_unix(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
-/// The HEAD tree SHA when the working tree is clean, else empty. `index`
-/// stamps it for provenance; the read-side freshness gate reuses it as a
-/// short-circuit (a clean tree whose HEAD SHA still matches the stamp is
-/// provably what we indexed, so no stat-walk is needed).
+/// The HEAD tree SHA when the working tree is clean, else empty; `index`
+/// stamps it for provenance (`[[rr:README.md#Freshness]]`).
 pub(crate) fn git_tree(root: &Path) -> String {
     let clean = Command::new("git")
         .arg("-C")
@@ -182,11 +180,7 @@ pub(crate) fn git_tree(root: &Path) -> String {
 }
 
 /// The newest mtime (Unix seconds) among `paths`, resolved relative to
-/// `root`. This is the entire freshness computation: one `stat` per in-scope
-/// file, no git, no hashing.
-///
-/// At real scale the stat-walk dominates query latency, so it fans the
-/// independent stats across the available cores. The reduction is an
+/// `root` (`[[rr:README.md#Freshness]]`). The reduction is an
 /// order-independent `max` with no shared mutable state, so the parallel
 /// result is identical to the serial one — see `newest_serial`, which it
 /// delegates to.

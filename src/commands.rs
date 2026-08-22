@@ -148,12 +148,9 @@ fn load_index(index_path: &Path, root: &Path, skip_freshness: bool) -> Result<In
     Ok(IndexState::Fresh(bytes))
 }
 
-/// Whether the index may answer this query. Cheap-first: (1)
-/// `--no-freshness` trusts unconditionally; (2) a clean tree whose HEAD SHA
-/// matches the stamp is provably what we indexed (no stat-walk needed); (3)
-/// else fall back to the parallel mtime walk. The git probe spawns one
-/// `git status`, so it runs only after the free checks and only when a
-/// clean-tree stamp exists to match.
+/// Whether the index may answer this query (`[[rr:README.md#Freshness]]`).
+/// The git probe spawns one `git status`, so it runs only after the free
+/// checks and only when a clean-tree stamp exists to match.
 fn fresh(reader: &Reader, root: &Path, skip_freshness: bool) -> bool {
     if skip_freshness {
         return true;
@@ -302,10 +299,9 @@ fn at_text(forms: &[(String, &AnchorHit)]) -> String {
         .join("\n")
 }
 
-/// JSON `data` for `rr at`: `anchors`, always a list, each entry the bare
-/// `anchor` (minimal unambiguous form), the composed `marker`, and the
-/// definition's `location`. Returned (not printed) so the exact document can
-/// be asserted in tests.
+/// JSON `data` for `rr at`
+/// (`[[rr:doc/ad/0004-output-contract.md#Decision outcome]]`). Returned (not
+/// printed) so the exact document can be asserted in tests.
 fn at_json(forms: &[(String, &AnchorHit)]) -> String {
     let mut out = String::from(r#"{"anchors":["#);
     for (i, (form, hit)) in forms.iter().enumerate() {

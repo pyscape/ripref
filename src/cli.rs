@@ -146,7 +146,6 @@ pub enum ParseOutcome {
     Special(Special),
 }
 
-/// A value parsed from the command line for a flag: a switch, or a value.
 #[derive(Debug)]
 pub enum FlagValue {
     Switch(bool),
@@ -396,7 +395,6 @@ impl Flag for MarkersFlag {
     }
 }
 
-/// The global flag registry: every optional flag, as a trait object.
 static FLAGS: &[&dyn Flag] = &[
     &IndexFlag,
     &FormatFlag,
@@ -528,8 +526,9 @@ fn validate(args: &LowArgs) -> Result<(), String> {
         },
         Subcommand::At => match args.positional.len() {
             0 => Err("at requires a <file>:<line> argument".to_string()),
-            // Resolve the position now so a malformed `file:line` is a usage
-            // error (exit 2) caught before any command touches the index.
+            // Resolved now, before any command touches the index, so a
+            // malformed `file:line` is
+            // [[rr:doc/ad/0004-output-contract.md#Decision outcome]].
             1 => parse_position(&args.positional[0].to_string_lossy()).map(|_| ()),
             _ => Err("at takes exactly one <file>:<line>".to_string()),
         },
@@ -576,8 +575,7 @@ pub fn index_path(args: &LowArgs) -> OsString {
     OsString::from(".ref-cache/index")
 }
 
-/// Generate `--help` text from the flag registry, proving the
-/// docs-from-flags design.
+/// Generate `--help` text from the flag registry (`[[rr:Documentation]]`).
 pub fn help_text() -> String {
     let mut out = String::new();
     out.push_str("rr - reference code and prose by stable anchors.\n\n");

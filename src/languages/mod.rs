@@ -39,9 +39,9 @@ pub enum Mode {
     /// Code definitions: each match is one anchor whose span is the `@span`
     /// node (the whole item), or the `@anchor` node when no `@span` exists.
     Symbols,
-    /// Titled regions: each `@anchor` capture is a title; spans run from the
-    /// title line to the next title of the same or higher rank, and the
-    /// record identity rule applies.
+    /// Titled regions: each `@anchor` capture is a title; the span and
+    /// record identity rules are
+    /// `[[rr:doc/ad/0001-domain-model.md#Decision outcome]]`.
     Sections,
 }
 
@@ -225,10 +225,9 @@ fn sections(
         .collect()
 }
 
-/// The record identity rule: a title opening with an ID of uppercase ASCII
-/// letters (digits allowed after the first), one hyphen, and digits,
-/// immediately followed by the title's first colon, defines the ID. Any
-/// other title is a heading whose identity is its full text.
+/// `[[rr:doc/ad/0001-domain-model.md#Decision outcome]]`, except that the
+/// ID's first segment also accepts digits after its first letter, so `AD2-9`
+/// and `COVID-19` both parse. The record says letters.
 pub fn record_id(title: &str) -> Option<&str> {
     let (head, _) = title.split_once(':')?;
     let (alpha, digits) = head.split_once('-')?;

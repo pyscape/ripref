@@ -18,7 +18,7 @@ backslash-parity boundary is cleaner hand-rolled and matches the crate's
 no-`regex` ethos.
 */
 
-/// The five-byte opener that makes a marker findable and unambiguous.
+/// The opener of `[[rr:doc/ad/0002-marker-syntax.md#Decision outcome]]`.
 pub const OPENER: &str = "[[rr:";
 
 /// How [`decode`] interprets one reader CLI token.
@@ -54,9 +54,8 @@ pub fn wrap(anchor: &str) -> String {
 }
 
 /// Escape every literal `\`, `[`, and `]` so the body has exactly one
-/// unescaped `]]` (its terminator). Uniform per-byte escaping, not just
-/// escaping a `]]` run, is what lets an anchor ending in `]` (the key kind)
-/// round-trip instead of silently truncating.
+/// unescaped `]]` (its terminator). Why per byte rather than per `]]` run:
+/// `[[rr:doc/ad/0002-marker-syntax.md#Decision outcome]]`.
 fn escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + OPENER.len() + 2);
     for c in s.chars() {

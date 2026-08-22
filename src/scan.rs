@@ -34,7 +34,8 @@ pub enum What {
 /// The host structure a file exposes to the scan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Host {
-    /// Markdown regions: prose and qualifying inline spans; fences invisible.
+    /// Markdown regions, per
+    /// `[[rr:doc/ad/0002-marker-syntax.md#Decision outcome]]`.
     Markdown,
     /// A `[scan.<lang>]` comment host: the text after `syntax.line` per raw
     /// line is read as prose; everything else on the line is invisible.
@@ -320,8 +321,8 @@ pub fn scan(content: &str, host: Host) -> Vec<Found> {
     out
 }
 
-/// Scan one region segment. A code span is read only when its content begins
-/// with the marker opener, and never for mentions.
+/// Scan one region segment. The code-span rule is
+/// `[[rr:doc/ad/0005-path-mentions.md#Decision outcome]]`.
 fn scan_segment(text: &str, is_span: bool, lineno: u64, out: &mut Vec<Found>) {
     if is_span {
         if text.starts_with(marker::OPENER) {

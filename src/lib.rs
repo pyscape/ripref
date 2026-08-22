@@ -38,8 +38,6 @@ pub mod exit {
     pub const STALE: u8 = 3;
 }
 
-/// Parse argv, dispatch to the chosen command, and return the process exit
-/// code.
 pub fn run() -> u8 {
     let argv: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
     let args = match cli::parse(&argv) {

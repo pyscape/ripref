@@ -105,10 +105,10 @@ fn measure(f: impl FnOnce()) -> (usize, usize) {
 }
 
 /// Pins that `forward_lookup` and `covering` allocate, and allocate MORE as the
-/// index grows -- the O(n)-per-call behavior that contradicts the README's "no
-/// allocation". Asserts only the robust ">0" and "scales-with-N" shape; exact
-/// byte counts vary by allocator and platform, so they live in comments, not
-/// assertions.
+/// index grows -- the O(n)-per-call behavior
+/// `[[rr:Findings that hold on both platforms]]` records. Asserts only the
+/// robust ">0" and "scales-with-N" shape; exact byte counts vary by allocator
+/// and platform, so they live in comments, not assertions.
 ///
 /// Measured on this machine (System allocator, 64-bit; bytes / `alloc` calls):
 ///
@@ -188,12 +188,12 @@ fn read_path_allocates_and_scales_with_index_size() {
         black_box(large_reader.covering(black_box(&large_cover_file), black_box(cover_line)));
     });
 
-    // forward_lookup: NOT allocation-free (direct contradiction of the README),
-    // and it allocates strictly more as the index grows -- O(n) per call, not
-    // the O(1)/O(log n) a true in-place bisect would cost.
+    // forward_lookup: not allocation-free, and it allocates strictly more as
+    // the index grows -- O(n) per call, not the O(1)/O(log n) a true in-place
+    // bisect would cost.
     assert!(
         fwd_small_b > 0,
-        "forward_lookup must allocate at N={SMALL} (README claims it must not); got {fwd_small_b} B"
+        "forward_lookup must allocate at N={SMALL}; got {fwd_small_b} B"
     );
     assert!(
         fwd_large_b > fwd_small_b,

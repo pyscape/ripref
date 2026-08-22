@@ -1,8 +1,8 @@
 //! End-to-end tests of the five-verb contract: `rr index` builds the one
 //! index, `rr read` and `rr at` invert each other over it, `rr search` lists
 //! markers with no index at all, and `rr verify` judges the references scoped
-//! text writes. Exit codes follow the one model of the output contract: 0 the
-//! answer, 1 the adverse answer, 2 usage, 3 a stale index.
+//! text writes. Exit codes follow the one model of the output contract
+//! (`[[rr:doc/ad/0004-output-contract.md#Decision outcome]]`).
 //!
 //! Drives the real `rr` binary in a throwaway `Dir` so the whole pipeline
 //! (walk -> extract -> serialize -> mmap -> resolve -> judge) is exercised
@@ -18,8 +18,8 @@ use common::{code, Dir, TestCommand};
 // --- index + read: the forward path ------------------------------------------
 
 // Pins the index summary format (anchors, mentions, files) and the read
-// output (`file:start-end`, one definition per line). The heading anchor
-// spans its whole section, not just the title line.
+// output (`file:start-end`, one definition per line). The heading's span is
+// the rule of [[rr:doc/ad/0001-domain-model.md#Decision outcome]].
 rrtest!(
     index_then_read_roundtrip,
     |mut dir: Dir, mut cmd: TestCommand| {
@@ -65,7 +65,8 @@ rrtest!(
         assert!(stdout.contains("a.md:1-3"), "{stdout}");
         assert!(stdout.contains("b.md:1-3"), "{stdout}");
 
-        // The path qualifier is the writer's fix; both spellings resolve.
+        // [[rr:doc/ad/0001-domain-model.md#Decision outcome]]: both spellings
+        // resolve.
         let one = cmd.args(["read", "a.md#Dup"]).stdout();
         assert_eq!(one.trim(), "a.md:1-3");
         let marker = cmd.args(["read", "[[rr:b.md#Dup]]"]).stdout();
@@ -73,7 +74,7 @@ rrtest!(
     }
 );
 
-// A record title defines the ID as the identity; the record spans the file.
+// The record kind of [[rr:doc/ad/0001-domain-model.md#Decision outcome]].
 rrtest!(
     record_title_defines_the_id,
     |mut dir: Dir, mut cmd: TestCommand| {
@@ -151,8 +152,7 @@ rrtest!(
 
 // --- at: the inverse path -----------------------------------------------------
 
-// `at` prints the marker (the form a person pastes), innermost by span;
-// `--all` reports the whole nest, outermost first.
+// [[rr:doc/ad/0004-output-contract.md#Decision outcome]]
 rrtest!(
     at_prints_marker_innermost_and_all_nest,
     |mut dir: Dir, mut cmd: TestCommand| {
@@ -195,7 +195,7 @@ rrtest!(
     at_line_with_no_anchor_exits_one,
     |mut dir: Dir, mut cmd: TestCommand| {
         // A text file defines no anchors at all, so every line is uncovered
-        // and `at` reports the adverse answer rather than minting a path.
+        // [[rr:doc/ad/0004-output-contract.md#Decision outcome]]
         dir.file("solo.txt", "the only line\n");
         cmd.arg("index").assert_exit_code(0);
         let out = cmd.args(["at", "solo.txt:1"]).run();
@@ -229,8 +229,7 @@ rrtest!(
     }
 );
 
-// The at envelope: data.anchors is always a list, each entry the bare anchor,
-// the composed marker, and the definition's location.
+// [[rr:doc/ad/0004-output-contract.md#Decision outcome]]
 rrtest!(at_json_envelope, |mut dir: Dir, mut cmd: TestCommand| {
     dir.file("guide.md", "# Guide\n\nbody\n");
     cmd.arg("index").assert_exit_code(0);
@@ -271,8 +270,9 @@ rrtest!(
     }
 );
 
-// A token that opens like a marker but is not one is a usage error (exit 2),
-// never a silent fall-through to bare parsing. Nothing follows a terminator.
+// A token that opens like a marker but is not one
+// ([[rr:doc/ad/0002-marker-syntax.md#Decision outcome]]) is a usage error,
+// never a silent fall-through to bare parsing.
 rrtest!(
     read_malformed_marker_exits_two,
     |_dir: Dir, mut cmd: TestCommand| {
@@ -284,8 +284,7 @@ rrtest!(
 
 // --- search: lexical, index-free ----------------------------------------------
 
-// `search` lists the markers scoped text writes and needs no index at all;
-// the anchor argument filters, matching qualified markers by identity.
+// [[rr:doc/ad/0003-cli-verbs.md#Decision outcome]]
 rrtest!(
     search_lists_and_filters_without_an_index,
     |mut dir: Dir, mut cmd: TestCommand| {
@@ -356,8 +355,9 @@ rrtest!(
 
 // --- verify: the gate ----------------------------------------------------------
 
-// The six finding kinds, one fixture: the corpus under tests/data carries one
-// violation per line plus a clean section that must produce nothing.
+// [[rr:doc/ad/0003-cli-verbs.md#Decision outcome]], one fixture: the corpus
+// under tests/data carries one violation per line plus a clean section that
+// must produce nothing.
 rrtest!(
     verify_reports_the_six_finding_kinds,
     |mut dir: Dir, mut cmd: TestCommand| {
@@ -478,15 +478,14 @@ rrtest!(
             "{out:?}"
         );
 
-        // A name matching none of the six is a typo, not a silent no-op.
+        // [[rr:Configuration]]
         dir.write(".rr.toml", &rules("\"dangling-markers\""));
         cmd.arg("verify").assert_exit_code(2);
     }
 );
 
-// A [scan.python] table with eligible = ["comments"] makes the comment (not
-// the whole file) the region: a marker inside a string literal is invisible,
-// while one in a trailing comment is read and judged like any other.
+// [[rr:Configuration]], with one marker in a string literal and one in a
+// trailing comment.
 rrtest!(
     comments_are_the_region,
     |mut dir: Dir, mut cmd: TestCommand| {
@@ -682,8 +681,7 @@ fn index_body(dir: &Dir) -> Vec<u8> {
 }
 
 // The on-disk format: `refidx v2`, three sections, and no content-addressing
-// fields — the index is a pure locations file and the only artifact rr
-// writes.
+// fields ([[rr:doc/ad/0003-cli-verbs.md#Decision outcome]]).
 rrtest!(index_is_refidx_v2, |mut dir: Dir, mut cmd: TestCommand| {
     dir.file("src/main.rs", "fn main() {}\n")
         .file("README.md", "# title\n\nsee src/main.rs here\n");
@@ -786,8 +784,8 @@ rrtest!(
     }
 );
 
-// The git-tree short-circuit serves a clean checkout whose HEAD matches the
-// stamp without stat-ing; a dirty tree falls through to a real stale verdict.
+// [[rr:README.md#Freshness]]: a dirty tree falls through to a real stale
+// verdict.
 rrtest!(
     git_clean_tree_short_circuits_freshness,
     |mut dir: Dir, mut cmd: TestCommand| {
