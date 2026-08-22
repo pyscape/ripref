@@ -56,9 +56,12 @@ pub struct Language {
     pub anchors_query: &'static str,
     /// How captures become anchors.
     pub mode: Mode,
+    /// The rank of a title line, deciding which titles nest inside which.
     /// `[[rr:AD-1]]`
     pub level: fn(&str) -> u32,
     pub titles: Option<TitleFinder>,
+    /// Whether a title here may open a record ID, making the ID the
+    /// identity.
     /// `[[rr:AD-1]]`
     pub records: bool,
 }

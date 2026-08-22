@@ -1,6 +1,6 @@
 /*!
 The writer side of `rr index`: walk the working tree and produce
-[`IndexData`] — every anchor's definitions, and every path mention in scoped
+[`IndexData`]: every anchor's definitions, and every path mention in scoped
 text `[[rr:AD-5]]`.
 
 The walk reuses ripgrep's `ignore` crate, so `.gitignore` and hidden-file

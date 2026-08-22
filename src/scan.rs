@@ -244,6 +244,8 @@ fn line_comment_text<'a>(line: &'a str, syntax: &CommentSyntax) -> Option<&'a st
     }
 }
 
+/// Find every marker, malformed opener, and path mention one document
+/// writes, in line order.
 /// `[[rr:AD-2#Decision outcome]]`
 /// `[[rr:AD-5#Decision outcome]]`
 pub fn scan(content: &str, host: Host) -> Vec<Found> {

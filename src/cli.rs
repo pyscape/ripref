@@ -105,14 +105,19 @@ pub struct LowArgs {
     pub index: Option<OsString>,
     pub format: OutputFormat,
     pub color: Color,
+    /// Suppress the summary line; the answer still prints.
     /// `[[rr:QuietFlag]]`
     pub quiet: bool,
+    /// Skip the staleness check and answer from the index as-is.
     /// `[[rr:NoFreshnessFlag]]`
     pub no_freshness: bool,
+    /// For `at`, report the whole covering nest, outermost first.
     /// `[[rr:AllFlag]]`
     pub all: bool,
+    /// For `search`, list path mentions instead of markers.
     /// `[[rr:MentionsFlag]]`
     pub mentions: bool,
+    /// For `search`, list every marker, taking no `<anchor>`.
     /// `[[rr:MarkersFlag]]`
     pub markers: bool,
     /// Positional arguments (e.g. the anchor for `read`).
@@ -551,6 +556,8 @@ pub fn parse_position(s: &str) -> Result<(String, u64), String> {
     Ok((file.replace('\\', "/"), line))
 }
 
+/// The index file to read or write: `--index`, else `REF_INDEX`, else
+/// `.ref-cache/index`.
 /// `[[rr:Shared options]]`
 pub fn index_path(args: &LowArgs) -> OsString {
     if let Some(p) = &args.index {

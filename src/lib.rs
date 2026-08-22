@@ -1,5 +1,5 @@
 /*!
-ripref (`rr`) — reference code and prose by stable *anchors* instead of
+ripref (`rr`): reference code and prose by stable *anchors* instead of
 fragile line numbers.
 
 One writer and many readers over one index. `index` maps each anchor to its
@@ -11,7 +11,7 @@ domain model `[[rr:AD-1]]`, the marker grammar `[[rr:AD-2]]`, the verbs
 `[[rr:AD-5]]`.
 */
 
-// Lint posture. `rr` mmaps its index, so `unsafe` is expected — but every use
+// Lint posture. `rr` mmaps its index, so `unsafe` is expected, but every use
 // must be conspicuous: a `// SAFETY:` note plus a local `#[allow(unsafe_code)]`.
 // `cargo lint` (-D warnings) is the enforcing gate.
 #![warn(unsafe_code)]

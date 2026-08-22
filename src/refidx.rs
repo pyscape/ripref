@@ -17,6 +17,7 @@ use std::collections::HashMap;
 
 pub const MAGIC: &str = "refidx v2";
 
+/// One definition of one anchor, as the `forward` section records it.
 /// `[[rr:AD-1#Decision outcome]]`
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ForwardEntry {
@@ -25,6 +26,7 @@ pub struct ForwardEntry {
     pub location: String,
 }
 
+/// One path mention: the token prose wrote, and where it wrote it.
 /// `[[rr:AD-5#Decision outcome]]`
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MentionEntry {
@@ -33,10 +35,8 @@ pub struct MentionEntry {
     pub location: String,
 }
 
-/// One anchor whose definition span covers a queried position, returned by
-/// [`Reader::covering`]. Unlike [`ForwardEntry`] — the on-disk record whose
-/// `location` is unparsed text — the span is split into line numbers so the
-/// caller can sort by it and emit structured (JSON) output.
+/// The span is split into line numbers, where [`ForwardEntry`] keeps
+/// `location` unparsed, so the caller can sort by it and emit JSON.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AnchorHit {
     pub anchor: String,
@@ -49,7 +49,7 @@ pub struct AnchorHit {
 /// (de)serialization.
 #[derive(Clone, Debug, Default)]
 pub struct IndexData {
-    /// Build time, Unix seconds — the freshness baseline.
+    /// Build time, Unix seconds (`[[rr:ripref (rr)#Freshness]]`).
     pub mtime: u64,
     /// Git tree SHA, or empty when the tree is dirty / not a git repo.
     pub tree: String,
@@ -59,7 +59,8 @@ pub struct IndexData {
     pub forward: Vec<ForwardEntry>,
     /// The mention table `[[rr:AD-5]]`. Sorted like `forward`.
     pub mentions: Vec<MentionEntry>,
-    /// `[[rr:README.md#Freshness]]`
+    /// Every in-scope file, the set whose mtimes decide staleness.
+    /// `[[rr:ripref (rr)#Freshness]]`
     pub paths: Vec<String>,
 }
 
@@ -115,7 +116,7 @@ pub fn serialize(data: &IndexData) -> Vec<u8> {
     let (l_fwd, l_men, l_paths) = (forward_body.len(), mentions_body.len(), paths_body.len());
 
     // The section offsets are absolute from file start, so they depend on the
-    // header's own length — which depends on the digit-count of those
+    // header's own length, which depends on the digit-count of those
     // offsets. Resolve the circularity with a tiny fixpoint (converges in 1-2
     // steps).
     let header = |h: usize| -> String {
@@ -337,7 +338,9 @@ impl<'a> Reader<'a> {
             .collect()
     }
 
-    /// `[[rr:README.md#Freshness]]`
+    /// Every in-scope file, borrowed from the `paths` section in on-disk
+    /// order.
+    /// `[[rr:ripref (rr)#Freshness]]`
     pub fn paths(&self) -> Vec<&'a str> {
         split_records(self.section("paths"))
             .into_iter()

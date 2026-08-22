@@ -99,11 +99,10 @@ fn measure(f: impl FnOnce()) -> (usize, usize) {
     (bytes() - b0, count() - c0)
 }
 
-/// Pins that `forward_lookup` and `covering` allocate, and allocate MORE as the
-/// index grows -- the O(n)-per-call behavior
-/// `[[rr:Findings that hold on both platforms]]` records. Asserts only the
-/// robust ">0" and "scales-with-N" shape; exact byte counts vary by allocator
-/// and platform, so they live in comments, not assertions.
+/// `[[rr:Findings that hold on both platforms]]`
+///
+/// Asserts only the robust ">0" and "scales-with-N" shape; exact byte counts
+/// vary by allocator and platform, so they live in comments, not assertions.
 ///
 /// Measured on this machine (System allocator, 64-bit; bytes / `alloc` calls):
 ///

@@ -24,6 +24,8 @@ use crate::marker;
 use crate::refidx::{self, AnchorHit, Reader};
 use crate::scan::{self, What};
 
+/// Build or refresh the index from the working tree, the only verb that
+/// writes.
 /// `[[rr:help_text]]`
 pub fn run_index(args: &LowArgs) -> Result<u8, String> {
     let root = Path::new(".");
@@ -72,7 +74,7 @@ pub fn run_index(args: &LowArgs) -> Result<u8, String> {
 }
 
 /// The `Reader` borrows the mmap, so it cannot be returned past its backing
-/// buffer — a closure keeps both alive for the call.
+/// buffer; a closure keeps both alive for the call.
 fn with_fresh_reader<F>(
     index_path: &Path,
     root: &Path,
@@ -84,11 +86,11 @@ where
 {
     match load_index(index_path, root, skip_freshness)? {
         IndexState::Missing => {
-            eprintln!("no index at {} — run `rr index`", index_path.display());
+            eprintln!("no index at {}: run `rr index`", index_path.display());
             Ok(exit::STALE)
         }
         IndexState::Stale => {
-            eprintln!("index is stale — rebuild with `rr index`");
+            eprintln!("index is stale: rebuild with `rr index`");
             Ok(exit::STALE)
         }
         IndexState::Fresh(bytes) => {

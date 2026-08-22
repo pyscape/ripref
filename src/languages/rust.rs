@@ -1,7 +1,4 @@
-//! Rust: item definitions — functions and methods, structs, enums, unions,
-//! traits, type aliases, consts, statics, modules, and macros — as anchors,
-//! via the `tree-sitter-rust` grammar. Each `@span` capture is the whole
-//! item, so a symbol's definition spans its body (`[[rr:AD-1]]`).
+//! `[[rr:AD-1#Decision outcome]]`
 
 use crate::languages::{Language, Mode};
 
@@ -16,8 +13,8 @@ pub const LANGUAGE: Language = Language {
     records: false,
 };
 
-// `function_item` also matches methods — they are `function_item` nodes
-// nested in an `impl_item` — so methods become anchors without a separate
+// `function_item` also matches methods: they are `function_item` nodes
+// nested in an `impl_item`, so methods become anchors without a separate
 // pattern.
 const ANCHORS: &str = r"
 (function_item name: (identifier) @anchor) @span
