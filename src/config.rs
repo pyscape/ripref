@@ -23,14 +23,12 @@ pub struct Config {
     pub verify_exclude: Vec<String>,
     /// `[verify] rules`
     pub verify_rules: Vec<String>,
-    /// The `eligible` hosts of each `[scan.<lang>]` section, keyed by the
-    /// language name.
+    /// `[scan.<lang>] eligible`, keyed by the language name.
     /// `[[rr:Configuration]]`
     pub scan: Vec<(String, Vec<String>)>,
 }
 
-/// Read the compiled-in defaults, then merge a project's `.rr.toml` over
-/// them.
+/// The compiled-in defaults, with a project's `.rr.toml` merged over them.
 /// `[[rr:AD-1#Decision outcome]]`
 pub fn load(root: &Path) -> Result<Config, String> {
     let mut cfg = Config {

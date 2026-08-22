@@ -257,6 +257,22 @@ rrtest!(
 
 // [[rr:AD-6#Decision outcome]]
 rrtest!(
+    a_definition_does_not_lie_inside_itself,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file("a.md", "# Alpha\n\n## Dup\n\nx\n")
+            .file("b.md", "# Beta\n\n## Dup\n\ny\n");
+        cmd.arg("index").assert_exit_code(0);
+
+        let out = cmd.args(["read", "Alpha#Alpha"]).run();
+        assert_eq!(code(&out), 1, "{out:?}");
+        assert!(String::from_utf8_lossy(&out.stderr).contains("no such anchor"));
+
+        assert_eq!(cmd.args(["read", "Alpha#Dup"]).stdout().trim(), "a.md:3-5");
+    }
+);
+
+// [[rr:AD-6#Decision outcome]]
+rrtest!(
     at_rejects_a_qualifier_that_resolves_elsewhere,
     |mut dir: Dir, mut cmd: TestCommand| {
         // The heading names another file, so the qualified form would resolve

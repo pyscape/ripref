@@ -60,8 +60,7 @@ pub struct Language {
     /// `[[rr:AD-1]]`
     pub level: fn(&str) -> u32,
     pub titles: Option<TitleFinder>,
-    /// Whether a title here may open a record ID, making the ID the
-    /// identity.
+    /// Whether a title may open a record ID, which then is the identity.
     /// `[[rr:AD-1]]`
     pub records: bool,
 }

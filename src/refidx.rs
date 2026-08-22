@@ -338,8 +338,7 @@ impl<'a> Reader<'a> {
             .collect()
     }
 
-    /// Every in-scope file, borrowed from the `paths` section in on-disk
-    /// order.
+    /// Every in-scope file, in on-disk order.
     /// `[[rr:ripref (rr)#Freshness]]`
     pub fn paths(&self) -> Vec<&'a str> {
         split_records(self.section("paths"))

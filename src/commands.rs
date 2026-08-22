@@ -24,8 +24,7 @@ use crate::marker;
 use crate::refidx::{self, AnchorHit, Reader};
 use crate::scan::{self, What};
 
-/// Build or refresh the index from the working tree, the only verb that
-/// writes.
+/// Build or refresh the index from the working tree.
 /// `[[rr:help_text]]`
 pub fn run_index(args: &LowArgs) -> Result<u8, String> {
     let root = Path::new(".");
@@ -184,7 +183,7 @@ fn resolve(reader: &Reader, anchor: &str) -> Vec<Location> {
     };
     definitions
         .into_iter()
-        .filter(|(f, s, e)| f == file && start <= s && e <= end)
+        .filter(|(f, s, e)| f == file && start <= s && e <= end && (s, e) != (start, end))
         .collect()
 }
 
