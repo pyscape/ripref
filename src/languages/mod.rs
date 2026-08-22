@@ -38,6 +38,8 @@ const ANCHOR_CAPTURE: &str = "anchor";
 /// The optional capture naming the node whose extent is the definition span.
 const SPAN_CAPTURE: &str = "span";
 
+type TitleFinder = fn(&str) -> Vec<(String, u64)>;
+
 /// How a language's captures become anchors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -63,6 +65,9 @@ pub struct Language {
     pub anchors_query: &'static str,
     /// How captures become anchors.
     pub mode: Mode,
+    /// [[rr:AD-1]]
+    pub level: fn(&str) -> u32,
+    pub titles: Option<TitleFinder>,
 }
 
 /// Every first-class language, consulted by file extension during indexing.
@@ -96,7 +101,17 @@ impl Language {
     /// in-memory `content` — separated so it is unit-testable without
     /// touching disk.
     pub fn extract_from_str(&self, rel_path: &str, content: &str) -> Vec<ForwardEntry> {
-        let captures = self.run_query(content);
+        let captures = match self.titles {
+            Some(titles) => titles(content)
+                .into_iter()
+                .map(|(text, row)| Capture {
+                    text,
+                    start_row: row,
+                    end_row: row,
+                })
+                .collect(),
+            None => self.run_query(content),
+        };
         match self.mode {
             Mode::Symbols => captures
                 .into_iter()
@@ -105,7 +120,7 @@ impl Language {
                     location: format!("{rel_path}:{}-{}", c.start_row + 1, c.end_row + 1),
                 })
                 .collect(),
-            Mode::Sections => sections(rel_path, content, captures),
+            Mode::Sections => sections(rel_path, content, captures, self.level),
         }
     }
 
@@ -172,17 +187,19 @@ impl Language {
     }
 }
 
-/// Turn title captures into section-spanned entries: each title's region runs
-/// to the line before the next title of the same or higher rank (a smaller
-/// level number outranks), or the end of the file. Applies the record
-/// identity rule of `[[rr:AD-1]]` per title.
-fn sections(rel_path: &str, content: &str, mut titles: Vec<Capture>) -> Vec<ForwardEntry> {
+/// [[rr:AD-1]]
+fn sections(
+    rel_path: &str,
+    content: &str,
+    mut titles: Vec<Capture>,
+    level: fn(&str) -> u32,
+) -> Vec<ForwardEntry> {
     let lines: Vec<&str> = content.lines().collect();
     let total = lines.len() as u64;
     titles.sort_by_key(|c| c.start_row);
     let levels: Vec<u32> = titles
         .iter()
-        .map(|t| heading_level(lines.get(t.start_row as usize).copied().unwrap_or("")))
+        .map(|t| level(lines.get(t.start_row as usize).copied().unwrap_or("")))
         .collect();
     titles
         .iter()
@@ -201,18 +218,6 @@ fn sections(rel_path: &str, content: &str, mut titles: Vec<Capture>) -> Vec<Forw
             }
         })
         .collect()
-}
-
-/// The ATX heading level of a line (1-6), or `u32::MAX` for a line that is
-/// not a heading (a defensive default that never outranks a real title).
-fn heading_level(line: &str) -> u32 {
-    let trimmed = line.trim_start();
-    let hashes = trimmed.bytes().take_while(|&b| b == b'#').count();
-    if (1..=6).contains(&hashes) {
-        hashes as u32
-    } else {
-        u32::MAX
-    }
 }
 
 /// The record identity rule: a title opening with an ID of uppercase ASCII

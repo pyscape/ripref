@@ -11,6 +11,8 @@ pub const LANGUAGE: Language = Language {
     grammar: tree_sitter_rust::LANGUAGE,
     anchors_query: ANCHORS,
     mode: Mode::Symbols,
+    level: |_| u32::MAX,
+    titles: None,
 };
 
 // `function_item` also matches methods — they are `function_item` nodes

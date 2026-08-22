@@ -13,4 +13,16 @@ pub const LANGUAGE: Language = Language {
     // node is `inline` (the heading text). Capture that node.
     anchors_query: "(atx_heading heading_content: (inline) @anchor)",
     mode: Mode::Sections,
+    level: heading_level,
+    titles: None,
 };
+
+fn heading_level(line: &str) -> u32 {
+    let trimmed = line.trim_start();
+    let hashes = trimmed.bytes().take_while(|&b| b == b'#').count();
+    if (1..=6).contains(&hashes) {
+        hashes as u32
+    } else {
+        u32::MAX
+    }
+}
