@@ -8,7 +8,8 @@ what defines an anchor in each file kind. Each **language** pairs a
 in its parse tree.
 
 First-class languages are ordinary Rust crate dependencies
-(`tree-sitter-rust`, `tree-sitter-md`, ...) compiled into the binary and run
+(`tree-sitter-rust`, `tree-sitter-md`, `tree-sitter-python`, ...) compiled
+into the binary and run
 natively; loading a grammar is a function-pointer wrap (nanoseconds). Adding
 one is a module plus a one-line registry entry; nothing else changes: the
 indexer, the index format, and the reader are unaware of language specifics.
@@ -133,5 +134,6 @@ definitions, a good starting point.
 | [`markdown`](markdown.rs) | `.md`, `.markdown` | ATX headings as records and headings, spanning their sections                                     |
 | [`rust`](rust.rs)         | `.rs`              | functions & methods, structs, enums, unions, traits, type aliases, consts, statics, modules, macros, spanning their definitions |
 | [`gherkin`](gherkin.rs)   | `.feature`         | `Feature`/`Rule`/`Scenario`/`Scenario Outline`/`Example` keywords as titled regions                |
+| [`python`](python.rs)     | `.py`              | functions, methods and classes, spanning their definitions (a decorated `def` spans from `def`, not its decorators) |
 
 [Tree-sitter]: https://tree-sitter.github.io/

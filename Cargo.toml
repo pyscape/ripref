@@ -76,6 +76,7 @@ tree-sitter-language = "0.1"     # LanguageFn (the typed grammar function pointe
 streaming-iterator = "0.1"       # required by tree-sitter 0.26 query iteration API
 tree-sitter-rust = "0.24.2"      # first-class language grammar
 tree-sitter-md = "0.5.3"         # first-class language grammar (markdown)
+tree-sitter-python = "0.25"      # first-class language grammar (python)
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }

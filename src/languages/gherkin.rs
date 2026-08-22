@@ -69,10 +69,7 @@ mod tests {
             .collect();
         assert_eq!(got.len(), 3, "{got:?}");
         assert!(got.contains(&("Login".to_string(), "x.feature:1-7".to_string())));
-        assert!(got.contains(&(
-            "Valid credentials".to_string(),
-            "x.feature:3-5".to_string()
-        )));
+        assert!(got.contains(&("Valid credentials".to_string(), "x.feature:3-5".to_string())));
         assert!(got.contains(&(
             "Invalid credentials".to_string(),
             "x.feature:6-7".to_string()

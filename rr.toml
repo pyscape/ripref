@@ -58,7 +58,8 @@ files = ["**/*.feature"]
 
 [anchor.symbol]
 # Code definitions from language extractors. Built-in grammars (Rust,
-# Markdown) are on by default; third-party grammars load from WebAssembly.
+# Markdown, Python) are on by default; third-party grammars load from
+# WebAssembly.
 languages = "built-in"
 
 [anchor.key]

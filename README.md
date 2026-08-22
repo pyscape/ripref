@@ -258,7 +258,8 @@ Extracting a language's symbols pairs a
 cost very differently to load:
 
 - **First-class (native).** The grammar is a Rust crate dependency
-  (`tree-sitter-rust`, `tree-sitter-md`, ...) compiled into the binary.
+  (`tree-sitter-rust`, `tree-sitter-md`, `tree-sitter-python`, ...) compiled
+  into the binary.
   Loading it is a function-pointer wrap (effectively free).
 - **Third-party (WebAssembly).** The grammar ships as a prebuilt
   `parser.wasm` loaded at runtime, so adding a language needs no rebuild of

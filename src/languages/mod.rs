@@ -23,6 +23,7 @@ use crate::refidx::ForwardEntry;
 
 pub mod gherkin;
 pub mod markdown;
+pub mod python;
 pub mod rust;
 
 /// The capture name an anchors query uses to mark a node's identity text.
@@ -63,7 +64,12 @@ pub struct Language {
 }
 
 /// Every first-class language.
-pub static LANGUAGES: &[Language] = &[markdown::LANGUAGE, rust::LANGUAGE, gherkin::LANGUAGE];
+pub static LANGUAGES: &[Language] = &[
+    markdown::LANGUAGE,
+    rust::LANGUAGE,
+    gherkin::LANGUAGE,
+    python::LANGUAGE,
+];
 
 /// The language that claims `ext` (first match wins), or `None`. `ext` is
 /// the file extension without a dot; `None` for an extensionless file.
@@ -316,6 +322,7 @@ mod tests {
     fn for_extension_maps_known_and_unknown() {
         assert_eq!(for_extension(Some("rs")).map(|l| l.name), Some("rust"));
         assert_eq!(for_extension(Some("md")).map(|l| l.name), Some("markdown"));
+        assert_eq!(for_extension(Some("py")).map(|l| l.name), Some("python"));
         assert!(for_extension(Some("xyz")).is_none());
         assert!(for_extension(None).is_none());
     }

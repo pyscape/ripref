@@ -489,6 +489,25 @@ rrtest!(
     }
 );
 
+// --- python -----------------------------------------------------------------------
+
+rrtest!(
+    python_method_ats_and_reads,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file(
+            "x.py",
+            "class Engine:\n    def move(self):\n        return 1\n",
+        );
+        cmd.arg("index").assert_exit_code(0);
+
+        let marker = cmd.args(["at", "x.py:3"]).stdout();
+        assert_eq!(marker.trim(), "[[rr:move]]");
+
+        let loc = cmd.args(["read", "move"]).stdout();
+        assert_eq!(loc.trim(), "x.py:2-3");
+    }
+);
+
 // --- the index artifact ---------------------------------------------------------
 
 /// The default index path within a test [`Dir`].
