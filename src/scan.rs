@@ -280,7 +280,15 @@ pub fn scan(content: &str, host: Host) -> Vec<Found> {
                     flush_paragraph(&mut paragraph, &mut out);
                     continue;
                 }
+                if opens_leaf_block(trimmed) {
+                    flush_paragraph(&mut paragraph, &mut out);
+                }
                 extend_paragraph(&mut paragraph, lineno, line);
+                // A heading is the whole block, so the next line is not its
+                // continuation either.
+                if is_atx_heading(trimmed) {
+                    flush_paragraph(&mut paragraph, &mut out);
+                }
             }
             // [[rr:AD-5#Decision outcome]]
             Host::Comments(syntax) => {
@@ -343,6 +351,35 @@ pub fn scan(content: &str, host: Host) -> Vec<Found> {
 struct Paragraph {
     first_line: u64,
     text: String,
+}
+
+fn is_atx_heading(trimmed: &str) -> bool {
+    let hashes = trimmed.bytes().take_while(|&b| b == b'#').count();
+    (1..=6).contains(&hashes)
+        && matches!(
+            trimmed.as_bytes().get(hashes),
+            None | Some(b' ') | Some(b'\t')
+        )
+}
+
+/// `[[rr:AD-2#Decision outcome]]`
+///
+/// Indented code is absent because it cannot interrupt a paragraph: an
+/// indented line under one is a lazy continuation, and elsewhere there is no
+/// paragraph left to end.
+fn opens_leaf_block(trimmed: &str) -> bool {
+    let bytes = trimmed.as_bytes();
+    let after = |n: usize| matches!(bytes.get(n), None | Some(b' ') | Some(b'\t'));
+    match bytes[0] {
+        b'>' => true,
+        b'#' => is_atx_heading(trimmed),
+        b'-' | b'*' | b'+' => after(1),
+        b'0'..=b'9' => {
+            let digits = bytes.iter().take_while(|b| b.is_ascii_digit()).count();
+            digits <= 9 && matches!(bytes.get(digits), Some(b'.') | Some(b')')) && after(digits + 1)
+        }
+        _ => false,
+    }
 }
 
 /// CommonMark drops a continuation line's indent, so a span split there
@@ -810,6 +847,19 @@ mod tests {
             Host::Markdown,
         );
         assert_eq!(got, vec!["1:marker:AD-1#Decision outcome"], "{got:?}");
+    }
+
+    #[test]
+    fn a_block_opener_ends_the_paragraph() {
+        for doc in [
+            "# H `open\ntext [[rr:Alpha]] here `close\n",
+            "para `open\n- item [[rr:Alpha]] here `close\n",
+            "para `open\n> quoted [[rr:Alpha]] here `close\n",
+            "para `open\n1. item [[rr:Alpha]] here `close\n",
+        ] {
+            let got = kinds(doc, Host::Markdown);
+            assert_eq!(got, vec!["2:marker:Alpha"], "{doc:?} {got:?}");
+        }
     }
 
     #[test]
