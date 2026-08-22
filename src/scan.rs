@@ -167,17 +167,28 @@ enum CommentStart {
     Block { len: usize, close: &'static str },
 }
 
+/// Covers Rust's `r"`, `r#"`, `r##"`, `br"`, ... and Python's `r"`, `br"`:
+/// a raw string has no escapes, so `\` inside one is a literal byte, not
+/// an escape.
+fn ends_in_raw_prefix(prefix: &[u8]) -> bool {
+    let mut end = prefix.len();
+    while end > 0 && prefix[end - 1] == b'#' {
+        end -= 1;
+    }
+    matches!(prefix[..end], [.., b'r' | b'R'])
+}
+
 /// The leftmost syntax.line or syntax.block opener outside a quoted
 /// string, with its byte offset.
 fn next_comment_start(line: &str, syntax: &CommentSyntax) -> Option<(usize, CommentStart)> {
     let bytes = line.as_bytes();
     let line_marker = syntax.line.as_bytes();
-    let mut quote: Option<u8> = None;
+    let mut quote: Option<(u8, bool)> = None;
     let mut i = 0;
     while i < bytes.len() {
         let b = bytes[i];
-        if let Some(q) = quote {
-            if b == b'\\' {
+        if let Some((q, has_escapes)) = quote {
+            if has_escapes && b == b'\\' {
                 i += 2;
                 continue;
             }
@@ -209,7 +220,8 @@ fn next_comment_start(line: &str, syntax: &CommentSyntax) -> Option<(usize, Comm
             i += char_literal_len(&line[i..]).unwrap_or(1);
             continue;
         } else if b == b'"' || b == b'\'' {
-            quote = Some(b);
+            let has_escapes = !(b == b'"' && ends_in_raw_prefix(&bytes[..i]));
+            quote = Some((b, has_escapes));
         }
         i += 1;
     }
@@ -631,6 +643,13 @@ mod tests {
         let rust = comment_syntax("rust").unwrap();
         let got = kinds("let r = r#\"a \" b\"#; // [[rr:f]]\n", Host::Comments(rust));
         assert_eq!(got, Vec::<String>::new(), "{got:?}");
+    }
+
+    #[test]
+    fn raw_string_trailing_backslash_is_not_an_escape() {
+        let rust = comment_syntax("rust").unwrap();
+        let got = kinds("let s = r\"C:\\\"; // [[rr:x]]\n", Host::Comments(rust));
+        assert_eq!(got, vec!["1:marker:x"], "{got:?}");
     }
 
     #[test]
