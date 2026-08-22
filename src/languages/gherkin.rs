@@ -23,17 +23,25 @@ const KEYWORDS: &[&str] = &[
     "Example:",
 ];
 
+/// Gherkin 6.0 added ``` beside `"""`; either delimits a docstring.
+const DOCSTRINGS: &[&str] = &["\"\"\"", "```"];
+
 fn titles(content: &str) -> Vec<(String, u64)> {
     let mut out = Vec::new();
-    let mut in_docstring = false;
+    let mut docstring: Option<&str> = None;
     for (row, line) in content.lines().enumerate() {
         let trimmed = line.trim_start();
-        // An opener may carry a media type (`"""json`); a closer never does.
-        if trimmed.starts_with("\"\"\"") {
-            in_docstring = !in_docstring;
+        // Only the delimiter that opened it closes it, so a ``` inside a
+        // `"""` docstring is content. An opener may carry a media type
+        // (`"""json`); a closer never does.
+        if let Some(open) = docstring {
+            if trimmed.starts_with(open) {
+                docstring = None;
+            }
             continue;
         }
-        if in_docstring {
+        if let Some(open) = DOCSTRINGS.iter().find(|d| trimmed.starts_with(**d)) {
+            docstring = Some(open);
             continue;
         }
         if let Some(text) = KEYWORDS.iter().find_map(|kw| trimmed.strip_prefix(kw)) {
@@ -85,29 +93,52 @@ mod tests {
 
     #[test]
     fn a_keyword_inside_a_docstring_is_not_a_title() {
+        for (open, close) in [("\"\"\"json", "\"\"\""), ("```json", "```")] {
+            let src = format!(
+                "Feature: Real\n  Scenario: One\n    Given a doc\n      {open}\n      \
+                 Scenario: not a title\n      {close}\n    And more\n  Scenario: Two\n    \
+                 Given x\n"
+            );
+            let got: Vec<(String, String)> = LANGUAGE
+                .extract_from_str("x.feature", &src)
+                .into_iter()
+                .map(|e| (e.anchor, e.location))
+                .collect();
+            assert_eq!(got.len(), 3, "{open}: {got:?}");
+            assert!(
+                got.contains(&("One".to_string(), "x.feature:2-7".to_string())),
+                "the docstring stays inside the scenario: {open}: {got:?}"
+            );
+            assert!(
+                got.contains(&("Two".to_string(), "x.feature:8-9".to_string())),
+                "{open}: {got:?}"
+            );
+        }
+    }
+
+    // Only the delimiter that opened it closes it, so the other one is
+    // content and the docstring runs on to its real closer.
+    #[test]
+    fn the_other_delimiter_inside_a_docstring_is_content() {
         let src = concat!(
             "Feature: Real\n",
             "  Scenario: One\n",
             "    Given a doc\n",
-            "      \"\"\"json\n",
+            "      \"\"\"\n",
+            "      ```\n",
             "      Scenario: not a title\n",
+            "      ```\n",
             "      \"\"\"\n",
             "    And more\n",
-            "  Scenario: Two\n",
-            "    Given x\n",
         );
         let got: Vec<(String, String)> = LANGUAGE
             .extract_from_str("x.feature", src)
             .into_iter()
             .map(|e| (e.anchor, e.location))
             .collect();
-        assert_eq!(got.len(), 3, "{got:?}");
+        assert_eq!(got.len(), 2, "{got:?}");
         assert!(
-            got.contains(&("One".to_string(), "x.feature:2-7".to_string())),
-            "the docstring stays inside the scenario: {got:?}"
-        );
-        assert!(
-            got.contains(&("Two".to_string(), "x.feature:8-9".to_string())),
+            got.contains(&("One".to_string(), "x.feature:2-9".to_string())),
             "{got:?}"
         );
     }
