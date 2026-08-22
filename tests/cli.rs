@@ -244,10 +244,16 @@ rrtest!(
         assert_eq!(code(&out), 1, "{out:?}");
         assert!(String::from_utf8_lossy(&out.stderr).contains("ambiguous anchor"));
 
+        // Both definitions sit in a.md and no enclosing anchor serves, so the
+        // path fallback is all `at` has and it does not invert.
+        // [[rr:AD-4#Decision outcome]]
+        let out = cmd.args(["at", "a.md:6"]).run();
+        assert_eq!(code(&out), 1, "{out:?}");
         assert_eq!(
-            cmd.args(["at", "a.md:6"]).stdout().trim(),
+            String::from_utf8_lossy(&out.stdout).trim(),
             "[[rr:a.md#Dup]]"
         );
+        assert!(String::from_utf8_lossy(&out.stderr).contains("ambiguous marker for a.md:6"));
         assert_eq!(
             cmd.args(["at", "b.md:4"]).stdout().trim(),
             "[[rr:b.md#Dup]]"

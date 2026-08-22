@@ -281,7 +281,20 @@ pub fn run_at(args: &LowArgs) -> Result<u8, String> {
             .map(|h| (minimal_form(reader, h), *h))
             .collect();
 
-        let code = if forms.is_empty() || (!args.all && forms.len() > 1) {
+        // `minimal_form` tests each candidate, but returns its path fallback
+        // unchecked, so the printed form may still not invert.
+        // [[rr:AD-4#Decision outcome]]
+        let uninvertible: Vec<(&str, usize)> = forms
+            .iter()
+            .filter_map(|(form, h)| {
+                let target: Location = (h.file.clone(), h.start_line, h.end_line);
+                let found = resolve(reader, form);
+                (found.as_slice() != [target]).then_some((form.as_str(), found.len()))
+            })
+            .collect();
+
+        let code = if forms.is_empty() || (!args.all && forms.len() > 1) || !uninvertible.is_empty()
+        {
             exit::ADVERSE
         } else {
             exit::OK
@@ -298,6 +311,13 @@ pub fn run_at(args: &LowArgs) -> Result<u8, String> {
                 "ambiguous: {} anchors tie on the innermost span",
                 forms.len()
             );
+        } else {
+            for (form, n) in &uninvertible {
+                eprintln!(
+                    "ambiguous marker for {file}:{line}: {form} resolves to \
+                     {n} definitions (retitle one)"
+                );
+            }
         }
         Ok(code)
     })
