@@ -513,11 +513,52 @@ fn filter_matches(want: &str, anchor: &str) -> bool {
     false
 }
 
+/// One of the six finding kinds of `[[rr:AD-3]]`: the `rr.toml` name a
+/// profile selects it by, beside the text a person reads.
+#[derive(Clone, Copy)]
+struct Rule {
+    name: &'static str,
+    text: &'static str,
+}
+
+const MALFORMED: Rule = Rule {
+    name: "malformed-marker",
+    text: "malformed marker",
+};
+const DANGLING: Rule = Rule {
+    name: "dangling-marker",
+    text: "dangling marker",
+};
+const AMBIGUOUS: Rule = Rule {
+    name: "ambiguous-marker",
+    text: "ambiguous marker",
+};
+const PATH_ONLY: Rule = Rule {
+    name: "path-only-marker",
+    text: "path-only marker",
+};
+const PATH_LINE: Rule = Rule {
+    name: "path-line",
+    text: "bare path:line reference",
+};
+const STALE_MENTION: Rule = Rule {
+    name: "stale-mention",
+    text: "stale path mention",
+};
+const RULES: &[Rule] = &[
+    MALFORMED,
+    DANGLING,
+    AMBIGUOUS,
+    PATH_ONLY,
+    PATH_LINE,
+    STALE_MENTION,
+];
+
 /// One `verify` finding.
 struct Finding {
     file: String,
     line: u64,
-    rule: &'static str,
+    rule: Rule,
     detail: String,
 }
 
@@ -535,24 +576,30 @@ pub fn run_verify(args: &LowArgs) -> Result<u8, String> {
         .iter()
         .map(|p| p.to_string_lossy().into_owned())
         .collect();
+    // Before the index is touched, so a typo is a usage error rather than
+    // whatever the index's state would have reported.
+    if let Some(unknown) = cfg
+        .verify_rules
+        .iter()
+        .find(|n| !RULES.iter().any(|r| r.name == n.as_str()))
+    {
+        return Err(format!("unknown verify rule: {unknown}"));
+    }
 
     with_fresh_reader(&index_path, root, args.no_freshness, |reader| {
         let mut findings: Vec<Finding> = Vec::new();
         for file in scoped_files(root, &matcher, &cfg, &paths)? {
             for found in scan::scan(&file.content, file.host) {
                 let (rule, detail) = match &found.what {
-                    What::Malformed { reason } => ("malformed marker", reason.clone()),
+                    What::Malformed { reason } => (MALFORMED, reason.clone()),
                     What::Marker { raw, anchor } => {
                         if !anchor.contains('#') && scan::is_path_shaped(anchor) {
-                            ("path-only marker", raw.clone())
+                            (PATH_ONLY, raw.clone())
                         } else {
                             match resolve(reader, anchor).len() {
-                                0 => ("dangling marker", raw.clone()),
+                                0 => (DANGLING, raw.clone()),
                                 1 => continue,
-                                n => (
-                                    "ambiguous marker",
-                                    format!("{raw} resolves to {n} definitions"),
-                                ),
+                                n => (AMBIGUOUS, format!("{raw} resolves to {n} definitions")),
                             }
                         }
                     }
@@ -566,14 +613,17 @@ pub fn run_verify(args: &LowArgs) -> Result<u8, String> {
                             continue;
                         }
                         if *line_ref {
-                            ("bare path:line reference", token.clone())
+                            (PATH_LINE, token.clone())
                         } else if !root.join(token).exists() {
-                            ("stale path mention", token.clone())
+                            (STALE_MENTION, token.clone())
                         } else {
                             continue;
                         }
                     }
                 };
+                if !cfg.verify_rules.iter().any(|n| n == rule.name) {
+                    continue;
+                }
                 findings.push(Finding {
                     file: file.rel.clone(),
                     line: found.line,
@@ -599,14 +649,14 @@ pub fn run_verify(args: &LowArgs) -> Result<u8, String> {
                     push_json_str(&mut data, &f.file);
                     data.push_str(&format!(",\"line\":{}", f.line));
                     data.push_str(",\"rule\":");
-                    push_json_str(&mut data, f.rule);
+                    push_json_str(&mut data, f.rule.text);
                     data.push('}');
                 }
                 data.push_str("]}");
                 writeln!(w, "{}", envelope("verify", &data))
             } else {
                 for f in &findings {
-                    writeln!(w, "{}:{}: {}: {}", f.file, f.line, f.rule, f.detail)?;
+                    writeln!(w, "{}:{}: {}: {}", f.file, f.line, f.rule.text, f.detail)?;
                 }
                 writeln!(w, "{} findings", findings.len())
             }
