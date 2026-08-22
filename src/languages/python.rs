@@ -1,4 +1,4 @@
-//! [[rr:AD-1]]
+//! `[[rr:AD-1]]`
 
 use crate::languages::{Language, Mode};
 

@@ -14,18 +14,14 @@ use std::ffi::{OsStr, OsString};
 use crate::marker::{self, Decoded};
 
 /// The subcommand selected on the command line: the five verbs of
-/// [[rr:AD-3]].
+/// `[[rr:AD-3]]`. What each does for a user is `[[rr:help_text]]`, which
+/// prints it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Subcommand {
-    /// `rr index` — the sole writer: anchors and mentions into the index.
     Index,
-    /// `rr read` — resolve a marker or bare anchor to definition locations.
     Read,
-    /// `rr at` — the marker for the innermost anchor covering a `file:line`.
     At,
-    /// `rr search` — list the markers scoped text writes.
     Search,
-    /// `rr verify` — the gate: judge the references scoped text writes.
     Verify,
 }
 
@@ -53,7 +49,7 @@ impl Subcommand {
 }
 
 /// Parse one reference token from the CLI into its bare anchor. A pasted
-/// marker decodes (strip, then unescape, per [[rr:AD-2]]);
+/// marker decodes (strip, then unescape, per `[[rr:AD-2]]`);
 /// any other token already is a bare anchor. `Err` is a token that opens
 /// like a marker but is not one: the user meant a marker, so it is a usage
 /// error rather than a silent reparse.
@@ -66,7 +62,7 @@ pub fn parse_reference(token: &str) -> Result<String, String> {
 }
 
 /// Split a qualified anchor `path#identity` at its first `#`
-/// [[rr:AD-1]]. `None` when there is no `#` or either side is empty; the
+/// `[[rr:AD-1]]`. `None` when there is no `#` or either side is empty; the
 /// caller tries the whole token as an identity first, so an identity that
 /// itself contains `#` still resolves literally.
 pub fn split_qualifier(anchor: &str) -> Option<(&str, &str)> {
@@ -84,7 +80,7 @@ pub enum Special {
     Version,
 }
 
-/// Output format for the global `--format` flag [[rr:AD-4]]: text by
+/// Output format for the global `--format` flag `[[rr:AD-4]]`: text by
 /// default, or one `rr-json` envelope per invocation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OutputFormat {
@@ -109,15 +105,15 @@ pub struct LowArgs {
     pub index: Option<OsString>,
     pub format: OutputFormat,
     pub color: Color,
-    /// `rr index -q/--quiet`: suppress the summary line.
+    /// `[[rr:QuietFlag]]`
     pub quiet: bool,
-    /// `--no-freshness`: answer from the index without the staleness check.
+    /// `[[rr:NoFreshnessFlag]]`
     pub no_freshness: bool,
-    /// `rr at --all`: report the whole nest, not just the innermost anchor.
+    /// `[[rr:AllFlag]]`
     pub all: bool,
-    /// `rr search --mentions`: list path mentions instead of markers.
+    /// `[[rr:MentionsFlag]]`
     pub mentions: bool,
-    /// `rr search --markers`: list every marker, freeing the anchor slot.
+    /// `[[rr:MarkersFlag]]`
     pub markers: bool,
     /// Positional arguments (e.g. the anchor for `read`).
     pub positional: Vec<OsString>,
@@ -183,8 +179,8 @@ pub trait Flag: Sync {
     fn name_long(&self) -> &'static str;
     /// Documentation category.
     fn doc_category(&self) -> &'static str;
-    /// Empty means shared, the set [[rr:Shared options]] lists; on any
-    /// other verb a scoped flag is the unknown flag of [[rr:AD-4]]. The
+    /// Empty means shared, the set `[[rr:Shared options]]` lists; on any
+    /// other verb a scoped flag is the unknown flag of `[[rr:AD-4]]`. The
     /// same list writes the help prefix, so the two cannot disagree.
     fn verbs(&self) -> &'static [Subcommand] {
         &[]
@@ -303,7 +299,7 @@ impl Flag for QuietFlag {
         "logging"
     }
     fn doc_short(&self) -> &'static str {
-        "Suppress the summary line on success."
+        "Suppress the summary line; the answer still prints."
     }
     fn update(&self, _value: FlagValue, args: &mut LowArgs) -> Result<(), String> {
         args.quiet = true;
@@ -503,7 +499,7 @@ fn take_value(
 }
 
 /// Enforce each verb's positional arity; `verify`'s is open by design,
-/// see [[rr:AD-3]].
+/// see `[[rr:AD-3]]`.
 /// The verbs a scoped flag names, as the help prefix and the usage error
 /// both write them: `rr at`, or `rr at, rr search` once one spans two.
 fn verb_list(verbs: &[Subcommand]) -> String {
@@ -553,7 +549,7 @@ fn validate(args: &LowArgs) -> Result<(), String> {
 }
 
 /// Split a `<file>:<line>` location into its parts, per the location grammar
-/// of [[rr:AD-1]]: the span is the numeric suffix after the last colon, so
+/// of `[[rr:AD-1]]`: the span is the numeric suffix after the last colon, so
 /// a path containing a colon (a Windows drive) keeps its prefix. The line
 /// must be a bare `u64`; `at` takes a single line, never a range.
 pub fn parse_position(s: &str) -> Result<(String, u64), String> {

@@ -1,6 +1,6 @@
 /*!
 The layered profile: compiled-in defaults from rr.toml, merged under a
-project's `.rr.toml` ([[rr:AD-1]] puts kinds and scope in configuration).
+project's `.rr.toml` (`[[rr:AD-1]]` puts kinds and scope in configuration).
 
 This is a deliberate subset of TOML, hand-rolled per the crate's no-new-crates
 ethos: section headers, quoted keys and strings, and string arrays (possibly
@@ -23,7 +23,7 @@ pub struct Config {
     /// `[verify] exclude`: globs subtracted from the scope.
     pub verify_exclude: Vec<String>,
     /// `[verify] rules`: which of the six finding kinds this profile
-    /// reports. [[rr:AD-3]] fixes the six; a profile picks among them, and
+    /// reports. `[[rr:AD-3]]` fixes the six; a profile picks among them, and
     /// an empty list disables the gate.
     pub verify_rules: Vec<String>,
     /// `[scan.<lang>] eligible`, one entry per language named so far, in the

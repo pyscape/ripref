@@ -5,7 +5,7 @@ runs the matching language; the index format and reader are unaware of
 language specifics. Adding a language is one new module and one [`LANGUAGES`]
 entry, nothing else changes.
 
-[[rr:AD-1]]
+`[[rr:AD-1]]`
 
 Grammars are ordinary Rust crate dependencies (e.g. `tree-sitter-rust`); the
 grammar's C is compiled by its own crate, never vendored here. Third-party
@@ -58,10 +58,10 @@ pub struct Language {
     pub anchors_query: &'static str,
     /// How captures become anchors.
     pub mode: Mode,
-    /// [[rr:AD-1]]
+    /// `[[rr:AD-1]]`
     pub level: fn(&str) -> u32,
     pub titles: Option<TitleFinder>,
-    /// [[rr:AD-1]]
+    /// `[[rr:AD-1]]`
     pub records: bool,
 }
 
@@ -187,7 +187,7 @@ impl Language {
     }
 }
 
-/// [[rr:AD-1]]
+/// `[[rr:AD-1]]`
 fn sections(
     rel_path: &str,
     content: &str,

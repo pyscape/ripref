@@ -601,6 +601,30 @@ rrtest!(
     }
 );
 
+// [[rr:QuietFlag]]
+rrtest!(
+    quiet_drops_only_the_summary_line,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file("a.md", "bad [[rr:nope]] here\n");
+        cmd.arg("index").assert_exit_code(0);
+
+        let out = cmd.args(["verify", "-q"]).run();
+        assert_eq!(code(&out), 1, "still the adverse answer: {out:?}");
+        let s = String::from_utf8_lossy(&out.stdout);
+        assert!(s.contains("dangling marker"), "the finding prints: {s}");
+        assert!(!s.contains("1 findings"), "the summary does not: {s}");
+
+        let s = cmd.args(["search", "-q", "--markers"]).stdout();
+        assert!(s.contains("a.md:1: [[rr:nope]]"), "the marker prints: {s}");
+        assert!(!s.contains("1 markers"), "the summary does not: {s}");
+
+        let out = cmd.args(["verify", "-q", "--format", "json"]).run();
+        let s = String::from_utf8_lossy(&out.stdout);
+        assert!(s.contains(r#""command":"verify""#), "{s}");
+        assert!(s.contains(r#""rule":"dangling marker""#), "{s}");
+    }
+);
+
 // --- a reader that stops reading ---------------------------------------------------
 
 // A hook that pipes into `head` closes the pipe early. Rust starts with

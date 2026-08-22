@@ -1,5 +1,5 @@
 /*!
-The marker grammar that [[rr:AD-2]] fixes.
+The marker grammar that `[[rr:AD-2]]` fixes.
 
 An **anchor** is the bare token a reader takes on the CLI. A **marker** is the
 delimited form written into a document:
@@ -12,7 +12,7 @@ This module EMITs the marker ([`wrap`]) and ACCEPTs one ([`decode`] for a whole
 CLI token, [`scan_token`] for an occurrence inside text). It is std-only by
 design: the opener is the fixed five bytes `[[rr:`, the terminator is the first
 unescaped `]]`, and nothing follows the terminator, so a marker decodes offline
-with no index. The canonical extraction regex [[rr:AD-2]] gives is the
+with no index. The canonical extraction regex `[[rr:AD-2]]` gives is the
 conformance oracle (scripts/marker_regex_oracle.py), not a dependency: the
 backslash-parity boundary is cleaner hand-rolled and matches the crate's
 no-`regex` ethos.
@@ -70,7 +70,7 @@ fn escape(s: &str) -> String {
     out
 }
 
-/// Decode one CLI token. Conforms to the [[rr:AD-2]] oracle regex
+/// Decode one CLI token. Conforms to the `[[rr:AD-2]]` oracle regex
 /// `\[\[rr:(?:\\[\\\[\]]|[^\\\]\[\t\n\r])*?\]\]` interpreted as an *anchored*
 /// match:
 /// the whole token must be the marker. An opener followed by trailing
@@ -90,7 +90,7 @@ pub fn decode(token: &str) -> Decoded {
 /// Parse one marker from the front of `s`, which must begin with [`OPENER`].
 /// The body ends at the first `]]` whose first `]` is unescaped; the returned
 /// anchor is unescaped (the normative strip-then-unescape decode of
-/// [[rr:AD-2]]). Raw `\t`/`\r`/`\n` cannot occur in a body, so a marker
+/// `[[rr:AD-2]]`). Raw `\t`/`\r`/`\n` cannot occur in a body, so a marker
 /// always sits on one line; the escapes are exactly `\[`, `\]`, and `\\`, and
 /// any other escape makes the token malformed.
 pub fn scan_token(s: &str) -> Token {

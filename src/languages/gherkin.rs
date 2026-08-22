@@ -1,4 +1,4 @@
-//! [[rr:AD-1]]. `grammar` and `anchors_query` are required by `Language`
+//! `[[rr:AD-1]]`. `grammar` and `anchors_query` are required by `Language`
 //! but unused here; they point at the Markdown grammar and an empty
 //! query.
 
