@@ -5,7 +5,7 @@ Flat, sorted, newline-terminated UTF-8 records, with a self-describing section
 table. The writer ([`serialize`]) produces the bytes; the reader ([`Reader`])
 borrows an mmap'd `&[u8]` and binary-searches a section in place. Three
 sections: `forward` (each anchor's definition locations), `mentions` (where
-prose writes paths, `[[rr:AD-5]]`), and `paths` (every in-scope file, the
+prose writes paths, [[rr:AD-5]]), and `paths` (every in-scope file, the
 freshness set). The section table lists every core section even when it is
 zero-length, so the reader can locate each by name.
 
@@ -58,7 +58,7 @@ pub struct IndexData {
     /// location) before writing, so [`Reader::forward_lookup`] can
     /// binary-search the on-disk image; callers need not pre-sort.
     pub forward: Vec<ForwardEntry>,
-    /// The mention table (`[[rr:AD-5]]`). Sorted like `forward`.
+    /// The mention table [[rr:AD-5]]. Sorted like `forward`.
     pub mentions: Vec<MentionEntry>,
     /// Every in-scope path; backs the freshness check. [`serialize`] sorts it
     /// before writing.
@@ -329,7 +329,7 @@ impl<'a> Reader<'a> {
 
     /// Every mention-table entry, as `(token, location)` pairs in on-disk
     /// (token-sorted) order. The table serves completion and rename tooling
-    /// (`[[rr:AD-5]]`); the scanners never read it.
+    /// [[rr:AD-5]]; the scanners never read it.
     pub fn mentions(&self) -> Vec<(String, String)> {
         split_records(self.section("mentions"))
             .into_iter()
@@ -383,7 +383,7 @@ fn record_value(line: &[u8]) -> Option<&str> {
 }
 
 /// Split a `file:start-end` location into `(file, start, end)`. Parses from
-/// the right so a colon in the path keeps its prefix (`[[rr:AD-1]]`); returns
+/// the right so a colon in the path keeps its prefix [[rr:AD-1]]; returns
 /// `None` if the trailing span is not `<u64>-<u64>`.
 pub fn parse_location(loc: &str) -> Option<(&str, u64, u64)> {
     let (file, span) = loc.rsplit_once(':')?;

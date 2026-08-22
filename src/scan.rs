@@ -1,9 +1,9 @@
 /*!
 Lexical scanners for markers and path mentions.
 
-`search` and `verify` (`[[rr:AD-3]]`) run these over scoped text; `index`
-runs the mention half to fill the mention table (`[[rr:AD-5]]`). The region
-rules are `[[rr:AD-2]]`'s: in a Markdown host, prose and inline code spans
+`search` and `verify` [[rr:AD-3]] run these over scoped text; `index`
+runs the mention half to fill the mention table [[rr:AD-5]]. The region
+rules are [[rr:AD-2]]'s: in a Markdown host, prose and inline code spans
 whose content begins with the marker opener are read and fenced blocks are
 invisible; a structureless host is read per raw line. Mentions qualify only
 in prose, and marker interiors are excluded from the mention scan.
@@ -24,7 +24,7 @@ pub struct Found {
 pub enum What {
     /// A well-formed marker: the raw bytes as written and the decoded anchor.
     Marker { raw: String, anchor: String },
-    /// A `[[rr:` opener with no well-formed marker behind it.
+    /// An opener with no well-formed marker behind it.
     Malformed { reason: String },
     /// A path mention; `line_ref` is set when `:` and digits follow it (the
     /// bare `path:line` form).
@@ -417,7 +417,7 @@ fn is_token_byte(b: u8) -> bool {
 }
 
 /// Whether a token is lexically a path: two or more nonempty `/`-separated
-/// segments (`[[rr:AD-5]]`). Root-relative only: a leading, trailing, or
+/// segments [[rr:AD-5]]. Root-relative only: a leading, trailing, or
 /// doubled separator disqualifies, and so does a `.` or `..` segment, since a
 /// mention never traverses out of the tree it is judged against.
 pub fn is_path_shaped(token: &str) -> bool {

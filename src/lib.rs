@@ -6,9 +6,9 @@ One writer and many readers over one index. `index` maps each anchor to its
 definition locations and records where prose writes paths; `read` and `at`
 convert between markers and locations; `search` lists the markers a project
 writes; `verify` judges them. The records under doc/ad fix the design: the
-domain model (`[[rr:AD-1]]`), the marker grammar (`[[rr:AD-2]]`), the verbs
-(`[[rr:AD-3]]`), the output contract (`[[rr:AD-4]]`), and path mentions
-(`[[rr:AD-5]]`).
+domain model [[rr:AD-1]], the marker grammar [[rr:AD-2]], the verbs
+[[rr:AD-3]], the output contract [[rr:AD-4]], and path mentions
+[[rr:AD-5]].
 */
 
 // Lint posture. `rr` mmaps its index, so `unsafe` is expected — but every use
@@ -29,7 +29,7 @@ pub mod scan;
 
 use cli::{ParseOutcome, Special, Subcommand};
 
-/// Exit codes, one model across the verbs (`[[rr:AD-4]]`): every verb asks a
+/// Exit codes, one model across the verbs [[rr:AD-4]]: every verb asks a
 /// question, and the code reports how it was answered.
 pub mod exit {
     /// The question got its answer.

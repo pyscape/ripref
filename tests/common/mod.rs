@@ -17,7 +17,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// A throwaway working directory the `rr` binary runs against.
 ///
-/// Named after ripgrep's `tests/util.rs` `Dir`, per this crate's "model on
+/// Named after ripgrep's own `Dir` test helper, per this crate's "model on
 /// ripgrep" ethos. Lives under the system temp dir and is removed when the
 /// value drops, so a panicking assertion can't leak it — an explicit
 /// `remove_dir_all` at the end of a test never runs once an earlier `assert!`

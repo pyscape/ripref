@@ -14,7 +14,7 @@ use std::ffi::{OsStr, OsString};
 use crate::marker::{self, Decoded};
 
 /// The subcommand selected on the command line: the five verbs of
-/// `[[rr:AD-3]]`.
+/// [[rr:AD-3]].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Subcommand {
     /// `rr index` — the sole writer: anchors and mentions into the index.
@@ -53,7 +53,7 @@ impl Subcommand {
 }
 
 /// Parse one reference token from the CLI into its bare anchor. A pasted
-/// `[[rr:...]]` marker decodes (strip, then unescape, per `[[rr:AD-2]]`);
+/// marker decodes (strip, then unescape, per [[rr:AD-2]]);
 /// any other token already is a bare anchor. `Err` is a token that opens
 /// like a marker but is not one: the user meant a marker, so it is a usage
 /// error rather than a silent reparse.
@@ -66,7 +66,7 @@ pub fn parse_reference(token: &str) -> Result<String, String> {
 }
 
 /// Split a qualified anchor `path#identity` at its first `#`
-/// (`[[rr:AD-1]]`). `None` when there is no `#` or either side is empty; the
+/// [[rr:AD-1]]. `None` when there is no `#` or either side is empty; the
 /// caller tries the whole token as an identity first, so an identity that
 /// itself contains `#` still resolves literally.
 pub fn split_qualifier(anchor: &str) -> Option<(&str, &str)> {
@@ -84,7 +84,7 @@ pub enum Special {
     Version,
 }
 
-/// Output format for the global `--format` flag (`[[rr:AD-4]]`): text by
+/// Output format for the global `--format` flag [[rr:AD-4]]: text by
 /// default, or one `rr-json` envelope per invocation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OutputFormat {
@@ -553,7 +553,7 @@ fn validate(args: &LowArgs) -> Result<(), String> {
 }
 
 /// Split a `<file>:<line>` location into its parts, per the location grammar
-/// of `[[rr:AD-1]]`: the span is the numeric suffix after the last colon, so
+/// of [[rr:AD-1]]: the span is the numeric suffix after the last colon, so
 /// a path containing a colon (a Windows drive) keeps its prefix. The line
 /// must be a bare `u64`; `at` takes a single line, never a range.
 pub fn parse_position(s: &str) -> Result<(String, u64), String> {

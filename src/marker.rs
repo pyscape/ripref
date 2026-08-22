@@ -1,5 +1,5 @@
 /*!
-The `[[rr:...]]` marker grammar that `[[rr:AD-2]]` fixes.
+The marker grammar that [[rr:AD-2]] fixes.
 
 An **anchor** is the bare token a reader takes on the CLI. A **marker** is the
 delimited form written into a document:
@@ -12,7 +12,7 @@ This module EMITs the marker ([`wrap`]) and ACCEPTs one ([`decode`] for a whole
 CLI token, [`scan_token`] for an occurrence inside text). It is std-only by
 design: the opener is the fixed five bytes `[[rr:`, the terminator is the first
 unescaped `]]`, and nothing follows the terminator, so a marker decodes offline
-with no index. The canonical extraction regex `[[rr:AD-2]]` gives is the
+with no index. The canonical extraction regex [[rr:AD-2]] gives is the
 conformance oracle (scripts/marker_regex_oracle.py), not a dependency: the
 backslash-parity boundary is cleaner hand-rolled and matches the crate's
 no-`regex` ethos.
@@ -24,12 +24,11 @@ pub const OPENER: &str = "[[rr:";
 /// How [`decode`] interprets one reader CLI token.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decoded {
-    /// No `[[rr:` sentinel: an ordinary bare anchor. The caller owns it
-    /// unchanged.
+    /// No opener: an ordinary bare anchor. The caller owns it unchanged.
     Bare,
-    /// A `[[rr:` sentinel that is NOT a well-formed marker (no terminator, an
+    /// An opener that is NOT a well-formed marker (no terminator, an
     /// illegal raw byte or undefined escape in the body, or trailing text
-    /// after `]]`). The string is the human-facing reason.
+    /// after the terminator). The string is the human-facing reason.
     Malformed(String),
     /// A well-formed marker: the unescaped anchor it delimits.
     Marker(String),
@@ -45,7 +44,7 @@ pub enum Token {
     Malformed(String),
 }
 
-/// Wrap an anchor as the document marker `[[rr:<escaped>]]`.
+/// Wrap an anchor as a document marker.
 ///
 /// Precondition: `anchor` contains no raw `\t`, `\r`, or `\n`. Those are
 /// outside the grammar (a newline has no escape), and no extractor emits such
@@ -71,10 +70,10 @@ fn escape(s: &str) -> String {
     out
 }
 
-/// Decode one CLI token. Conforms to the `[[rr:AD-2]]` oracle regex
+/// Decode one CLI token. Conforms to the [[rr:AD-2]] oracle regex
 /// `\[\[rr:(?:\\[\\\[\]]|[^\\\]\[\t\n\r])*?\]\]` interpreted as an *anchored*
 /// match:
-/// the whole token must be the marker. A `[[rr:` sentinel followed by trailing
+/// the whole token must be the marker. An opener followed by trailing
 /// junk is [`Decoded::Malformed`], not a partial match; the scanners use
 /// [`scan_token`], the same parse *unanchored*, to find markers inside text.
 pub fn decode(token: &str) -> Decoded {
@@ -91,7 +90,7 @@ pub fn decode(token: &str) -> Decoded {
 /// Parse one marker from the front of `s`, which must begin with [`OPENER`].
 /// The body ends at the first `]]` whose first `]` is unescaped; the returned
 /// anchor is unescaped (the normative strip-then-unescape decode of
-/// `[[rr:AD-2]]`). Raw `\t`/`\r`/`\n` cannot occur in a body, so a marker
+/// [[rr:AD-2]]). Raw `\t`/`\r`/`\n` cannot occur in a body, so a marker
 /// always sits on one line; the escapes are exactly `\[`, `\]`, and `\\`, and
 /// any other escape makes the token malformed.
 pub fn scan_token(s: &str) -> Token {
