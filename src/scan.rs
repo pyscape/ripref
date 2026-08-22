@@ -78,6 +78,7 @@ pub struct CommentSyntax {
     /// True where `'` may be a lifetime or loop label rather than a quote.
     /// Quoting on every `'` leaves `&'a str` open and swallows the //.
     pub tick_is_char_literal: bool,
+    pub raw_strings_have_no_escapes: bool,
 }
 
 const COMMENT_SYNTAX: &[(&str, &[&str], CommentSyntax)] = &[
@@ -89,6 +90,7 @@ const COMMENT_SYNTAX: &[(&str, &[&str], CommentSyntax)] = &[
             block: &[("/*", "*/")],
             block_is_comment: true,
             tick_is_char_literal: true,
+            raw_strings_have_no_escapes: true,
         },
     ),
     (
@@ -99,6 +101,7 @@ const COMMENT_SYNTAX: &[(&str, &[&str], CommentSyntax)] = &[
             block: &[("\"\"\"", "\"\"\""), ("'''", "'''")],
             block_is_comment: false,
             tick_is_char_literal: false,
+            raw_strings_have_no_escapes: false,
         },
     ),
 ];
@@ -167,15 +170,13 @@ enum CommentStart {
     Block { len: usize, close: &'static str },
 }
 
-/// Covers Rust's `r"`, `r#"`, `r##"`, `br"`, ... and Python's `r"`, `br"`:
-/// a raw string has no escapes, so `\` inside one is a literal byte, not
-/// an escape.
-fn ends_in_raw_prefix(prefix: &[u8]) -> bool {
+/// The hashes sit between the `r` and the quote, so `r##"` counts 2.
+fn raw_hashes(prefix: &[u8]) -> Option<usize> {
     let mut end = prefix.len();
     while end > 0 && prefix[end - 1] == b'#' {
         end -= 1;
     }
-    matches!(prefix[..end], [.., b'r' | b'R'])
+    matches!(prefix[..end], [.., b'r' | b'R']).then(|| prefix.len() - end)
 }
 
 /// The leftmost syntax.line or syntax.block opener outside a quoted
@@ -183,17 +184,19 @@ fn ends_in_raw_prefix(prefix: &[u8]) -> bool {
 fn next_comment_start(line: &str, syntax: &CommentSyntax) -> Option<(usize, CommentStart)> {
     let bytes = line.as_bytes();
     let line_marker = syntax.line.as_bytes();
-    let mut quote: Option<(u8, bool)> = None;
+    let mut quote: Option<(u8, bool, usize)> = None;
     let mut i = 0;
     while i < bytes.len() {
         let b = bytes[i];
-        if let Some((q, has_escapes)) = quote {
+        if let Some((q, has_escapes, hashes)) = quote {
             if has_escapes && b == b'\\' {
                 i += 2;
                 continue;
             }
-            if b == q {
+            let close = i + 1 + hashes;
+            if b == q && close <= bytes.len() && bytes[i + 1..close].iter().all(|&h| h == b'#') {
                 quote = None;
+                i += hashes;
             }
         } else if let Some(&(open, close)) = syntax
             .block
@@ -220,8 +223,10 @@ fn next_comment_start(line: &str, syntax: &CommentSyntax) -> Option<(usize, Comm
             i += char_literal_len(&line[i..]).unwrap_or(1);
             continue;
         } else if b == b'"' || b == b'\'' {
-            let has_escapes = !(b == b'"' && ends_in_raw_prefix(&bytes[..i]));
-            quote = Some((b, has_escapes));
+            let raw = (syntax.raw_strings_have_no_escapes && b == b'"')
+                .then(|| raw_hashes(&bytes[..i]))
+                .flatten();
+            quote = Some((b, raw.is_none(), raw.unwrap_or(0)));
         }
         i += 1;
     }
@@ -639,9 +644,17 @@ mod tests {
     }
 
     #[test]
-    fn raw_string_inner_quote_closes_the_tracked_quote_early() {
+    fn hash_raw_string_closes_only_on_matching_hashes() {
         let rust = comment_syntax("rust").unwrap();
-        let got = kinds("let r = r#\"a \" b\"#; // [[rr:f]]\n", Host::Comments(rust));
+        for line in [
+            "let r = r#\"a \" b\"#; // [[rr:f]]\n",
+            "let r = r##\"a \"# b\"##; // [[rr:f]]\n",
+        ] {
+            let got = kinds(line, Host::Comments(rust));
+            assert_eq!(got, vec!["1:marker:f"], "{line:?} -> {got:?}");
+        }
+        // An unterminated opener swallows the rest of the line, as before.
+        let got = kinds("let r = r#\"a \" b\"; // [[rr:f]]\n", Host::Comments(rust));
         assert_eq!(got, Vec::<String>::new(), "{got:?}");
     }
 
@@ -650,6 +663,19 @@ mod tests {
         let rust = comment_syntax("rust").unwrap();
         let got = kinds("let s = r\"C:\\\"; // [[rr:x]]\n", Host::Comments(rust));
         assert_eq!(got, vec!["1:marker:x"], "{got:?}");
+    }
+
+    #[test]
+    fn python_raw_string_keeps_its_escapes() {
+        let python = comment_syntax("python").unwrap();
+        for line in [
+            "s = r\"a\\\"b\"  # [[rr:pa]]\n",
+            "s = fr\"a\\\"b\"  # [[rr:pa]]\n",
+            "s = R\"a\\\"b\"  # [[rr:pa]]\n",
+        ] {
+            let got = kinds(line, Host::Comments(python));
+            assert_eq!(got, vec!["1:marker:pa"], "{line:?} -> {got:?}");
+        }
     }
 
     #[test]
