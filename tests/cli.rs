@@ -187,6 +187,73 @@ rrtest!(
 );
 
 rrtest!(
+    at_prefers_an_anchor_qualifier_and_it_survives_a_move,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file(
+            "doc/0001.md",
+            "# AD-1: One\n\n## Decision outcome\n\nbody a\n",
+        )
+        .file(
+            "doc/0002.md",
+            "# AD-2: Two\n\n## Decision outcome\n\nbody b\n",
+        )
+        .file(
+            "notes.md",
+            "see [[rr:AD-1#Decision outcome]] and [[rr:doc/0001.md#Decision outcome]]\n",
+        );
+        cmd.arg("index").assert_exit_code(0);
+
+        let marker = cmd.args(["at", "doc/0001.md:4"]).stdout();
+        assert_eq!(marker.trim(), "[[rr:AD-1#Decision outcome]]");
+        let loc = cmd.args(["read", marker.trim()]).stdout();
+        assert_eq!(loc.trim(), "doc/0001.md:3-5");
+        cmd.arg("verify").assert_exit_code(0);
+
+        std::fs::rename(
+            dir.path().join("doc/0001.md"),
+            dir.path().join("doc/0001-domain.md"),
+        )
+        .unwrap();
+        cmd.arg("index").assert_exit_code(0);
+        let out = cmd.arg("verify").run();
+        assert_eq!(code(&out), 1, "{out:?}");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("dangling marker: [[rr:doc/0001.md#Decision outcome]]"),
+            "{stdout}"
+        );
+        assert!(!stdout.contains("AD-1#"), "{stdout}");
+    }
+);
+
+rrtest!(
+    anchor_qualifier_must_name_one_definition,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file("a.md", "# Alpha\n\n## Dup\n\n## Dup\n\nx\n")
+            .file("b.md", "# Beta\n\n## Dup\n\ny\n")
+            .file("c.md", "# Beta\n\n## Dup\n\nz\n");
+        cmd.arg("index").assert_exit_code(0);
+
+        let out = cmd.args(["read", "Beta#Dup"]).run();
+        assert_eq!(code(&out), 1, "{out:?}");
+        assert!(String::from_utf8_lossy(&out.stderr).contains("no such anchor"));
+
+        let out = cmd.args(["read", "Alpha#Dup"]).run();
+        assert_eq!(code(&out), 1, "{out:?}");
+        assert!(String::from_utf8_lossy(&out.stderr).contains("ambiguous anchor"));
+
+        assert_eq!(
+            cmd.args(["at", "a.md:6"]).stdout().trim(),
+            "[[rr:a.md#Dup]]"
+        );
+        assert_eq!(
+            cmd.args(["at", "b.md:4"]).stdout().trim(),
+            "[[rr:b.md#Dup]]"
+        );
+    }
+);
+
+rrtest!(
     at_line_with_no_anchor_exits_one,
     |mut dir: Dir, mut cmd: TestCommand| {
         // A text file defines no anchors at all, so every line is uncovered

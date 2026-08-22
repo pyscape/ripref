@@ -157,24 +157,58 @@ fn fresh(reader: &Reader, root: &Path, skip_freshness: bool) -> bool {
 /// `#` resolves literally; only then does the path qualifier of
 /// `[[rr:AD-1]]` split, and the identity's definitions filter to the
 /// qualifying file.
-fn resolve(reader: &Reader, anchor: &str) -> Vec<(String, u64, u64)> {
-    let parse_all = |locs: Vec<String>| -> Vec<(String, u64, u64)> {
-        locs.iter()
-            .filter_map(|l| refidx::parse_location(l))
-            .map(|(f, s, e)| (f.to_string(), s, e))
-            .collect()
-    };
+type Location = (String, u64, u64);
+
+fn parse_all(locs: Vec<String>) -> Vec<Location> {
+    locs.iter()
+        .filter_map(|l| refidx::parse_location(l))
+        .map(|(f, s, e)| (f.to_string(), s, e))
+        .collect()
+}
+
+fn resolve(reader: &Reader, anchor: &str) -> Vec<Location> {
     let direct = parse_all(reader.forward_lookup(anchor));
     if !direct.is_empty() {
         return direct;
     }
-    if let Some((path, identity)) = cli::split_qualifier(anchor) {
-        return parse_all(reader.forward_lookup(identity))
-            .into_iter()
-            .filter(|(f, _, _)| f == path)
-            .collect();
+    let Some((qualifier, identity)) = cli::split_qualifier(anchor) else {
+        return Vec::new();
+    };
+    let definitions = parse_all(reader.forward_lookup(identity));
+    let by_path: Vec<Location> = definitions
+        .iter()
+        .filter(|(f, _, _)| f == qualifier)
+        .cloned()
+        .collect();
+    if !by_path.is_empty() {
+        return by_path;
     }
-    Vec::new()
+    let scope = parse_all(reader.forward_lookup(qualifier));
+    let [(file, start, end)] = scope.as_slice() else {
+        return Vec::new();
+    };
+    definitions
+        .into_iter()
+        .filter(|(f, s, e)| f == file && start <= s && e <= end)
+        .collect()
+}
+
+fn minimal_form(reader: &Reader, hit: &AnchorHit) -> String {
+    if reader.forward_lookup(&hit.anchor).len() == 1 {
+        return hit.anchor.clone();
+    }
+    let enclosing = reader
+        .covering(&hit.file, hit.start_line)
+        .into_iter()
+        .filter(|q| {
+            q.start_line <= hit.start_line
+                && hit.end_line <= q.end_line
+                && (q.start_line, q.end_line) != (hit.start_line, hit.end_line)
+        })
+        .filter(|q| reader.forward_lookup(&q.anchor).len() == 1)
+        .map(|q| format!("{}#{}", q.anchor, hit.anchor))
+        .find(|form| resolve(reader, form).len() == 1);
+    enclosing.unwrap_or_else(|| format!("{}#{}", hit.file, hit.anchor))
 }
 
 /// `[[rr:help_text]]`. The reader strips a pasted marker's wrapper and
@@ -217,7 +251,7 @@ pub fn run_read(args: &LowArgs) -> Result<u8, String> {
             0 => eprintln!("no such anchor: {anchor}"),
             1 => {}
             n => eprintln!(
-                "ambiguous anchor: {anchor} resolves to {n} definitions (add a path qualifier)"
+                "ambiguous anchor: {anchor} resolves to {n} definitions (add a qualifier)"
             ),
         }
         Ok(code)
@@ -247,14 +281,7 @@ pub fn run_at(args: &LowArgs) -> Result<u8, String> {
         // [[rr:doc/ad/0004-output-contract.md#Decision outcome]]
         let forms: Vec<(String, &AnchorHit)> = emitted
             .iter()
-            .map(|h| {
-                let form = if reader.forward_lookup(&h.anchor).len() > 1 {
-                    format!("{}#{}", h.file, h.anchor)
-                } else {
-                    h.anchor.clone()
-                };
-                (form, *h)
-            })
+            .map(|h| (minimal_form(reader, h), *h))
             .collect();
 
         let code = if forms.is_empty() || (!args.all && forms.len() > 1) {
