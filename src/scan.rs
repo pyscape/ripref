@@ -279,7 +279,8 @@ pub fn scan(content: &str, host: Host) -> Vec<Found> {
                 }
                 extend_paragraph(&mut paragraph, lineno, line);
             }
-            // [[rr:AD-5#Decision outcome]]
+            // Comment text is read exactly as a Plain line is, so mentions
+            // qualify there too, per [[rr:AD-5]].
             Host::Comments(syntax) => {
                 let mut pos = 0;
                 let mut commented = false;
