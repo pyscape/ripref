@@ -542,10 +542,10 @@ pub fn help_text() -> String {
     );
     out.push_str("    read     Resolve a marker or bare anchor to its definition locations\n");
     out.push_str("    at       Print the marker covering a file:line (--all: the whole nest)\n");
-    out.push_str("    search   List the markers scoped text writes (--mentions: path mentions)\n");
-    out.push_str(
-        "    verify   Judge references in scoped text or named paths; findings exit 1\n\n",
-    );
+    out.push_str("    search [<anchor>|--markers|--mentions] [<path>...]\n");
+    out.push_str("             List the markers scoped text writes, or the path mentions\n");
+    out.push_str("    verify [<path>...]\n");
+    out.push_str("             Judge references in scoped text; findings exit 1\n\n");
     out.push_str("OPTIONS:\n");
     for flag in FLAGS {
         let short = match flag.name_short() {

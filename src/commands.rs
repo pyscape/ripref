@@ -414,27 +414,32 @@ fn scoped_files(
     Ok(out)
 }
 
-/// `rr search [<anchor>]` — list the markers scoped text writes, each with
-/// the location it sits at; under `--mentions`, the path mentions instead.
-/// Purely lexical: no index is read, so it never returns stale.
+/// `rr search <anchor> [<path>...]`, or `--markers`/`--mentions` in place
+/// of the anchor. Purely lexical: no index is read, so it never returns
+/// stale.
 pub fn run_search(args: &LowArgs) -> Result<u8, String> {
     let root = Path::new(".");
     let cfg = config::load(root);
     let matcher = config::scope_matcher(root, &cfg)?;
-    let filter = args.positional.first().map(|a| {
-        let token = a.to_string_lossy().into_owned();
-        cli::parse_reference(&token)
-    });
-    let filter = match filter {
-        Some(Ok(anchor)) => Some(anchor),
-        Some(Err(why)) => return Err(why),
-        None => None,
+    // A mode flag frees the first slot, so every positional is a path; else
+    // the first is the anchor filter and the rest are paths.
+    let takes_anchor = !(args.markers || args.mentions);
+    let (filter, paths) = match args.positional.split_first() {
+        Some((first, rest)) if takes_anchor => (
+            Some(cli::parse_reference(&first.to_string_lossy())?),
+            rest.to_vec(),
+        ),
+        _ => (None, args.positional.clone()),
     };
+    let paths: Vec<String> = paths
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
 
     let mut lines = Vec::new();
     let mut json = String::from(r#"{"matches":["#);
     let mut count = 0usize;
-    for file in scoped_files(root, &matcher, &cfg, &[])? {
+    for file in scoped_files(root, &matcher, &cfg, &paths)? {
         for found in scan::scan(&file.content, file.host) {
             match (&found.what, args.mentions) {
                 (What::Marker { raw, anchor }, false) => {

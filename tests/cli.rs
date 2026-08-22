@@ -331,6 +331,30 @@ rrtest!(
     }
 );
 
+// [[rr:AD-3]]
+rrtest!(
+    search_named_paths_scope_the_listing,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file("a.md", "# A\n\nsee [[rr:AD-1]] here\n")
+            .file("b.md", "# B\n\nsee [[rr:AD-1]] and [[rr:AD-2]] here\n")
+            .file("c.md", "# C\n\nsee [[rr:AD-1]] here\n");
+
+        let out = cmd.args(["search", "--markers", "a.md"]).stdout();
+        assert!(out.contains("a.md:3: [[rr:AD-1]]"), "{out}");
+        assert!(!out.contains("b.md"), "{out}");
+        assert!(!out.contains("c.md"), "{out}");
+
+        let out = cmd.args(["search", "AD-1", "a.md", "b.md"]).stdout();
+        assert!(out.contains("a.md:3:"), "{out}");
+        assert!(out.contains("b.md:3:"), "{out}");
+        assert!(!out.contains("c.md"), "paths scope the walk away: {out}");
+        assert!(!out.contains("AD-2"), "the anchor still filters: {out}");
+
+        cmd.args(["search", "AD-1", "missing.md"])
+            .assert_exit_code(2);
+    }
+);
+
 // --- verify: the gate ----------------------------------------------------------
 
 // The six finding kinds, one fixture: the corpus under tests/data carries one
