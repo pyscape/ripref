@@ -29,6 +29,8 @@ Every language is one [`Language`](mod.rs) value:
 | `grammar`       | the grammar `LanguageFn`, from its crate (e.g. `tree_sitter_rust::LANGUAGE`) |
 | `anchors_query` | an S-expression query; each `@anchor` capture names one anchor               |
 | `mode`          | how captures become anchors: `Symbols` or `Sections`                        |
+| `level`         | a title line's rank in `Sections` (lower outranks); `Symbols` languages pass a function returning a constant |
+| `titles`        | `Some(finder)` to find titles lexically instead of via `grammar`/`anchors_query`; tree-sitter languages pass `None` |
 
 The shared engine ([`Language::extract`](mod.rs)) parses a file with the
 grammar, runs the query, and applies the span rule the mode implements:
@@ -61,6 +63,8 @@ pub const LANGUAGE: Language = Language {
     grammar: tree_sitter_<lang>::LANGUAGE,
     anchors_query: "(function_definition name: (identifier) @anchor) @span",
     mode: Mode::Symbols,
+    level: |_| u32::MAX,
+    titles: None,
 };
 ```
 
@@ -80,6 +84,39 @@ That's it, no other file changes. Add a test in `mod.rs`'s `tests` module
 asserting the anchors and spans you expect (see the `rust_*` / `markdown_*`
 tests).
 
+## Adding a line-oriented format
+
+A format whose titles are a keyword at the start of a line (Gherkin's
+`Feature`/`Scenario`) needs no grammar: skip step 1 above, and give
+`Language` a lexical `titles` finder instead of `anchors_query`.
+`grammar`/`anchors_query` are still required fields, so point them at any
+grammar and an empty query; they go unused.
+
+```rust
+use crate::languages::{Language, Mode};
+
+pub const LANGUAGE: Language = Language {
+    name: "<lang>",
+    extensions: &["<ext>"],
+    grammar: tree_sitter_md::LANGUAGE,
+    anchors_query: "",
+    mode: Mode::Sections,
+    level,
+    titles: Some(titles),
+};
+
+fn titles(content: &str) -> Vec<(String, u64)> {
+    // one (title text, 0-based row) pair per line that opens a region
+}
+
+fn level(line: &str) -> u32 {
+    // Feature: 1, Rule: 2, everything else 3
+}
+```
+
+Register it the same way (step 3 above). See [`gherkin.rs`](gherkin.rs) for
+a complete example.
+
 ## Writing the anchors query
 
 Mark the node whose *text* is the identity with `@anchor`, and the node whose
@@ -95,5 +132,6 @@ definitions, a good starting point.
 | ------------------------- | ------------------ | ------------------------------------------------------------------------------------------------ |
 | [`markdown`](markdown.rs) | `.md`, `.markdown` | ATX headings as records and headings, spanning their sections                                     |
 | [`rust`](rust.rs)         | `.rs`              | functions & methods, structs, enums, unions, traits, type aliases, consts, statics, modules, macros, spanning their definitions |
+| [`gherkin`](gherkin.rs)   | `.feature`         | `Feature`/`Rule`/`Scenario`/`Scenario Outline`/`Example` keywords as titled regions                |
 
 [Tree-sitter]: https://tree-sitter.github.io/

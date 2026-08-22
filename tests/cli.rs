@@ -466,6 +466,29 @@ rrtest!(
     }
 );
 
+// --- the scenario kind -----------------------------------------------------------
+
+// [[rr:AD-1]]
+rrtest!(
+    scenario_reads_ats_and_verifies_clean,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file(
+            "x.feature",
+            "Feature: Moves\n  Scenario: Engine responds quickly\n    Given a board\n",
+        )
+        .file("a.md", "see [[rr:Engine responds quickly]]\n");
+        cmd.arg("index").assert_exit_code(0);
+
+        let loc = cmd.args(["read", "Engine responds quickly"]).stdout();
+        assert_eq!(loc.trim(), "x.feature:2-3");
+
+        let marker = cmd.args(["at", "x.feature:3"]).stdout();
+        assert_eq!(marker.trim(), "[[rr:Engine responds quickly]]");
+
+        cmd.arg("verify").assert_exit_code(0);
+    }
+);
+
 // --- the index artifact ---------------------------------------------------------
 
 /// The default index path within a test [`Dir`].

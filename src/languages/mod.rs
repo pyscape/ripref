@@ -1,24 +1,15 @@
 /*!
-Languages: the common contract every first-class language satisfies — a
-tree-sitter grammar plus the query that names its anchors.
-
 Each submodule is one language: a [`Language`] value registered in
 [`LANGUAGES`]. The indexer looks a file's extension up in that registry and
 runs the matching language; the index format and reader are unaware of
 language specifics. Adding a language is one new module and one [`LANGUAGES`]
-entry — nothing else changes.
+entry, nothing else changes.
 
-Two extraction modes implement the span rule of `[[rr:AD-1]]`: symbol
-languages span each definition's whole extent (the `@span` capture, falling
-back to the `@anchor` node), and titled-region languages (Markdown) span from
-each title line to the next title of the same or higher rank. The Markdown
-mode also applies the record kind's identity rule: a title opening with an ID
-of uppercase letters, one hyphen, and digits, immediately followed by the
-title's first colon, defines the ID as the identity.
+[[rr:AD-1]]
 
 Grammars are ordinary Rust crate dependencies (e.g. `tree-sitter-rust`); the
 grammar's C is compiled by its own crate, never vendored here. Third-party
-languages that ship as a prebuilt `.wasm` load through a separate path — see
+languages that ship as a prebuilt `.wasm` load through a separate path, see
 the grammar-loading benchmark in benches/.
 */
 
@@ -30,6 +21,7 @@ use tree_sitter_language::LanguageFn;
 
 use crate::refidx::ForwardEntry;
 
+pub mod gherkin;
 pub mod markdown;
 pub mod rust;
 
@@ -52,8 +44,8 @@ pub enum Mode {
     Sections,
 }
 
-/// A first-class language: a tree-sitter grammar and the query whose
-/// captures become anchors.
+/// A first-class language: a tree-sitter grammar and query, or (`titles`
+/// set) a lexical title finder, whose captures become anchors.
 pub struct Language {
     /// Stable identifier, e.g. `"rust"`, `"markdown"`.
     pub name: &'static str,
@@ -70,8 +62,8 @@ pub struct Language {
     pub titles: Option<TitleFinder>,
 }
 
-/// Every first-class language, consulted by file extension during indexing.
-pub static LANGUAGES: &[Language] = &[markdown::LANGUAGE, rust::LANGUAGE];
+/// Every first-class language.
+pub static LANGUAGES: &[Language] = &[markdown::LANGUAGE, rust::LANGUAGE, gherkin::LANGUAGE];
 
 /// The language that claims `ext` (first match wins), or `None`. `ext` is
 /// the file extension without a dot; `None` for an extensionless file.
@@ -97,9 +89,8 @@ impl Language {
         }
     }
 
-    /// The parse-and-query core of [`extract`](Self::extract), over
-    /// in-memory `content` — separated so it is unit-testable without
-    /// touching disk.
+    /// The core of [`extract`](Self::extract), over in-memory `content`,
+    /// separated so it is unit-testable without touching disk.
     pub fn extract_from_str(&self, rel_path: &str, content: &str) -> Vec<ForwardEntry> {
         let captures = match self.titles {
             Some(titles) => titles(content)
