@@ -317,12 +317,18 @@ pub fn scan(content: &str, host: Host) -> Vec<Found> {
                             None => break,
                         }
                     } else {
-                        match next_comment_start(&line[pos..], syntax) {
-                            Some((off, CommentStart::Block { len, close })) => {
+                        let Some((off, start)) = next_comment_start(&line[pos..], syntax) else {
+                            break;
+                        };
+                        if !line[..pos + off].trim().is_empty() {
+                            flush_paragraph(&mut paragraph, &mut out);
+                        }
+                        match start {
+                            CommentStart::Block { len, close } => {
                                 pos += off + len;
                                 awaiting_close = Some(close);
                             }
-                            Some((off, CommentStart::Line { len })) => {
+                            CommentStart::Line { len } => {
                                 // `//!` and `#!` are prefixes too.
                                 let mut body = &line[pos + off + len..];
                                 let last = syntax.line.as_bytes()[syntax.line.len() - 1];
@@ -341,7 +347,6 @@ pub fn scan(content: &str, host: Host) -> Vec<Found> {
                                 commented = true;
                                 break;
                             }
-                            None => break,
                         }
                     }
                 }
@@ -817,6 +822,18 @@ mod tests {
         let rust = comment_syntax("rust").unwrap();
         let got = kinds("// `[[rr:a\nlet x = 1;\n// b]]`\n", Host::Comments(rust));
         assert_eq!(got, vec!["1:malformed"], "{got:?}");
+    }
+
+    #[test]
+    fn a_comment_after_code_ends_the_paragraph() {
+        let rust = comment_syntax("rust").unwrap();
+        for doc in [
+            "// `[[rr:a\nlet x = 1; // b]]`\n",
+            "// `[[rr:a\nlet x = 1; /* b]]` */\n",
+        ] {
+            let got = kinds(doc, Host::Comments(rust));
+            assert_eq!(got, vec!["1:malformed"], "{doc:?} {got:?}");
+        }
     }
 
     #[test]
