@@ -301,7 +301,11 @@ pub fn scan(content: &str, host: Host) -> Vec<Found> {
                             None => (&line[pos..], None),
                         };
                         if syntax.block_is_comment {
-                            extend_paragraph(&mut paragraph, lineno, body);
+                            if body.trim().is_empty() {
+                                flush_paragraph(&mut paragraph, &mut out);
+                            } else {
+                                extend_paragraph(&mut paragraph, lineno, body);
+                            }
                             commented = true;
                         }
                         match next {
@@ -329,7 +333,11 @@ pub fn scan(content: &str, host: Host) -> Vec<Found> {
                                 {
                                     body = &body[1..];
                                 }
-                                extend_paragraph(&mut paragraph, lineno, body);
+                                if body.trim().is_empty() {
+                                    flush_paragraph(&mut paragraph, &mut out);
+                                } else {
+                                    extend_paragraph(&mut paragraph, lineno, body);
+                                }
                                 commented = true;
                                 break;
                             }
@@ -809,6 +817,20 @@ mod tests {
         let rust = comment_syntax("rust").unwrap();
         let got = kinds("// `[[rr:a\nlet x = 1;\n// b]]`\n", Host::Comments(rust));
         assert_eq!(got, vec!["1:malformed"], "{got:?}");
+    }
+
+    #[test]
+    fn a_blank_comment_line_ends_the_paragraph() {
+        let rust = comment_syntax("rust").unwrap();
+        for doc in [
+            "// `[[rr:a\n//\n// b]]`\n",
+            "// [[rr:Beta\n//\n// gamma]]\n",
+            "/// `[[rr:a\n///\n/// b]]`\n",
+            "/* `[[rr:a\n\n   b]]` */\n",
+        ] {
+            let got = kinds(doc, Host::Comments(rust));
+            assert_eq!(got, vec!["1:malformed"], "{doc:?} {got:?}");
+        }
     }
 
     #[test]
