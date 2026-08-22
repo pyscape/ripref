@@ -95,7 +95,7 @@ const COMMENT_SYNTAX: &[(&str, &[&str], CommentSyntax)] = &[
     ),
     (
         "python",
-        &["py"],
+        &["py", "pyi", "pyw"],
         CommentSyntax {
             line: "#",
             block: &[("\"\"\"", "\"\"\""), ("'''", "'''")],
@@ -509,7 +509,12 @@ mod tests {
             scan: vec![("python".to_string(), vec!["comments".to_string()])],
         };
         assert_eq!(host_for(Some("md"), &cfg), Host::Markdown);
-        assert!(matches!(host_for(Some("py"), &cfg), Host::Comments(_)));
+        for ext in ["py", "pyi", "pyw"] {
+            assert!(
+                matches!(host_for(Some(ext), &cfg), Host::Comments(_)),
+                "{ext}"
+            );
+        }
         assert_eq!(host_for(Some("go"), &cfg), Host::Plain); // not declared eligible
         let bare = Config {
             verify_in_scope: Vec::new(),

@@ -4,7 +4,7 @@ use crate::languages::{Language, Mode};
 
 pub const LANGUAGE: Language = Language {
     name: "python",
-    extensions: &["py"],
+    extensions: &["py", "pyi", "pyw"],
     grammar: tree_sitter_python::LANGUAGE,
     anchors_query: ANCHORS,
     mode: Mode::Symbols,

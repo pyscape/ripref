@@ -357,7 +357,13 @@ mod tests {
     fn for_extension_maps_known_and_unknown() {
         assert_eq!(for_extension(Some("rs")).map(|l| l.name), Some("rust"));
         assert_eq!(for_extension(Some("md")).map(|l| l.name), Some("markdown"));
-        assert_eq!(for_extension(Some("py")).map(|l| l.name), Some("python"));
+        for ext in ["py", "pyi", "pyw"] {
+            assert_eq!(
+                for_extension(Some(ext)).map(|l| l.name),
+                Some("python"),
+                "{ext}"
+            );
+        }
         assert!(for_extension(Some("xyz")).is_none());
         assert!(for_extension(None).is_none());
     }

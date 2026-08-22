@@ -134,6 +134,6 @@ definitions, a good starting point.
 | [`markdown`](markdown.rs) | `.md`, `.markdown` | ATX headings as records and headings, spanning their sections                                     |
 | [`rust`](rust.rs)         | `.rs`              | functions & methods, structs, enums, unions, traits, type aliases, consts, statics, modules, macros, spanning their definitions |
 | [`gherkin`](gherkin.rs)   | `.feature`         | `Feature`/`Rule`/`Scenario`/`Scenario Outline`/`Example` keywords as titled regions                |
-| [`python`](python.rs)     | `.py`              | functions, methods and classes, spanning their definitions (a decorated `def` spans from `def`, not its decorators) |
+| [`python`](python.rs)     | `.py`, `.pyi`, `.pyw` | functions, methods and classes, spanning their definitions (a decorated `def` spans from `def`, not its decorators) |
 
 [Tree-sitter]: https://tree-sitter.github.io/
