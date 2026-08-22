@@ -29,17 +29,12 @@ pub mod scan;
 
 use cli::{ParseOutcome, Special, Subcommand};
 
-/// Exit codes, one model across the verbs `[[rr:AD-4]]`: every verb asks a
-/// question, and the code reports how it was answered.
+/// Exit codes, one model across the verbs: `[[rr:AD-4]]` fixes them and
+/// `[[rr:Shared options]]` spells each one out for a user.
 pub mod exit {
-    /// The question got its answer.
     pub const OK: u8 = 0;
-    /// The adverse answer: nothing found, an ambiguous resolution, no
-    /// matching marker, or `verify` findings.
     pub const ADVERSE: u8 = 1;
-    /// Usage error (bad flags, bad reference syntax).
     pub const USAGE: u8 = 2;
-    /// The index is stale — rebuild with `rr index`, or fall back to ripgrep.
     pub const STALE: u8 = 3;
 }
 

@@ -14,17 +14,15 @@ use std::path::Path;
 /// The compiled-in defaults: the same rr.toml that documents them.
 const DEFAULTS: &str = include_str!("../rr.toml");
 
-/// The keys the binary reads.
+/// The keys the binary reads; `[[rr:Configuration]]` is what they mean
+/// to a user, and `rr.toml` is the shipped default for each.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
-    /// `[verify] in-scope`: the globs whose files the gate and the scanners
-    /// read.
+    /// `[verify] in-scope`
     pub verify_in_scope: Vec<String>,
-    /// `[verify] exclude`: globs subtracted from the scope.
+    /// `[verify] exclude`
     pub verify_exclude: Vec<String>,
-    /// `[verify] rules`: which of the six finding kinds this profile
-    /// reports. `[[rr:AD-3]]` fixes the six; a profile picks among them, and
-    /// an empty list disables the gate.
+    /// `[verify] rules`
     pub verify_rules: Vec<String>,
     /// `[scan.<lang>] eligible`, one entry per language named so far, in the
     /// order first declared. A later layer's `eligible` for the same

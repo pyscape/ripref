@@ -24,8 +24,7 @@ use crate::marker;
 use crate::refidx::{self, AnchorHit, Reader};
 use crate::scan::{self, What};
 
-/// `rr index` — build/refresh the index from the working tree: anchors and
-/// path mentions.
+/// `[[rr:help_text]]`
 pub fn run_index(args: &LowArgs) -> Result<u8, String> {
     let root = Path::new(".");
     let index_path = PathBuf::from(cli::index_path(args));
@@ -190,8 +189,7 @@ fn resolve(reader: &Reader, anchor: &str) -> Vec<(String, u64, u64)> {
     Vec::new()
 }
 
-/// `rr read <ref>` — resolve a marker, or a bare anchor, to the anchor's
-/// definition locations. The reader strips a pasted marker's wrapper and
+/// `[[rr:help_text]]`. The reader strips a pasted marker's wrapper and
 /// unescapes before resolving `[[rr:AD-2]]`; a token that opens like a
 /// marker but is not one is a usage error, never a silent reparse.
 pub fn run_read(args: &LowArgs) -> Result<u8, String> {
@@ -238,9 +236,7 @@ pub fn run_read(args: &LowArgs) -> Result<u8, String> {
     })
 }
 
-/// `rr at <file>:<line>` — the marker for the innermost anchor whose
-/// definition covers the line; the inverse of `read`. `--all` reports the
-/// whole covering nest, outermost first.
+/// `[[rr:help_text]]`. The inverse of `run_read`.
 pub fn run_at(args: &LowArgs) -> Result<u8, String> {
     let root = Path::new(".");
     let index_path = PathBuf::from(cli::index_path(args));
@@ -414,9 +410,8 @@ fn scoped_files(
     Ok(out)
 }
 
-/// `rr search <anchor> [<path>...]`, or `--markers`/`--mentions` in place
-/// of the anchor. Purely lexical: no index is read, so it never returns
-/// stale.
+/// `[[rr:help_text]]`. Purely lexical: no index is read, so it never
+/// returns stale.
 pub fn run_search(args: &LowArgs) -> Result<u8, String> {
     let root = Path::new(".");
     let cfg = config::load(root);
@@ -565,10 +560,9 @@ struct Finding {
     detail: String,
 }
 
-/// `rr verify` — the gate: judge the references scoped text writes and
-/// report findings of the six kinds of `[[rr:AD-3]]`. Resolution judgments
-/// need the index, so a stale index exits 3 rather than judging from stale
-/// data; mention judgments run against the live tree.
+/// `[[rr:help_text]]`, reporting the six kinds of `[[rr:AD-3]]`. Resolution
+/// judgments need the index, so a stale index exits 3 rather than judging
+/// from stale data; mention judgments run against the live tree.
 pub fn run_verify(args: &LowArgs) -> Result<u8, String> {
     let root = Path::new(".");
     let index_path = PathBuf::from(cli::index_path(args));
@@ -607,10 +601,7 @@ pub fn run_verify(args: &LowArgs) -> Result<u8, String> {
                         }
                     }
                     What::Mention { token, line_ref } => {
-                        // The judgment guard of AD-5: only a token whose
-                        // first segment names a real directory (or scope
-                        // root) is judged, so prose compounds never reach a
-                        // finding.
+                        // [[rr:doc/ad/0005-path-mentions.md#Decision outcome]]
                         let first = token.split('/').next().unwrap_or("");
                         if first.is_empty() || !root.join(first).is_dir() {
                             continue;

@@ -448,8 +448,8 @@ rrtest!(
 rrtest!(
     verify_rules_select_the_reported_kinds,
     |mut dir: Dir, mut cmd: TestCommand| {
-        // AD-5 judges a `path:line` only when its first segment is a real
-        // directory, so the reference is qualified and `src/` exists.
+        // [[rr:doc/ad/0005-path-mentions.md#Decision outcome]], hence the
+        // qualified path and the real directory beside it.
         dir.file("src/parser.go", "package x\n")
             .file("a.md", "# T\n\nbad [[rr:nope]] and src/parser.go:42 here\n");
         let rules = |list: &str| format!("[verify]\nrules = [{list}]\n");

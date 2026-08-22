@@ -1,5 +1,6 @@
 //! Tier 3 grammar conformance: a differential test of `ripref::marker::decode`
-//! against the *canonical AD-2 regex*, run via scripts/marker_regex_oracle.py.
+//! against the canonical regex of `[[rr:AD-2]]`, run via
+//! scripts/marker_regex_oracle.py.
 //!
 //! Zero Cargo dependency: the oracle is an external `python3` process, gated
 //! like the repo's git-gated tests — absent the runner, the test skips rather
