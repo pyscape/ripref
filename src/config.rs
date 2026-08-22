@@ -28,21 +28,21 @@ pub struct Config {
 }
 
 /// `[[rr:AD-1#Decision outcome]]`
-pub fn load(root: &Path) -> Config {
+pub fn load(root: &Path) -> Result<Config, String> {
     let mut cfg = Config {
         verify_in_scope: Vec::new(),
         verify_exclude: Vec::new(),
         verify_rules: Vec::new(),
         scan: Vec::new(),
     };
-    apply(DEFAULTS, &mut cfg);
+    apply(DEFAULTS, &mut cfg).map_err(|e| format!("built-in rr.toml: {e}"))?;
     if let Ok(text) = std::fs::read_to_string(root.join(".rr.toml")) {
-        apply(&text, &mut cfg);
+        apply(&text, &mut cfg).map_err(|e| format!(".rr.toml: {e}"))?;
     }
-    cfg
+    Ok(cfg)
 }
 
-fn apply(text: &str, cfg: &mut Config) {
+fn apply(text: &str, cfg: &mut Config) -> Result<(), String> {
     let mut section = String::new();
     let mut lines = text.lines();
     while let Some(line) = lines.next() {
@@ -64,8 +64,19 @@ fn apply(text: &str, cfg: &mut Config) {
         // no line boundary left to stop a later line's content from being
         // read as part of an earlier line's "# ...".
         let mut value = strip_comment(value).trim().to_string();
-        while open_brackets(&value) > 0 {
-            let Some(next) = lines.next() else { break };
+        loop {
+            let (depth, quote) = tally(&value);
+            // A truncated value reads as a deliberately short list, so it
+            // is rejected like an unknown name. [[rr:Configuration]]
+            if quote != Quote::Outside {
+                return Err(format!("unterminated string in value for {key:?}"));
+            }
+            if depth <= 0 {
+                break;
+            }
+            let Some(next) = lines.next() else {
+                return Err(format!("unterminated array in value for {key:?}"));
+            };
             value.push(' ');
             value.push_str(strip_comment(next).trim());
         }
@@ -87,6 +98,7 @@ fn apply(text: &str, cfg: &mut Config) {
             }
         }
     }
+    Ok(())
 }
 
 fn unquote(s: &str) -> &str {
@@ -131,10 +143,12 @@ fn strip_comment(line: &str) -> &str {
     line
 }
 
+/// Bracket depth and quote state at the end of `value`.
+///
 /// `value` is always already comment-free (`apply` strips each line
 /// before it's kept), so unlike `strip_comment` this never needs to watch
 /// for `#`.
-fn open_brackets(value: &str) -> i32 {
+fn tally(value: &str) -> (i32, Quote) {
     let mut depth = 0;
     let mut quote = Quote::Outside;
     for c in value.chars() {
@@ -145,7 +159,7 @@ fn open_brackets(value: &str) -> i32 {
         }
         quote = quote.step(c);
     }
-    depth
+    (depth, quote)
 }
 
 fn strings_in(value: &str) -> Vec<String> {
@@ -193,7 +207,7 @@ mod tests {
             verify_rules: Vec::new(),
             scan: Vec::new(),
         };
-        apply(DEFAULTS, &mut cfg);
+        apply(DEFAULTS, &mut cfg).unwrap();
         assert_eq!(cfg.verify_in_scope, vec!["**/*.md"]);
         assert!(cfg.verify_exclude.is_empty());
     }
@@ -205,7 +219,7 @@ mod tests {
         assert_eq!(strings_in(r#"["it's"]"#), ["it's"]);
         assert_eq!(strings_in(r#"['say "hi"']"#), [r#"say "hi""#]);
         assert_eq!(strip_comment("k = ['a#b'] # c"), "k = ['a#b'] ");
-        assert_eq!(open_brackets("k = ['a['"), 1);
+        assert_eq!(tally("k = ['a['").0, 1);
 
         let mut cfg = Config {
             verify_in_scope: Vec::new(),
@@ -216,7 +230,8 @@ mod tests {
         apply(
             "[verify]\nin-scope = ['**/*.md']\nrules = ['path-line']\n",
             &mut cfg,
-        );
+        )
+        .unwrap();
         assert_eq!(cfg.verify_in_scope, ["**/*.md"]);
         assert_eq!(cfg.verify_rules, ["path-line"]);
     }
@@ -230,7 +245,7 @@ mod tests {
             scan: Vec::new(),
         };
         let mut cfg = blank();
-        apply(DEFAULTS, &mut cfg);
+        apply(DEFAULTS, &mut cfg).unwrap();
         assert_eq!(
             cfg.verify_rules,
             [
@@ -246,16 +261,17 @@ mod tests {
 
         // Empty is a value, not an absence: it disables the gate.
         let mut cfg = blank();
-        apply(DEFAULTS, &mut cfg);
-        apply("[verify]\nrules = []\n", &mut cfg);
+        apply(DEFAULTS, &mut cfg).unwrap();
+        apply("[verify]\nrules = []\n", &mut cfg).unwrap();
         assert!(cfg.verify_rules.is_empty());
 
         let mut cfg = blank();
-        apply(DEFAULTS, &mut cfg);
+        apply(DEFAULTS, &mut cfg).unwrap();
         apply(
             "[verify]\nrules = [\"dangling-marker\", \"stale-mention\"]\n",
             &mut cfg,
-        );
+        )
+        .unwrap();
         assert_eq!(cfg.verify_rules, ["dangling-marker", "stale-mention"]);
     }
 
@@ -267,7 +283,7 @@ mod tests {
             verify_rules: Vec::new(),
             scan: Vec::new(),
         };
-        apply("[verify]\nexclude = [\"tests/data/**\"]\n", &mut cfg);
+        apply("[verify]\nexclude = [\"tests/data/**\"]\n", &mut cfg).unwrap();
         assert_eq!(cfg.verify_in_scope, vec!["**/*.md"], "untouched key stands");
         assert_eq!(cfg.verify_exclude, vec!["tests/data/**"]);
     }
@@ -281,7 +297,7 @@ mod tests {
             verify_rules: Vec::new(),
             scan: Vec::new(),
         };
-        apply(text, &mut cfg);
+        apply(text, &mut cfg).unwrap();
         assert_eq!(cfg.verify_in_scope, vec!["a/**", "b/**"]);
     }
 
@@ -293,12 +309,12 @@ mod tests {
             verify_rules: Vec::new(),
             scan: Vec::new(),
         };
-        apply("[scan.python]\neligible = [\"comments\"]\n", &mut cfg);
+        apply("[scan.python]\neligible = [\"comments\"]\n", &mut cfg).unwrap();
         assert_eq!(
             cfg.scan,
             vec![("python".to_string(), vec!["comments".to_string()])]
         );
-        apply("[scan.python]\neligible = [\"prose\"]\n", &mut cfg);
+        apply("[scan.python]\neligible = [\"prose\"]\n", &mut cfg).unwrap();
         assert_eq!(
             cfg.scan,
             vec![("python".to_string(), vec!["prose".to_string()])]
@@ -313,7 +329,7 @@ mod tests {
             verify_rules: Vec::new(),
             scan: Vec::new(),
         };
-        apply("[scan.\"python\"]\neligible = [\"comments\"]\n", &mut cfg);
+        apply("[scan.\"python\"]\neligible = [\"comments\"]\n", &mut cfg).unwrap();
         assert_eq!(
             cfg.scan,
             vec![("python".to_string(), vec!["comments".to_string()])]
@@ -337,7 +353,8 @@ mod tests {
             "[verify]\n\"in-scope\" = [\"a/**\"]\n'rules' = [\"path-line\"]\n\n\
              [scan.python]\n\"eligible\" = [\"comments\"]\n",
             &mut cfg,
-        );
+        )
+        .unwrap();
         assert_eq!(cfg.verify_in_scope, ["a/**"]);
         assert_eq!(cfg.verify_rules, ["path-line"]);
         assert_eq!(
@@ -357,11 +374,35 @@ mod tests {
         apply(
             "[scan.rust]\neligible = [\"comments\"] # not \"all\"\n",
             &mut cfg,
-        );
+        )
+        .unwrap();
         assert_eq!(
             cfg.scan,
             vec![("rust".to_string(), vec!["comments".to_string()])]
         );
+    }
+
+    #[test]
+    fn an_unterminated_value_is_an_error_not_a_short_list() {
+        let blank = || Config {
+            verify_in_scope: Vec::new(),
+            verify_exclude: Vec::new(),
+            verify_rules: Vec::new(),
+            scan: Vec::new(),
+        };
+
+        let err = apply("[verify]\nrules = [\"path-line", &mut blank()).unwrap_err();
+        assert!(err.contains("unterminated string"), "{err}");
+
+        let err = apply(
+            "[verify]\nrules = [\"path-line\", 'dangling-marker\"]\n",
+            &mut blank(),
+        )
+        .unwrap_err();
+        assert!(err.contains("unterminated string"), "{err}");
+
+        let err = apply("[verify]\nrules = [\n  \"path-line\",\n", &mut blank()).unwrap_err();
+        assert!(err.contains("unterminated array"), "{err}");
     }
 
     #[test]

@@ -58,7 +58,7 @@ fn bench_build(c: &mut Criterion) {
     for &n in SCALES {
         let root = make_corpus(n);
         let index_path = index_path_for(&root);
-        let cfg = config::load(&root);
+        let cfg = config::load(&root).unwrap();
         let scope = config::scope_matcher(&root, &cfg).unwrap();
 
         // Correctness guard: require that language extraction fired. A healthy
@@ -94,7 +94,7 @@ fn bench_serialize(c: &mut Criterion) {
         // and reuse it; the temp tree exists only long enough to produce it.
         let root = make_corpus(n);
         let index_path = index_path_for(&root);
-        let cfg = config::load(&root);
+        let cfg = config::load(&root).unwrap();
         let scope = config::scope_matcher(&root, &cfg).unwrap();
         let data: IndexData = indexer::build(&root, &index_path, &scope, &cfg).unwrap();
         std::fs::remove_dir_all(&root).ok();

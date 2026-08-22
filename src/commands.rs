@@ -28,7 +28,7 @@ use crate::scan::{self, What};
 pub fn run_index(args: &LowArgs) -> Result<u8, String> {
     let root = Path::new(".");
     let index_path = PathBuf::from(cli::index_path(args));
-    let cfg = config::load(root);
+    let cfg = config::load(root)?;
     let scope = config::scope_matcher(root, &cfg)?;
 
     let data = indexer::build(root, &index_path, &scope, &cfg)
@@ -425,7 +425,7 @@ fn scoped_files(
 /// returns stale.
 pub fn run_search(args: &LowArgs) -> Result<u8, String> {
     let root = Path::new(".");
-    let cfg = config::load(root);
+    let cfg = config::load(root)?;
     let matcher = config::scope_matcher(root, &cfg)?;
     // [[rr:AD-3#Decision outcome]]
     let takes_anchor = !(args.markers || args.mentions);
@@ -576,7 +576,7 @@ struct Finding {
 pub fn run_verify(args: &LowArgs) -> Result<u8, String> {
     let root = Path::new(".");
     let index_path = PathBuf::from(cli::index_path(args));
-    let cfg = config::load(root);
+    let cfg = config::load(root)?;
     let matcher = config::scope_matcher(root, &cfg)?;
     let paths: Vec<String> = args
         .positional
