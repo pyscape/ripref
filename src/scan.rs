@@ -506,6 +506,7 @@ mod tests {
         let cfg = Config {
             verify_in_scope: Vec::new(),
             verify_exclude: Vec::new(),
+            verify_rules: Vec::new(),
             scan: vec![("python".to_string(), vec!["comments".to_string()])],
         };
         assert_eq!(host_for(Some("md"), &cfg), Host::Markdown);
@@ -519,6 +520,7 @@ mod tests {
         let bare = Config {
             verify_in_scope: Vec::new(),
             verify_exclude: Vec::new(),
+            verify_rules: Vec::new(),
             scan: Vec::new(),
         };
         assert_eq!(host_for(Some("py"), &bare), Host::Plain); // no [scan.python] at all

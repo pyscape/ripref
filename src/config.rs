@@ -22,6 +22,10 @@ pub struct Config {
     pub verify_in_scope: Vec<String>,
     /// `[verify] exclude`: globs subtracted from the scope.
     pub verify_exclude: Vec<String>,
+    /// `[verify] rules`: which of the six finding kinds this profile
+    /// reports. `[[rr:AD-3]]` fixes the six; a profile picks among them, and
+    /// an empty list disables the gate.
+    pub verify_rules: Vec<String>,
     /// `[scan.<lang>] eligible`, one entry per language named so far, in the
     /// order first declared. A later layer's `eligible` for the same
     /// language replaces the entry wholesale rather than appending.
@@ -34,6 +38,7 @@ pub fn load(root: &Path) -> Config {
     let mut cfg = Config {
         verify_in_scope: Vec::new(),
         verify_exclude: Vec::new(),
+        verify_rules: Vec::new(),
         scan: Vec::new(),
     };
     apply(DEFAULTS, &mut cfg);
@@ -76,6 +81,7 @@ fn apply(text: &str, cfg: &mut Config) {
             match key {
                 "in-scope" => cfg.verify_in_scope = strings_in(&value),
                 "exclude" => cfg.verify_exclude = strings_in(&value),
+                "rules" => cfg.verify_rules = strings_in(&value),
                 _ => {}
             }
         } else if let Some(lang) = section.strip_prefix("scan.") {
@@ -164,6 +170,7 @@ mod tests {
         let mut cfg = Config {
             verify_in_scope: Vec::new(),
             verify_exclude: Vec::new(),
+            verify_rules: Vec::new(),
             scan: Vec::new(),
         };
         apply(DEFAULTS, &mut cfg);
@@ -172,10 +179,49 @@ mod tests {
     }
 
     #[test]
+    fn verify_rules_default_to_the_six_and_are_replaced_wholesale() {
+        let blank = || Config {
+            verify_in_scope: Vec::new(),
+            verify_exclude: Vec::new(),
+            verify_rules: Vec::new(),
+            scan: Vec::new(),
+        };
+        let mut cfg = blank();
+        apply(DEFAULTS, &mut cfg);
+        assert_eq!(
+            cfg.verify_rules,
+            [
+                "malformed-marker",
+                "dangling-marker",
+                "ambiguous-marker",
+                "path-only-marker",
+                "path-line",
+                "stale-mention",
+            ],
+            "the six kinds rr.toml lists"
+        );
+
+        // Empty is a value, not an absence: it disables the gate.
+        let mut cfg = blank();
+        apply(DEFAULTS, &mut cfg);
+        apply("[verify]\nrules = []\n", &mut cfg);
+        assert!(cfg.verify_rules.is_empty());
+
+        let mut cfg = blank();
+        apply(DEFAULTS, &mut cfg);
+        apply(
+            "[verify]\nrules = [\"dangling-marker\", \"stale-mention\"]\n",
+            &mut cfg,
+        );
+        assert_eq!(cfg.verify_rules, ["dangling-marker", "stale-mention"]);
+    }
+
+    #[test]
     fn project_layer_replaces_per_key() {
         let mut cfg = Config {
             verify_in_scope: vec!["**/*.md".into()],
             verify_exclude: Vec::new(),
+            verify_rules: Vec::new(),
             scan: Vec::new(),
         };
         apply("[verify]\nexclude = [\"tests/data/**\"]\n", &mut cfg);
@@ -189,6 +235,7 @@ mod tests {
         let mut cfg = Config {
             verify_in_scope: Vec::new(),
             verify_exclude: Vec::new(),
+            verify_rules: Vec::new(),
             scan: Vec::new(),
         };
         apply(text, &mut cfg);
@@ -200,6 +247,7 @@ mod tests {
         let mut cfg = Config {
             verify_in_scope: Vec::new(),
             verify_exclude: Vec::new(),
+            verify_rules: Vec::new(),
             scan: Vec::new(),
         };
         apply("[scan.python]\neligible = [\"comments\"]\n", &mut cfg);
@@ -219,6 +267,7 @@ mod tests {
         let mut cfg = Config {
             verify_in_scope: Vec::new(),
             verify_exclude: Vec::new(),
+            verify_rules: Vec::new(),
             scan: Vec::new(),
         };
         apply("[scan.\"python\"]\neligible = [\"comments\"]\n", &mut cfg);
@@ -233,6 +282,7 @@ mod tests {
         let mut cfg = Config {
             verify_in_scope: Vec::new(),
             verify_exclude: Vec::new(),
+            verify_rules: Vec::new(),
             scan: Vec::new(),
         };
         apply(
@@ -250,6 +300,7 @@ mod tests {
         let cfg = Config {
             verify_in_scope: vec!["**/*.md".into()],
             verify_exclude: vec!["tests/data/**".into()],
+            verify_rules: Vec::new(),
             scan: Vec::new(),
         };
         let m = scope_matcher(Path::new("."), &cfg).unwrap();
