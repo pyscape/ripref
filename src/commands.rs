@@ -9,6 +9,8 @@ usage-level failure the caller reports as exit `2`. Output shapes and exit
 codes follow `[[rr:AD-4]]`.
 */
 
+use std::collections::HashSet;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use memmap2::Mmap;
@@ -46,8 +48,9 @@ pub fn run_index(args: &LowArgs) -> Result<u8, String> {
     atomic::atomic_write(&index_path, &bytes)
         .map_err(|e| format!("failed to write {}: {e}", index_path.display()))?;
 
-    match args.format {
-        OutputFormat::Json => println!(
+    emit(exit::OK, |w| match args.format {
+        OutputFormat::Json => writeln!(
+            w,
             "{}",
             envelope(
                 "index",
@@ -59,15 +62,15 @@ pub fn run_index(args: &LowArgs) -> Result<u8, String> {
                 ),
             )
         ),
-        OutputFormat::Text if args.quiet => {}
-        OutputFormat::Text => println!(
+        OutputFormat::Text if args.quiet => Ok(()),
+        OutputFormat::Text => writeln!(
+            w,
             "indexed {} anchors and {} path mentions across {} files",
             data.forward.len(),
             data.mentions.len(),
             data.paths.len()
         ),
-    }
-    Ok(exit::OK)
+    })
 }
 
 /// Open the index, mmap it, parse the header, and gate on freshness before
@@ -199,36 +202,39 @@ pub fn run_read(args: &LowArgs) -> Result<u8, String> {
 
     with_fresh_reader(&index_path, root, args.no_freshness, |reader| {
         let locations = resolve(reader, &anchor);
-        if args.format == OutputFormat::Json {
-            let mut data = String::from(r#"{"anchor":"#);
-            push_json_str(&mut data, &anchor);
-            data.push_str(",\"locations\":[");
-            for (i, loc) in locations.iter().enumerate() {
-                if i > 0 {
-                    data.push(',');
-                }
-                push_location(&mut data, &loc.0, loc.1, loc.2);
-            }
-            data.push_str("]}");
-            println!("{}", envelope("read", &data));
+        let code = if locations.len() == 1 {
+            exit::OK
         } else {
-            for (file, start, end) in &locations {
-                println!("{file}:{start}-{end}");
+            exit::ADVERSE
+        };
+        let code = emit(code, |w| {
+            if args.format == OutputFormat::Json {
+                let mut data = String::from(r#"{"anchor":"#);
+                push_json_str(&mut data, &anchor);
+                data.push_str(",\"locations\":[");
+                for (i, loc) in locations.iter().enumerate() {
+                    if i > 0 {
+                        data.push(',');
+                    }
+                    push_location(&mut data, &loc.0, loc.1, loc.2);
+                }
+                data.push_str("]}");
+                writeln!(w, "{}", envelope("read", &data))
+            } else {
+                for (file, start, end) in &locations {
+                    writeln!(w, "{file}:{start}-{end}")?;
+                }
+                Ok(())
             }
-        }
+        })?;
         match locations.len() {
-            0 => {
-                eprintln!("no such anchor: {anchor}");
-                Ok(exit::ADVERSE)
-            }
-            1 => Ok(exit::OK),
-            n => {
-                eprintln!(
-                    "ambiguous anchor: {anchor} resolves to {n} definitions (add a path qualifier)"
-                );
-                Ok(exit::ADVERSE)
-            }
+            0 => eprintln!("no such anchor: {anchor}"),
+            1 => {}
+            n => eprintln!(
+                "ambiguous anchor: {anchor} resolves to {n} definitions (add a path qualifier)"
+            ),
         }
+        Ok(code)
     })
 }
 
@@ -268,27 +274,25 @@ pub fn run_at(args: &LowArgs) -> Result<u8, String> {
             })
             .collect();
 
-        match args.format {
-            OutputFormat::Json => println!("{}", envelope("at", &at_json(&forms))),
-            OutputFormat::Text if forms.is_empty() => {
-                eprintln!("no anchor covers {file}:{line}");
-            }
-            OutputFormat::Text => println!("{}", at_text(&forms)),
-        }
+        let code = if forms.is_empty() || (!args.all && forms.len() > 1) {
+            exit::ADVERSE
+        } else {
+            exit::OK
+        };
+        let code = emit(code, |w| match args.format {
+            OutputFormat::Json => writeln!(w, "{}", envelope("at", &at_json(&forms))),
+            OutputFormat::Text if forms.is_empty() => Ok(()),
+            OutputFormat::Text => writeln!(w, "{}", at_text(&forms)),
+        })?;
         if forms.is_empty() {
-            if args.format == OutputFormat::Json {
-                eprintln!("no anchor covers {file}:{line}");
-            }
-            Ok(exit::ADVERSE)
+            eprintln!("no anchor covers {file}:{line}");
         } else if !args.all && forms.len() > 1 {
             eprintln!(
                 "ambiguous: {} anchors tie on the innermost span",
                 forms.len()
             );
-            Ok(exit::ADVERSE)
-        } else {
-            Ok(exit::OK)
         }
+        Ok(code)
     })
 }
 
@@ -340,15 +344,32 @@ fn scoped_files(
     paths: &[String],
 ) -> Result<Vec<ScopedFile>, String> {
     if !paths.is_empty() {
+        let root_abs = root
+            .canonicalize()
+            .map_err(|e| format!("cannot resolve {}: {e}", root.display()))?;
         let mut out = Vec::with_capacity(paths.len());
+        let mut seen = HashSet::new();
         for raw in paths {
-            let rel = raw.replace('\\', "/");
-            let abs = root.join(&rel);
+            let given = raw.replace('\\', "/");
+            let abs = root.join(&given);
             if !abs.is_file() {
-                return Err(format!("not a file: {rel}"));
+                return Err(format!("not a file: {given}"));
+            }
+            // Canonicalize to fold away `./` and `..` before the bound check,
+            // so no spelling of a path reaches past the root.
+            let abs = abs
+                .canonicalize()
+                .map_err(|e| format!("cannot read {given}: {e}"))?;
+            let rel = abs
+                .strip_prefix(&root_abs)
+                .map_err(|_| format!("outside the tree: {given}"))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            if !seen.insert(rel.clone()) {
+                continue;
             }
             let content =
-                std::fs::read_to_string(&abs).map_err(|e| format!("cannot read {rel}: {e}"))?;
+                std::fs::read_to_string(&abs).map_err(|e| format!("cannot read {given}: {e}"))?;
             let ext = rel.rsplit('.').next();
             out.push(ScopedFile {
                 host: scan::host_for(ext, cfg),
@@ -455,18 +476,21 @@ pub fn run_search(args: &LowArgs) -> Result<u8, String> {
     }
     json.push_str("]}");
 
-    if args.format == OutputFormat::Json {
-        println!("{}", envelope("search", &json));
-    } else {
-        for line in &lines {
-            println!("{line}");
+    let code = if count > 0 { exit::OK } else { exit::ADVERSE };
+    emit(code, |w| {
+        if args.format == OutputFormat::Json {
+            writeln!(w, "{}", envelope("search", &json))
+        } else {
+            for line in &lines {
+                writeln!(w, "{line}")?;
+            }
+            writeln!(
+                w,
+                "{count} {}",
+                if args.mentions { "mentions" } else { "markers" }
+            )
         }
-        println!(
-            "{count} {}",
-            if args.mentions { "mentions" } else { "markers" }
-        );
-    }
-    Ok(if count > 0 { exit::OK } else { exit::ADVERSE })
+    })
 }
 
 /// Whether a search filter matches a decoded marker anchor: an unqualified
@@ -554,33 +578,50 @@ pub fn run_verify(args: &LowArgs) -> Result<u8, String> {
             }
         }
 
-        if args.format == OutputFormat::Json {
-            let mut data = String::from(r#"{"findings":["#);
-            for (i, f) in findings.iter().enumerate() {
-                if i > 0 {
-                    data.push(',');
-                }
-                data.push_str("{\"file\":");
-                push_json_str(&mut data, &f.file);
-                data.push_str(&format!(",\"line\":{}", f.line));
-                data.push_str(",\"rule\":");
-                push_json_str(&mut data, f.rule);
-                data.push('}');
-            }
-            data.push_str("]}");
-            println!("{}", envelope("verify", &data));
-        } else {
-            for f in &findings {
-                println!("{}:{}: {}: {}", f.file, f.line, f.rule, f.detail);
-            }
-            println!("{} findings", findings.len());
-        }
-        Ok(if findings.is_empty() {
+        let code = if findings.is_empty() {
             exit::OK
         } else {
             exit::ADVERSE
+        };
+        emit(code, |w| {
+            if args.format == OutputFormat::Json {
+                let mut data = String::from(r#"{"findings":["#);
+                for (i, f) in findings.iter().enumerate() {
+                    if i > 0 {
+                        data.push(',');
+                    }
+                    data.push_str("{\"file\":");
+                    push_json_str(&mut data, &f.file);
+                    data.push_str(&format!(",\"line\":{}", f.line));
+                    data.push_str(",\"rule\":");
+                    push_json_str(&mut data, f.rule);
+                    data.push('}');
+                }
+                data.push_str("]}");
+                writeln!(w, "{}", envelope("verify", &data))
+            } else {
+                for f in &findings {
+                    writeln!(w, "{}:{}: {}: {}", f.file, f.line, f.rule, f.detail)?;
+                }
+                writeln!(w, "{} findings", findings.len())
+            }
         })
     })
+}
+
+/// A reader that closed the pipe (`rr verify | head`) has what it asked for,
+/// so `BrokenPipe` keeps `code` rather than failing the run: [[rr:AD-4]]
+/// codes report how the question was answered, not whether anyone read the
+/// whole answer. Flushed explicitly because `BufWriter`'s drop discards the
+/// error this exists to catch.
+fn emit(code: u8, write: impl FnOnce(&mut dyn Write) -> std::io::Result<()>) -> Result<u8, String> {
+    let stdout = std::io::stdout();
+    let mut out = BufWriter::new(stdout.lock());
+    match write(&mut out).and_then(|()| out.flush()) {
+        Ok(()) => Ok(code),
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(code),
+        Err(e) => Err(format!("cannot write to stdout: {e}")),
+    }
 }
 
 /// The one `rr-json` envelope every verb prints under `--format json`

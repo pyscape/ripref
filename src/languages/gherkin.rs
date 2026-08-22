@@ -24,17 +24,23 @@ const KEYWORDS: &[&str] = &[
 ];
 
 fn titles(content: &str) -> Vec<(String, u64)> {
-    content
-        .lines()
-        .enumerate()
-        .filter_map(|(row, line)| {
-            let trimmed = line.trim_start();
-            KEYWORDS
-                .iter()
-                .find_map(|kw| trimmed.strip_prefix(kw).map(|rest| (rest.trim(), row)))
-        })
-        .map(|(text, row)| (text.to_string(), row as u64))
-        .collect()
+    let mut out = Vec::new();
+    let mut in_docstring = false;
+    for (row, line) in content.lines().enumerate() {
+        let trimmed = line.trim_start();
+        // An opener may carry a media type (`"""json`); a closer never does.
+        if trimmed.starts_with("\"\"\"") {
+            in_docstring = !in_docstring;
+            continue;
+        }
+        if in_docstring {
+            continue;
+        }
+        if let Some(text) = KEYWORDS.iter().find_map(|kw| trimmed.strip_prefix(kw)) {
+            out.push((text.trim().to_string(), row as u64));
+        }
+    }
+    out
 }
 
 fn level(line: &str) -> u32 {
@@ -75,5 +81,34 @@ mod tests {
             "Invalid credentials".to_string(),
             "x.feature:6-7".to_string()
         )));
+    }
+
+    #[test]
+    fn a_keyword_inside_a_docstring_is_not_a_title() {
+        let src = concat!(
+            "Feature: Real\n",
+            "  Scenario: One\n",
+            "    Given a doc\n",
+            "      \"\"\"json\n",
+            "      Scenario: not a title\n",
+            "      \"\"\"\n",
+            "    And more\n",
+            "  Scenario: Two\n",
+            "    Given x\n",
+        );
+        let got: Vec<(String, String)> = LANGUAGE
+            .extract_from_str("x.feature", src)
+            .into_iter()
+            .map(|e| (e.anchor, e.location))
+            .collect();
+        assert_eq!(got.len(), 3, "{got:?}");
+        assert!(
+            got.contains(&("One".to_string(), "x.feature:2-7".to_string())),
+            "the docstring stays inside the scenario: {got:?}"
+        );
+        assert!(
+            got.contains(&("Two".to_string(), "x.feature:8-9".to_string())),
+            "{got:?}"
+        );
     }
 }

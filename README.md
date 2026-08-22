@@ -225,7 +225,9 @@ content and needs no version-control system.
 page-cached copy shared across every concurrent reader. `search` is purely
 lexical and reads no index at all, so it also runs on text outside any
 project. `verify` scans text the way `search` does, then judges what it finds
-against the index and the live tree.
+against the index and the live tree. Scope applies to the walk: a path named
+on the command line (`rr verify a.md`) is judged as named, whatever
+`in-scope` and `exclude` say.
 
 #### Freshness
 

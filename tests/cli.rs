@@ -466,6 +466,33 @@ rrtest!(
     }
 );
 
+// [[rr:AD-1]]
+rrtest!(
+    verify_named_paths_are_tree_paths,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file("a.md", "a dangling [[rr:nope]] here\n");
+        cmd.arg("index").assert_exit_code(0);
+
+        let out = cmd.args(["verify", "./a.md"]).run();
+        let s = String::from_utf8_lossy(&out.stdout);
+        assert!(s.contains("a.md:1:"), "{s}");
+        assert!(!s.contains("./a.md"), "the location is a tree path: {s}");
+
+        // Every spelling of one file is that one file.
+        let abs = dir.path().join("a.md");
+        let out = cmd.args(["verify", "a.md", "./a.md"]).arg(&abs).run();
+        let s = String::from_utf8_lossy(&out.stdout);
+        assert!(s.contains("1 findings"), "{s}");
+
+        let outside = dir.path().with_extension("outside.md");
+        std::fs::write(&outside, "a dangling [[rr:gone]] here\n").unwrap();
+        let name = outside.file_name().unwrap().to_string_lossy().into_owned();
+        cmd.args(["verify", &format!("../{name}")])
+            .assert_exit_code(2);
+        std::fs::remove_file(&outside).unwrap();
+    }
+);
+
 // --- the scenario kind -----------------------------------------------------------
 
 // [[rr:AD-1]]
@@ -505,6 +532,43 @@ rrtest!(
 
         let loc = cmd.args(["read", "move"]).stdout();
         assert_eq!(loc.trim(), "x.py:2-3");
+    }
+);
+
+// --- a reader that stops reading ---------------------------------------------------
+
+// A hook that pipes into `head` closes the pipe early. Rust starts with
+// SIGPIPE ignored, so the write returns EPIPE instead of killing the
+// process, and `println!` would panic (exit 101) on it.
+rrtest!(
+    broken_pipe_is_not_a_panic,
+    |mut dir: Dir, _cmd: TestCommand| {
+        // Enough findings to overrun the pipe buffer; a smaller answer lands
+        // in the buffer whole and the write never fails.
+        let body: String = (0..4000)
+            .map(|i| format!("a dangling [[rr:nope{i}]] here\n"))
+            .collect();
+        dir.file("big.md", &body);
+        dir.run(&["index"]);
+
+        for format in [&["verify"][..], &["verify", "--format", "json"]] {
+            let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_rr"))
+                .args(format)
+                .current_dir(dir.path())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("spawn rr");
+            drop(child.stdout.take());
+            let out = child.wait_with_output().expect("wait rr");
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert!(!stderr.contains("panicked"), "{format:?}: {stderr}");
+            assert_eq!(
+                out.status.code(),
+                Some(1),
+                "{format:?} keeps the answer's code: {stderr}"
+            );
+        }
     }
 );
 
