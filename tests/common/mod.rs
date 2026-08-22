@@ -1,10 +1,3 @@
-//! Shared fixtures for the `rr` integration tests.
-//!
-//! A [`Dir`] is a throwaway directory the real `rr` binary runs against. It
-//! creates its own fixture files and removes itself on drop, so each test below
-//! carries only the files it needs and the behavior it asserts — never
-//! scratch-dir bookkeeping.
-
 // Each integration-test binary that `mod common;`s this file compiles the whole
 // module but may exercise only part of it; without this, the unused part warns
 // in that binary. Standard for a shared `tests/common` helper.
@@ -27,8 +20,6 @@ pub struct Dir {
 }
 
 impl Dir {
-    /// A fresh, empty project. `tag` only flavors the directory name so stray
-    /// temp dirs are identifiable; uniqueness comes from pid + nanos.
     pub fn new(tag: &str) -> Self {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -39,7 +30,6 @@ impl Dir {
         Dir { dir }
     }
 
-    /// Write `contents` to `rel`, creating parent directories as needed.
     pub fn file(&mut self, rel: &str, contents: &str) -> &mut Self {
         self.write(rel, contents);
         self
@@ -55,9 +45,6 @@ impl Dir {
         std::fs::write(path, contents).unwrap();
     }
 
-    /// Run the `rr` binary with `args` in the project root. Returns raw
-    /// `Output`; use [`TestCommand`] (via [`Dir::command`]) for fluent
-    /// assertions.
     pub fn run(&self, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_rr"))
             .args(args)
@@ -75,7 +62,6 @@ impl Dir {
         }
     }
 
-    /// Copy a file from `tests/data/<fixture_rel>` into this directory at `dest_rel`.
     pub fn copy_fixture(&mut self, fixture_rel: &str, dest_rel: &str) -> &mut Self {
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/data")
@@ -124,7 +110,6 @@ impl TestCommand {
         self
     }
 
-    /// Drain accumulated args, spawn `rr`, and return the raw `Output`.
     pub fn run(&mut self) -> Output {
         let args = std::mem::take(&mut self.args);
         Command::new(&self.bin)
@@ -134,8 +119,6 @@ impl TestCommand {
             .unwrap_or_else(|e| panic!("failed to spawn rr: {e}"))
     }
 
-    /// Run and return stdout as a `String`. Panics if the process exits
-    /// non-zero.
     pub fn stdout(&mut self) -> String {
         let out = self.run();
         if !out.status.success() {
@@ -175,15 +158,12 @@ impl TestCommand {
     }
 }
 
-/// Create a named [`Dir`] and a pre-wired [`TestCommand`]. Called by
-/// [`rrtest!`].
 pub fn setup(name: &str) -> (Dir, TestCommand) {
     let dir = Dir::new(name);
     let cmd = dir.command();
     (dir, cmd)
 }
 
-/// The child's exit code, or a clear panic if it was killed by a signal.
 pub fn code(out: &Output) -> i32 {
     out.status.code().expect("process terminated by signal")
 }

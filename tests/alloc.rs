@@ -1,16 +1,12 @@
 //! Allocation pin for the index read path.
 //!
 //! [`Reader::forward_lookup`] and [`Reader::covering`] allocate O(n) in the
-//! index size on every call; this test pins that behavior so it cannot
-//! silently worsen, and BENCHMARKS.md carries the measured costs.
-//!
-//! Root cause: both methods call `split_records` (in the `refidx` module), which
-//! `.collect()`s a `Vec` of record slices over the ENTIRE forward section on
-//! every call. So each query allocates O(n) in the index size -- the same O(n)
-//! the `query` bench attributes to that per-call rebuild. A real in-place bisect
-//! (which the `forward_lookup` doc comment notes is possible) would allocate
-//! O(1); when that lands these bounds should drop toward zero and the
-//! scales-with-N assertions below should be inverted or deleted.
+//! index size on every call
+//! `[[rr:BENCHMARKS.md#Findings that hold on both platforms]]`. A real
+//! in-place bisect (which the `forward_lookup` doc comment notes is
+//! possible) would allocate O(1); when that lands these bounds should drop
+//! toward zero and the scales-with-N assertions below should be inverted or
+//! deleted.
 //!
 //! Key invariant: a CLEAN allocation counter requires exactly ONE test thread.
 //! Cargo runs the `#[test]` fns in a binary on parallel threads sharing this
@@ -48,7 +44,6 @@ unsafe impl GlobalAlloc for Counting {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        // Never subtract: `bytes` is a gross-allocated odometer, not a live gauge.
         System.dealloc(ptr, layout);
     }
 }
@@ -141,8 +136,6 @@ fn read_path_allocates_and_scales_with_index_size() {
     let small_reader = Reader::parse(&small_bytes).expect("small index must parse");
     let large_reader = Reader::parse(&large_bytes).expect("large index must parse");
 
-    // A hit anchor in the middle of each index, and a `file:line` some entry's
-    // span covers. Owned now so the measured call allocates nothing for them.
     let small_hit = small.forward[SMALL / 2].anchor.clone();
     let large_hit = large.forward[LARGE / 2].anchor.clone();
     let small_cover_file = location_file(&small.forward[SMALL / 2].location);
@@ -174,7 +167,6 @@ fn read_path_allocates_and_scales_with_index_size() {
         "large cover position must be covered"
     );
 
-    // MEASURE -- one call per snapshot pair, nothing else allocating between.
     let (fwd_small_b, _fwd_small_c) = measure(|| {
         black_box(small_reader.forward_lookup(black_box(&small_hit)));
     });
@@ -188,9 +180,6 @@ fn read_path_allocates_and_scales_with_index_size() {
         black_box(large_reader.covering(black_box(&large_cover_file), black_box(cover_line)));
     });
 
-    // forward_lookup: not allocation-free, and it allocates strictly more as
-    // the index grows -- O(n) per call, not the O(1)/O(log n) a true in-place
-    // bisect would cost.
     assert!(
         fwd_small_b > 0,
         "forward_lookup must allocate at N={SMALL}; got {fwd_small_b} B"
@@ -213,9 +202,6 @@ fn read_path_allocates_and_scales_with_index_size() {
     );
 }
 
-/// The `file` half of a `file:start-end` location, owned. Splits from the right
-/// so a colon inside the path keeps its prefix, mirroring the reader's own
-/// `parse_location`.
 fn location_file(loc: &str) -> String {
     loc.rsplit_once(':')
         .map(|(f, _)| f)

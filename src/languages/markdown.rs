@@ -1,7 +1,7 @@
-//! Markdown: ATX headings (`# ...` through `###### ...`) as titled regions,
-//! via the `tree-sitter-md` block grammar. The engine turns each title into a
-//! record or heading anchor spanning its whole section (`[[rr:AD-1]]`);
-//! editing the query below changes what counts as a title, nothing else.
+//! Markdown: ATX headings (`# ...` through `###### ...`) as the titled
+//! regions of `[[rr:doc/ad/0001-domain-model.md#Decision outcome]]`, via the
+//! `tree-sitter-md` block grammar. Editing the query below changes what
+//! counts as a title, nothing else.
 
 use crate::languages::{Language, Mode};
 

@@ -17,7 +17,7 @@ use std::process::{Command, Stdio};
 
 use ripref::marker::{decode, wrap, Decoded};
 
-/// Locate a Python interpreter, or `None` to skip (mirrors `git_available()`).
+/// `[[rr:git_available]]`, or `None` to skip.
 fn python() -> Option<&'static str> {
     for cand in ["python3", "python"] {
         let ok = Command::new(cand)
@@ -58,7 +58,6 @@ fn decode_matches_canonical_regex_oracle() {
         "/scripts/marker_regex_oracle.py"
     );
 
-    // The adversarial table (apples-to-apples through the real regex)...
     let mut corpus: Vec<String> = [
         "[[rr:a]]",
         "[[rr:]]",

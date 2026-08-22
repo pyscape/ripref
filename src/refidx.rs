@@ -15,11 +15,9 @@ than misparsing it.
 
 use std::collections::HashMap;
 
-/// Magic line pinning the format version; [`Reader::parse`] rejects any other
-/// value.
 pub const MAGIC: &str = "refidx v2";
 
-/// One forward-map entry: an anchor and a location where it is defined.
+/// `[[rr:doc/ad/0001-domain-model.md#Decision outcome]]`
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ForwardEntry {
     pub anchor: String,
@@ -27,7 +25,7 @@ pub struct ForwardEntry {
     pub location: String,
 }
 
-/// One mention-table entry: a path token and the location prose writes it at.
+/// `[[rr:doc/ad/0005-path-mentions.md#Decision outcome]]`
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MentionEntry {
     pub token: String,
@@ -47,7 +45,8 @@ pub struct AnchorHit {
     pub end_line: u64,
 }
 
-/// The logical contents of an index, before/after (de)serialization.
+/// `[[rr:doc/ad/0001-domain-model.md#Decision outcome]]`, before/after
+/// (de)serialization.
 #[derive(Clone, Debug, Default)]
 pub struct IndexData {
     /// Build time, Unix seconds — the freshness baseline.
@@ -60,8 +59,7 @@ pub struct IndexData {
     pub forward: Vec<ForwardEntry>,
     /// The mention table `[[rr:AD-5]]`. Sorted like `forward`.
     pub mentions: Vec<MentionEntry>,
-    /// Every in-scope path; backs the freshness check. [`serialize`] sorts it
-    /// before writing.
+    /// `[[rr:README.md#Freshness]]`
     pub paths: Vec<String>,
 }
 
@@ -163,8 +161,6 @@ pub struct Reader<'a> {
 }
 
 impl<'a> Reader<'a> {
-    /// Parse the header of an index image. Refuses an unknown magic version
-    /// rather than misparsing it.
     pub fn parse(bytes: &'a [u8]) -> Result<Reader<'a>, String> {
         let text =
             std::str::from_utf8(bytes).map_err(|_| "index is not valid UTF-8".to_string())?;
@@ -243,8 +239,8 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// Resolve an anchor through the forward map. Returns every matching
-    /// location (zero = not found, one = unique, more = ambiguous).
+    /// Resolve an anchor through the forward map.
+    /// `[[rr:doc/ad/0001-domain-model.md#Decision outcome]]`
     pub fn forward_lookup(&self, anchor: &str) -> Vec<String> {
         let slice = self.section("forward");
         let lines: Vec<&[u8]> = split_records(slice);
@@ -341,7 +337,7 @@ impl<'a> Reader<'a> {
             .collect()
     }
 
-    /// Every in-scope path recorded in the index (the freshness set).
+    /// `[[rr:README.md#Freshness]]`
     pub fn paths(&self) -> Vec<&'a str> {
         split_records(self.section("paths"))
             .into_iter()
@@ -357,8 +353,6 @@ fn next_line<'a, I: Iterator<Item = &'a str>>(lines: &mut I) -> Result<&'a str, 
         .ok_or_else(|| "index truncated in header".to_string())
 }
 
-/// Split a section body into its newline-terminated records (dropping the
-/// trailing empty element after the final `\n`).
 fn split_records(slice: &[u8]) -> Vec<&[u8]> {
     slice
         .split(|&b| b == b'\n')
@@ -366,8 +360,6 @@ fn split_records(slice: &[u8]) -> Vec<&[u8]> {
         .collect()
 }
 
-/// The binary-search key of a record: the text between its tag prefix and
-/// the first tab.
 fn record_key<'r>(line: &'r [u8], tag: &[u8]) -> &'r [u8] {
     let body = line.strip_prefix(tag).unwrap_or(line);
     match body.iter().position(|&b| b == b'\t') {
@@ -436,8 +428,6 @@ mod tests {
 
     #[test]
     fn section_offsets_point_at_real_data() {
-        // Proves the fixpoint produced consistent offsets: the parsed
-        // sections line up with the bytes the writer appended.
         let bytes = serialize(&sample());
         let r = Reader::parse(&bytes).unwrap();
         let fwd = std::str::from_utf8(r.section("forward")).unwrap();
@@ -538,15 +528,11 @@ mod tests {
         };
         assert_eq!(serialize(&one), serialize(&two));
 
-        // And the canonical order is by key, then location, so colliding
-        // records come out in location order regardless of input.
         let bytes = serialize(&one);
         let r = Reader::parse(&bytes).unwrap();
         assert_eq!(r.forward_lookup("dup"), vec!["a.rs:1-1", "z.rs:9-9"]);
     }
 
-    /// A truncated image whose header still parses but whose section bytes
-    /// are gone must be rejected as corrupt, never sliced out of bounds.
     #[test]
     fn parse_rejects_truncated_section_bytes() {
         let full = serialize(&sample());
@@ -603,8 +589,6 @@ mod tests {
         let bytes = serialize(&data);
         let r = Reader::parse(&bytes).unwrap();
 
-        // Outermost-first: doc (1-40) contains outer (8-30) contains inner
-        // (12-18).
         assert_eq!(
             covering_names(&r, "f.md", 15),
             vec!["doc", "outer", "inner"]
@@ -622,7 +606,6 @@ mod tests {
         assert_eq!(covering_names(&r, "f.md", 9), vec!["doc", "outer"]);
         // Past every span on f.md → nothing (drives the adverse exit).
         assert!(r.covering("f.md", 50).is_empty());
-        // Exact-file match: f.md records must not leak into a g.md query.
         assert_eq!(covering_names(&r, "g.md", 3), vec!["other"]);
     }
 

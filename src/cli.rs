@@ -161,12 +161,6 @@ impl FlagValue {
     }
 }
 
-/// The definition of one optional flag. A trimmed-down [ripgrep `Flag`]
-/// trait: long name (required), optional short name, whether it takes a
-/// value, the verbs it applies to, the documentation strings, and an
-/// `update` that folds the value into [`LowArgs`].
-///
-/// [ripgrep `Flag`]: https://github.com/BurntSushi/ripgrep
 pub trait Flag: Sync {
     /// True if the flag is a switch (takes no value).
     fn is_switch(&self) -> bool;
@@ -189,8 +183,6 @@ pub trait Flag: Sync {
     /// Fold a parsed value into the low-level args.
     fn update(&self, value: FlagValue, args: &mut LowArgs) -> Result<(), String>;
 }
-
-// --- Flag definitions ------------------------------------------------------
 
 struct IndexFlag;
 impl Flag for IndexFlag {
@@ -418,7 +410,6 @@ fn lookup_short(ch: char) -> Option<&'static dyn Flag> {
 /// Parse argv (already stripped of the leading program name) into a
 /// [`ParseOutcome`].
 pub fn parse(argv: &[OsString]) -> Result<ParseOutcome, String> {
-    // `--help`/`-h` and `--version`/`-V` are special: honored anywhere, alone.
     for tok in argv {
         match tok.to_str() {
             Some("-h") | Some("--help") => return Ok(ParseOutcome::Special(Special::Help)),
@@ -453,7 +444,6 @@ pub fn parse(argv: &[OsString]) -> Result<ParseOutcome, String> {
             flag.update(value, &mut args)?;
             args.seen_flags.push(flag.name_long());
         } else if text.starts_with('-') && text != "-" {
-            // Short flag(s). Only single switches / `-x value` are supported.
             let ch = text.chars().nth(1).unwrap();
             let flag = lookup_short(ch).ok_or_else(|| format!("unknown flag: -{ch}"))?;
             let inline = if text.len() > 2 {
@@ -564,7 +554,7 @@ pub fn parse_position(s: &str) -> Result<(String, u64), String> {
     Ok((file.replace('\\', "/"), line))
 }
 
-/// Resolve the index path: `--index`, else `REF_INDEX`, else the default.
+/// `[[rr:Shared options]]`
 pub fn index_path(args: &LowArgs) -> OsString {
     if let Some(p) = &args.index {
         return p.clone();
@@ -647,7 +637,6 @@ mod tests {
             parse_position("src/a.rs:42").unwrap(),
             ("src/a.rs".to_string(), 42)
         );
-        // Right-split keeps a colon-bearing prefix attached to the file.
         assert_eq!(parse_position("a:b:7").unwrap(), ("a:b".to_string(), 7));
         // A backslash separator is CLI input; it normalizes to `/`.
         assert_eq!(
@@ -742,7 +731,6 @@ mod tests {
     #[test]
     fn short_switch_and_double_dash_positional() {
         assert!(parse_run(&["index", "-q"]).quiet);
-        // `--` forces the rest to be positional, even a leading-dash anchor.
         let args = parse_run(&["read", "--", "-weird-anchor"]);
         assert_eq!(args.positional, vec![OsString::from("-weird-anchor")]);
     }
@@ -761,7 +749,6 @@ mod tests {
             parse_err(&["search", "--all"]),
             "--all applies to rr at only"
         );
-        // Shared flags have nothing to do on `search`, and that is fine.
         assert!(parse_run(&["search", "--no-freshness"]).no_freshness);
         assert_eq!(
             parse_run(&["search", "--index", "x"]).index.unwrap(),

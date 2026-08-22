@@ -41,9 +41,8 @@ pub fn run_index(args: &LowArgs) -> Result<u8, String> {
                 .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
         }
     }
-    // Atomic replace, not a truncate-in-place: a reader (which mmaps this
-    // file) must see either the whole old index or the whole new one, never
-    // a torn half-write. See `crate::atomic`.
+    // A reader mmaps this file, so it must see either the whole old index or
+    // the whole new one, never a torn half-write. [[rr:atomic_write]]
     atomic::atomic_write(&index_path, &bytes)
         .map_err(|e| format!("failed to write {}: {e}", index_path.display()))?;
 
@@ -72,11 +71,8 @@ pub fn run_index(args: &LowArgs) -> Result<u8, String> {
     })
 }
 
-/// Open the index, mmap it, parse the header, and gate on freshness before
-/// handing a [`Reader`] to `f`. This is the shared preamble of every reading
-/// verb: a missing or stale index short-circuits to `exit::STALE` without
-/// ever calling `f`. The `Reader` borrows the mmap, so it cannot be returned
-/// past its backing buffer — a closure keeps both alive for the call.
+/// The `Reader` borrows the mmap, so it cannot be returned past its backing
+/// buffer — a closure keeps both alive for the call.
 fn with_fresh_reader<F>(
     index_path: &Path,
     root: &Path,
@@ -108,15 +104,10 @@ enum IndexState {
     Fresh(Vec<u8>),
     /// No index file exists yet.
     Missing,
-    /// Present but stale (the working tree moved on since the build).
+    /// `[[rr:README.md#Freshness]]`
     Stale,
 }
 
-/// Open the index, copy it into owned bytes, and report whether it is fresh.
-/// A corrupt index is an error (mapped to `corrupt index` by the caller); a
-/// missing or stale one is a non-error state the caller maps to its own
-/// exit.
-///
 /// The mapping is released (copied into a `Vec`) before `fresh` runs,
 /// because `fresh` may spawn `git status` and, on Windows, a concurrent
 /// `rr index` replaces this file; holding a mapping across that is the
@@ -320,14 +311,13 @@ fn at_json(forms: &[(String, &AnchorHit)]) -> String {
     out
 }
 
-/// One scoped, readable text file: its repo-relative path and content.
 struct ScopedFile {
     rel: String,
     content: String,
     host: scan::Host,
 }
 
-/// `[[rr:AD-3]]`
+/// `[[rr:AD-3]]`, shown to a user in `[[rr:Quick examples]]`.
 fn scoped_files(
     root: &Path,
     matcher: &ignore::overrides::Override,
@@ -411,8 +401,7 @@ pub fn run_search(args: &LowArgs) -> Result<u8, String> {
     let root = Path::new(".");
     let cfg = config::load(root);
     let matcher = config::scope_matcher(root, &cfg)?;
-    // A mode flag frees the first slot, so every positional is a path; else
-    // the first is the anchor filter and the rest are paths.
+    // [[rr:doc/ad/0003-cli-verbs.md#Decision outcome]]
     let takes_anchor = !(args.markers || args.mentions);
     let (filter, paths) = match args.positional.split_first() {
         Some((first, rest)) if takes_anchor => (
@@ -506,8 +495,8 @@ fn filter_matches(want: &str, anchor: &str) -> bool {
     false
 }
 
-/// One of the six finding kinds of `[[rr:AD-3]]`: the `rr.toml` name a
-/// profile selects it by, beside the text a person reads.
+/// One of the six finding kinds of `[[rr:AD-3]]`, selected by the name a
+/// profile writes in `[[rr:Configuration]]`, beside the text a person reads.
 #[derive(Clone, Copy)]
 struct Rule {
     name: &'static str,
@@ -569,7 +558,7 @@ pub fn run_verify(args: &LowArgs) -> Result<u8, String> {
         .map(|p| p.to_string_lossy().into_owned())
         .collect();
     // Before the index is touched, so a typo is a usage error rather than
-    // whatever the index's state would have reported.
+    // whatever the index's state would have reported. [[rr:Configuration]]
     if let Some(unknown) = cfg
         .verify_rules
         .iter()
@@ -661,12 +650,11 @@ fn emit(code: u8, write: impl FnOnce(&mut dyn Write) -> std::io::Result<()>) -> 
     emit_to(BufWriter::new(stdout.lock()), code, write)
 }
 
-/// A reader that closed the pipe (`rr verify | head`) has what it asked for,
-/// so `BrokenPipe` keeps `code` rather than failing the run: `[[rr:AD-4]]`
-/// codes report how the question was answered, not whether anyone read the
-/// whole answer. Flushed explicitly because `BufWriter`'s drop discards the
-/// error this exists to catch. Generic over the writer so both branches are
-/// reachable without a real pipe.
+/// The `pipefail` contract of `[[rr:Shared options]]`: a reader that closed
+/// the pipe has what it asked for, so `BrokenPipe` keeps `code`. Flushed
+/// explicitly because `BufWriter`'s drop discards the error this exists to
+/// catch. Generic over the writer so both branches are reachable without a
+/// real pipe.
 fn emit_to<W: Write>(
     mut out: W,
     code: u8,
@@ -693,9 +681,7 @@ fn push_location(out: &mut String, file: &str, start: u64, end: u64) {
     out.push_str(&format!(",\"start_line\":{start},\"end_line\":{end}}}"));
 }
 
-/// Append `s` to `out` as a quoted, escaped JSON string. Escapes `"`, `\`,
-/// and C0 control characters — anchors legitimately contain quotes and stray
-/// control bytes must not break the document.
+/// `[[rr:doc/ad/0002-marker-syntax.md#Decision drivers]]`
 fn push_json_str(out: &mut String, s: &str) {
     out.push('"');
     for c in s.chars() {
@@ -850,8 +836,6 @@ mod tests {
         push_json_str(&mut whitespace, "tab\tnl\n");
         assert_eq!(whitespace, r#""tab\tnl\n""#);
 
-        // A C0 control char becomes a \uXXXX escape; the raw byte must not
-        // survive.
         let mut control = String::new();
         push_json_str(&mut control, "\u{1}");
         assert!(
@@ -866,8 +850,7 @@ mod tests {
 
     #[test]
     fn at_json_escapes_anchor_text() {
-        // A scenario-style anchor may carry quotes; the marker composes
-        // wrap() with JSON escaping.
+        // [[rr:doc/ad/0002-marker-syntax.md#Decision drivers]]
         let h = hit(r#"x.feature#say "hi""#, "x.feature", 3, 3);
         let forms = vec![(h.anchor.clone(), &h)];
         let doc = at_json(&forms);

@@ -51,10 +51,10 @@ pub fn build(
 
     let (tx, rx) = mpsc::channel::<FileRecords>();
 
-    // Defaults mirror rr.toml: respect ignore files, skip hidden (which also
-    // skips `.git/` and a dot-prefixed index dir like `.ref-cache/`). Note:
-    // `ignore`'s own `sort_by_file_path` is serial-only and would defeat the
-    // point; ordering is recovered by serialize's sort, not the walk.
+    // Skipping hidden files also skips `.git/` and a dot-prefixed index dir
+    // like `.ref-cache/`. `ignore`'s own `sort_by_file_path` is serial-only
+    // and would defeat the point of the parallel walk; ordering is recovered
+    // by serialize's sort instead.
     let walker = WalkBuilder::new(root)
         .hidden(true)
         .git_ignore(true)
@@ -149,8 +149,7 @@ pub fn build(
     })
 }
 
-/// Repo-relative path as forward-slash text, so an index is portable across
-/// Windows and Unix.
+/// So an index is portable across Windows and Unix.
 fn to_unix(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
@@ -185,7 +184,7 @@ pub(crate) fn git_tree(root: &Path) -> String {
 /// result is identical to the serial one — see `newest_serial`, which it
 /// delegates to.
 pub fn newest_mtime(paths: &[&str], root: &Path) -> u64 {
-    // Thread spawn (~tens of µs each) only pays off past a few hundred stats.
+    // [[rr:BENCHMARKS.md#Findings that hold on both platforms]]
     const PARALLEL_THRESHOLD: usize = 256;
     let n = std::thread::available_parallelism()
         .map_or(1, |n| n.get())
@@ -206,10 +205,8 @@ pub fn newest_mtime(paths: &[&str], root: &Path) -> u64 {
     })
 }
 
-/// The serial max-reduction over `paths`: one `stat` each, missing or
-/// unreadable files contribute 0 and are ignored. `newest_mtime` is this run
-/// in parallel chunks; keeping it standalone lets the two be tested for
-/// equality.
+/// Kept standalone (rather than inlined into `newest_mtime`) so the
+/// parallel and serial reductions can be tested for equality.
 fn newest_serial(paths: &[&str], root: &Path) -> u64 {
     let mut newest = 0u64;
     for p in paths {

@@ -10,23 +10,14 @@ use std::path::Path;
 
 use crate::refidx::ForwardEntry;
 
-/// The extraction contract: given a file, emit zero or more [`ForwardEntry`]
-/// records. Implementations handle their own errors; unreadable or malformed
-/// files should produce an empty result, not a panic.
+/// Implementations handle their own errors; unreadable or malformed files
+/// should produce an empty result, not a panic.
 pub trait Extractor: Sync {
-    /// Return true if this extractor should run on files with this extension.
-    /// `ext` is `None` for files without an extension.
     fn supports(&self, ext: Option<&str>) -> bool;
-    /// Extract anchors from `disk_path`, prefixing locations with `rel_path`.
-    ///
-    /// Each returned [`ForwardEntry`] must set `location` to
-    /// `"rel_path:start-end"` with 1-based line numbers (`start == end` for
-    /// single-line anchors).
+    /// `[[rr:doc/ad/0001-domain-model.md#Decision outcome]]`
     fn extract(&self, rel_path: &str, disk_path: &Path) -> Vec<ForwardEntry>;
 }
 
-/// Emits one anchor per file: the path itself, spanning the whole file (`path:1-N`).
-/// Run unconditionally by the indexer before the language registry.
 pub struct PathExtractor;
 
 impl Extractor for PathExtractor {

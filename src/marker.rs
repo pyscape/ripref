@@ -26,29 +26,23 @@ pub const OPENER: &str = "[[rr:";
 pub enum Decoded {
     /// No opener: an ordinary bare anchor. The caller owns it unchanged.
     Bare,
-    /// An opener that is NOT a well-formed marker (no terminator, an
-    /// illegal raw byte or undefined escape in the body, or trailing text
-    /// after the terminator). The string is the human-facing reason.
+    /// `[[rr:doc/ad/0002-marker-syntax.md#Decision outcome]]`. The string is
+    /// the human-facing reason.
     Malformed(String),
     /// A well-formed marker: the unescaped anchor it delimits.
     Marker(String),
 }
 
-/// One occurrence parsed from the front of a text slice that begins with
-/// [`OPENER`], for the scanners.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Token {
-    /// A well-formed marker: the byte length consumed and the decoded anchor.
-    Marker { len: usize, anchor: String },
+    Marker {
+        len: usize,
+        anchor: String,
+    },
     /// The opener is present but no well-formed marker follows.
     Malformed(String),
 }
 
-/// Wrap an anchor as a document marker.
-///
-/// Precondition: `anchor` contains no raw `\t`, `\r`, or `\n`. Those are
-/// outside the grammar (a newline has no escape), and no extractor emits such
-/// an anchor.
 pub fn wrap(anchor: &str) -> String {
     format!("{OPENER}{}]]", escape(anchor))
 }
@@ -112,9 +106,7 @@ pub fn scan_token(s: &str) -> Token {
                 }
             },
             ']' => {
-                // The terminator is the first `]]` whose first `]` is
-                // unescaped. Peek a clone so a non-terminator `]` is not
-                // consumed.
+                // Peek a clone so a non-terminator `]` is not consumed.
                 let mut peek = chars.clone();
                 if matches!(peek.next(), Some((_, ']'))) {
                     let len = OPENER.len() + i + 2;
@@ -210,7 +202,7 @@ mod tests {
         }
     }
 
-    // --- Tier 2: properties (no oracle needed; seeded xorshift, no `rand`). ---
+    // --- Tier 2: properties ---
 
     /// Deterministic xorshift64* so the property runs are reproducible without
     /// a PRNG dependency. Seed must be nonzero.
@@ -234,8 +226,7 @@ mod tests {
 
     #[test]
     fn round_trip_holds_for_random_anchors() {
-        // A charset heavy on the dangerous bytes, plus multibyte chars. No raw
-        // control chars: those are outside the grammar (wrap's precondition).
+        // A charset heavy on the dangerous bytes, plus multibyte chars.
         let charset: Vec<char> = r#"\[]:@~#. abcAB12"#.chars().chain("é日🦀".chars()).collect();
         let mut rng = Rng::new(0x1234_5678_9abc_def1);
         for _ in 0..2000 {
@@ -250,8 +241,6 @@ mod tests {
 
     #[test]
     fn decode_never_panics_on_arbitrary_input() {
-        // Pool stuffed with the structural bytes plus raw control chars and
-        // multibyte chars; decode must always return, never panic or hang.
         let pool: Vec<char> = "[]\\@~rr: \t0123abcdef"
             .chars()
             .chain(['\n', '\r', 'é', '🦀', ']'])

@@ -26,9 +26,7 @@ pub mod markdown;
 pub mod python;
 pub mod rust;
 
-/// The capture name an anchors query uses to mark a node's identity text.
 const ANCHOR_CAPTURE: &str = "anchor";
-/// The optional capture naming the node whose extent is the definition span.
 const SPAN_CAPTURE: &str = "span";
 
 type TitleFinder = fn(&str) -> Vec<(String, u64)>;
@@ -36,8 +34,9 @@ type TitleFinder = fn(&str) -> Vec<(String, u64)>;
 /// How a language's captures become anchors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
-    /// Code definitions: each match is one anchor whose span is the `@span`
-    /// node (the whole item), or the `@anchor` node when no `@span` exists.
+    /// `[[rr:doc/ad/0001-domain-model.md#Decision outcome]]`: each match is
+    /// one anchor whose span is the `@span` node (the whole item), or the
+    /// `@anchor` node when no `@span` exists.
     Symbols,
     /// Titled regions: each `@anchor` capture is a title; the span and
     /// record identity rules are
@@ -50,7 +49,6 @@ pub enum Mode {
 pub struct Language {
     /// Stable identifier, e.g. `"rust"`, `"markdown"`.
     pub name: &'static str,
-    /// File extensions this language claims, without the leading dot.
     pub extensions: &'static [&'static str],
     /// The grammar, from the language's crate.
     pub grammar: LanguageFn,
@@ -73,8 +71,6 @@ pub static LANGUAGES: &[Language] = &[
     python::LANGUAGE,
 ];
 
-/// The language that claims `ext` (first match wins), or `None`. `ext` is
-/// the file extension without a dot; `None` for an extensionless file.
 pub fn for_extension(ext: Option<&str>) -> Option<&'static Language> {
     let ext = ext?;
     LANGUAGES.iter().find(|l| l.extensions.contains(&ext))
@@ -124,10 +120,6 @@ impl Language {
         }
     }
 
-    /// Run the anchors query. In [`Mode::Symbols`], each match yields one
-    /// capture whose rows come from the `@span` node when present; in
-    /// [`Mode::Sections`], each `@anchor` capture yields a title at its own
-    /// row.
     fn run_query(&self, content: &str) -> Vec<Capture> {
         let language = tree_sitter::Language::new(self.grammar);
         let Ok(query) = Query::new(&language, self.anchors_query) else {

@@ -25,31 +25,22 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Per-process counter making temp names unique without an rng dependency; the
-/// pid keeps them unique across processes, the counter within one.
+/// Per-process counter avoiding an rng dependency: the pid and a nanosecond
+/// timestamp separate processes, this counter separates calls within one.
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// Atomically replace `path` with `bytes`.
-///
-/// Writes a sibling temp file, fsyncs its contents, renames it onto `path`, then
-/// best-effort fsyncs the parent directory. On any failure before the rename the
-/// temp file is cleaned up, so a failed write never litters the directory.
-///
-/// When `path` already exists its permissions are carried onto the replacement
-/// (Unix), so a rewrite preserves the file mode instead of resetting it to the
-/// umask default.
+/// When `path` already exists, its permissions are carried onto the
+/// replacement (Unix); a brand-new file keeps the umask default.
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let dir = match path.parent() {
         Some(p) if !p.as_os_str().is_empty() => p,
         _ => Path::new("."),
     };
 
-    // Read the destination's mode before writing so we can carry it onto the
-    // replacement; absent (new file, or non-Unix) the temp keeps the umask default.
     let perms = permissions_to_carry(path);
     let tmp = create_temp(dir, path)?;
-    // From here on, clean up the temp file on any error before the rename
-    // succeeds (after a successful rename there is nothing left to remove).
+    // After a successful rename there is nothing left to remove: the temp
+    // path was consumed by it.
     if let Err(e) =
         write_and_sync(&tmp.path, bytes, perms).and_then(|()| std::fs::rename(&tmp.path, path))
     {
@@ -57,9 +48,6 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
         return Err(e);
     }
 
-    // Make the rename itself durable. Opening a directory as a file is not
-    // supported everywhere (notably Windows); a failure here costs only
-    // post-crash durability of the directory entry, not atomicity, so ignore it.
     if let Ok(dir_file) = File::open(dir) {
         let _ = dir_file.sync_all();
     }
@@ -74,10 +62,10 @@ struct TempFile {
     path: PathBuf,
 }
 
-/// Create a uniquely named, empty temp file in `dir` next to `target`, retrying
-/// on the vanishingly unlikely name collision. The leading dot keeps it out of
-/// the way; the `target` file name anchors it so concurrent writes to different
-/// files in one directory never contend for the same temp name.
+/// Create a uniquely named, empty temp file in `dir` next to `target`,
+/// retrying on the vanishingly unlikely name collision. The `target` file
+/// name is folded into it, so concurrent writers to different files in the
+/// same directory never contend for the same temp name.
 fn create_temp(dir: &Path, target: &Path) -> io::Result<TempFile> {
     let stem = target
         .file_name()
@@ -99,10 +87,6 @@ fn create_temp(dir: &Path, target: &Path) -> io::Result<TempFile> {
     }
 }
 
-/// Truncate-write `bytes` to `path`, carry `perms` onto it when an existing file's
-/// mode is being preserved, then fsync before the rename so the bytes (and the
-/// carried mode) are on disk, not just in the page cache, when the rename
-/// publishes them.
 fn write_and_sync(path: &Path, bytes: &[u8], perms: Option<Permissions>) -> io::Result<()> {
     let mut file = OpenOptions::new().write(true).truncate(true).open(path)?;
     file.write_all(bytes)?;
@@ -245,9 +229,6 @@ mod tests {
         let handles: Vec<_> = payloads
             .iter()
             .map(|payload| {
-                // Clone per thread: the move closure needs an owned payload, and
-                // `payloads` is reused for the contains-check below, so it can't
-                // be consumed by the iterator.
                 let payload = payload.clone();
                 let path = path.clone();
                 std::thread::spawn(move || atomic_write(&path, &payload).unwrap())
@@ -257,7 +238,6 @@ mod tests {
             h.join().unwrap();
         }
 
-        // The published file is exactly one writer's payload, never a mixture.
         let got = std::fs::read(&path).unwrap();
         assert!(
             payloads.contains(&got),

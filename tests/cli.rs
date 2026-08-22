@@ -28,8 +28,6 @@ rrtest!(
 
         let idx = cmd.arg("index").run();
         assert_eq!(code(&idx), 0, "index should succeed: {idx:?}");
-        // 2 anchors: the README's heading (a section) and the `main` fn. One
-        // mention: the prose path src/main.rs in the README.
         let summary = String::from_utf8_lossy(&idx.stdout);
         assert!(
             summary.contains("indexed 2 anchors and 1 path mentions across 2 files"),
@@ -91,7 +89,7 @@ rrtest!(
         cmd.args(["read", "AD-7: A worked decision"])
             .assert_exit_code(1);
 
-        // The inverse direction: a body line answers with the record marker.
+        // [[rr:doc/ad/0003-cli-verbs.md#Decision outcome]]
         let at = cmd.args(["at", "doc/x.md:3"]).stdout();
         assert_eq!(at.trim(), "[[rr:AD-7]]");
     }
@@ -103,8 +101,7 @@ rrtest!(
         dir.file("a.md", "# alpha\n");
         cmd.arg("index").assert_exit_code(0);
 
-        // The freshness check is second-granular and same-second writes are
-        // fresh by design, so wait past the boundary before modifying.
+        // [[rr:README.md#Freshness]]
         std::thread::sleep(std::time::Duration::from_millis(1100));
         dir.write("a.md", "# alpha\n\nchanged\n");
 
@@ -118,8 +115,6 @@ rrtest!(
     missing_index_exits_three,
     |mut dir: Dir, mut cmd: TestCommand| {
         dir.file("a.md", "# alpha\n");
-        // No `rr index` run first: the reader can't answer, so it asks for a
-        // rebuild.
         let out = cmd.args(["read", "alpha"]).run();
         assert_eq!(code(&out), 3, "absent index should exit 3: {out:?}");
         assert!(String::from_utf8_lossy(&out.stderr).contains("run `rr index`"));
@@ -139,7 +134,7 @@ rrtest!(
     }
 );
 
-// An identity that carries grammar bytes (an email heading) reads literally.
+// [[rr:doc/ad/0001-domain-model.md#Decision outcome]]
 rrtest!(
     email_anchor_reads_literally,
     |mut dir: Dir, mut cmd: TestCommand| {
@@ -207,8 +202,6 @@ rrtest!(
 rrtest!(
     at_malformed_position_exits_two,
     |_dir: Dir, mut cmd: TestCommand| {
-        // Position syntax is validated before dispatch, so no index is
-        // needed.
         cmd.args(["at", "a.txt"]).assert_exit_code(2);
         cmd.args(["at", "a.txt:nope"]).assert_exit_code(2);
     }
@@ -396,8 +389,7 @@ rrtest!(
     }
 );
 
-// The profile narrows scope: a project's .rr.toml excludes its fixtures, so
-// deliberate violations there are never judged.
+// [[rr:Configuration]]
 rrtest!(
     verify_honors_project_scope_excludes,
     |mut dir: Dir, mut cmd: TestCommand| {
@@ -599,7 +591,7 @@ rrtest!(
     }
 );
 
-// [[rr:QuietFlag]]
+// [[rr:Shared options]]
 rrtest!(
     quiet_drops_only_the_summary_line,
     |mut dir: Dir, mut cmd: TestCommand| {
@@ -667,9 +659,6 @@ fn index_file(dir: &Dir) -> std::path::PathBuf {
     dir.path().join(".ref-cache").join("index")
 }
 
-/// The bytes of an index after its header (everything from the blank line
-/// that terminates the section table onward), with the build-time `mtime`
-/// stamp excluded.
 fn index_body(dir: &Dir) -> Vec<u8> {
     let bytes = std::fs::read(index_file(dir)).expect("index file exists");
     let header_end = bytes
@@ -733,8 +722,6 @@ rrtest!(
     }
 );
 
-// A truncated index whose header still parses but whose section bytes are
-// gone must be reported as corrupt, never crash with an out-of-bounds panic.
 rrtest!(
     truncated_index_is_corrupt_not_panic,
     |mut dir: Dir, mut cmd: TestCommand| {
@@ -767,8 +754,7 @@ rrtest!(
 
 // --- freshness ------------------------------------------------------------------
 
-// `--no-freshness` answers from the index as-is; the same edit that makes a
-// plain read exit 3 must still resolve under the flag.
+// [[rr:README.md#Freshness]]
 rrtest!(
     no_freshness_skips_stale_check,
     |mut dir: Dir, mut cmd: TestCommand| {
@@ -799,20 +785,18 @@ rrtest!(
 
         cmd.arg("index").assert_exit_code(0);
 
-        // Cross the second boundary, then rewrite with identical content:
-        // mtime bumps, tree stays clean, the short-circuit answers.
+        // [[rr:README.md#Freshness]]
         std::thread::sleep(std::time::Duration::from_millis(1100));
         dir.write("a.md", "# Alpha\n");
         cmd.args(["read", "Alpha"]).assert_exit_code(0);
 
-        // A real edit dirties the tree and the stat-walk sees it: stale.
         dir.write("a.md", "# Alpha\n\nchanged\n");
         cmd.args(["read", "Alpha"]).assert_exit_code(3);
     }
 );
 
-// A live read on a clean tree DOES run git (the freshness short-circuit), so
-// the docs must not claim "no git on the read path".
+// A regression guard on `[[rr:README.md#Why should I use ripref?]]`: a live
+// read on a clean tree does run git, so the docs must not claim otherwise.
 rrtest!(
     live_read_clean_tree_invokes_git,
     |mut dir: Dir, mut cmd: TestCommand| {
@@ -851,7 +835,6 @@ rrtest!(version_exits_zero, |_dir: Dir, mut cmd: TestCommand| {
     assert_eq!(code(&v), 0);
     let out = String::from_utf8_lossy(&v.stdout);
     assert!(out.starts_with("rr "));
-    // Guards against a hardcoded version string drifting from Cargo.toml.
     assert!(out.contains(env!("CARGO_PKG_VERSION")), "{out:?}");
 });
 
@@ -894,11 +877,8 @@ rrtest!(
 
 // --- dogfood ------------------------------------------------------------------------
 
-// Drive `rr` against its own source tree: the records under doc/ad resolve
-// by their IDs, the `rrtest!` macro that generates this very test resolves
-// and round-trips through `at`, and `search` finds the markers the records
-// write — all with the index in a throwaway location, never the repo's own
-// cache.
+// The index lives in a throwaway location, never the repo's own
+// `.ref-cache/`, even though the tree walked is the real repo.
 rrtest!(
     dogfoods_own_records_and_source,
     |dir: Dir, _cmd: TestCommand| {
@@ -917,7 +897,6 @@ rrtest!(
         let idx = run(&["index"]);
         assert_eq!(code(&idx), 0, "indexing our own tree: {idx:?}");
 
-        // The domain record resolves by its ID and lives where it should.
         let ad1 = run(&["read", "AD-1"]);
         assert_eq!(code(&ad1), 0, "AD-1 must resolve: {ad1:?}");
         let loc = String::from_utf8_lossy(&ad1.stdout).trim().to_string();
@@ -930,8 +909,6 @@ rrtest!(
         let ad3 = run(&["read", "[[rr:AD-3]]"]);
         assert_eq!(code(&ad3), 0, "a pasted record marker resolves: {ad3:?}");
 
-        // The macro that generates this test resolves, and its location
-        // round-trips through `at --all`.
         let sym = run(&["read", "rrtest"]);
         assert_eq!(code(&sym), 0, "read macro anchor: {sym:?}");
         let sym_loc = String::from_utf8_lossy(&sym.stdout).trim().to_string();
@@ -951,8 +928,8 @@ rrtest!(
             "the macro round-trips through at: {nest}"
         );
 
-        // The records write markers of each other; search finds them with no
-        // index at all.
+        // The records write markers of each other.
+        // [[rr:doc/ad/0003-cli-verbs.md#Decision outcome]]
         let search = run(&["search", "AD-1"]);
         assert_eq!(code(&search), 0, "search over own tree: {search:?}");
         let listing = String::from_utf8_lossy(&search.stdout);
@@ -965,7 +942,6 @@ rrtest!(
 
 // --- git helpers ----------------------------------------------------------------
 
-/// Whether a `git` binary is on PATH; the short-circuit tests need a repo.
 fn git_available() -> bool {
     Command::new("git")
         .arg("--version")
@@ -988,8 +964,7 @@ fn git(dir: &Dir, args: &[&str]) {
     );
 }
 
-/// Initialize a git repo in the test dir with a deterministic identity, and
-/// gitignore the index dir so `rr index` never dirties the tree it stamps.
+/// Gitignores the index dir so `rr index` never dirties the tree it stamps.
 fn init_repo(dir: &Dir) {
     dir.write(".gitignore", ".ref-cache/\n");
     git(dir, &["init", "-q"]);

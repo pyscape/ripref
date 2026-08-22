@@ -116,8 +116,6 @@ mod tests {
         }
     }
 
-    // Only the delimiter that opened it closes it, so the other one is
-    // content and the docstring runs on to its real closer.
     #[test]
     fn the_other_delimiter_inside_a_docstring_is_content() {
         let src = concat!(

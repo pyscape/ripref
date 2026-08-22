@@ -22,13 +22,19 @@ pub struct Found {
 /// What the scanners find.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum What {
-    /// A well-formed marker: the raw bytes as written and the decoded anchor.
-    Marker { raw: String, anchor: String },
+    Marker {
+        raw: String,
+        anchor: String,
+    },
     /// An opener with no well-formed marker behind it.
-    Malformed { reason: String },
-    /// A path mention; `line_ref` is set when `:` and digits follow it (the
-    /// bare `path:line` form).
-    Mention { token: String, line_ref: bool },
+    Malformed {
+        reason: String,
+    },
+    /// `[[rr:doc/ad/0005-path-mentions.md#Decision outcome]]`
+    Mention {
+        token: String,
+        line_ref: bool,
+    },
 }
 
 /// The host structure a file exposes to the scan.
@@ -44,10 +50,6 @@ pub enum Host {
     Plain,
 }
 
-/// The host the profile declares for a file extension: Markdown as ever;
-/// otherwise a `[scan.<lang>]` entry that lists `"comments"` and whose
-/// `COMMENT_SYNTAX` row claims the extension gives `Host::Comments`, and
-/// anything else is `Host::Plain`.
 pub fn host_for(ext: Option<&str>, cfg: &Config) -> Host {
     match ext {
         Some("md") | Some("markdown") => Host::Markdown,
@@ -107,8 +109,6 @@ const COMMENT_SYNTAX: &[(&str, &[&str], CommentSyntax)] = &[
     ),
 ];
 
-/// The comment syntax for a `[scan.<lang>]` table name, or `None` if the
-/// language has no declared comment syntax.
 pub fn comment_syntax(lang: &str) -> Option<&'static CommentSyntax> {
     COMMENT_SYNTAX
         .iter()
@@ -116,8 +116,6 @@ pub fn comment_syntax(lang: &str) -> Option<&'static CommentSyntax> {
         .map(|(_, _, syntax)| syntax)
 }
 
-/// The byte length of the Rust char literal at the start of s, or None
-/// if it is not one, which is how `'a` is told from `'x'`.
 fn char_literal_len(s: &str) -> Option<usize> {
     let mut chars = s.chars();
     if chars.next() != Some('\'') {
@@ -180,8 +178,6 @@ fn raw_hashes(prefix: &[u8]) -> Option<usize> {
     matches!(prefix[..end], [.., b'r' | b'R']).then(|| prefix.len() - end)
 }
 
-/// The leftmost syntax.line or syntax.block opener outside a quoted
-/// string, with its byte offset.
 fn next_comment_start(line: &str, syntax: &CommentSyntax) -> Option<(usize, CommentStart)> {
     let bytes = line.as_bytes();
     let line_marker = syntax.line.as_bytes();
@@ -245,8 +241,8 @@ fn line_comment_text<'a>(line: &'a str, syntax: &CommentSyntax) -> Option<&'a st
     }
 }
 
-/// Scan one file's content. Markers and malformed openers come from every
-/// scanned region; mentions come from prose only.
+/// `[[rr:doc/ad/0002-marker-syntax.md#Decision outcome]]`
+/// `[[rr:doc/ad/0005-path-mentions.md#Decision outcome]]`
 pub fn scan(content: &str, host: Host) -> Vec<Found> {
     let mut out = Vec::new();
     let mut fence: Option<&str> = None; // the delimiter that opened the fence
@@ -343,8 +339,7 @@ fn scan_segment(text: &str, is_span: bool, lineno: u64, out: &mut Vec<Found>) {
         return;
     }
 
-    // Prose: find every marker occurrence, remembering the spans they cover
-    // so the mention pass skips marker interiors.
+    // [[rr:doc/ad/0005-path-mentions.md#Decision outcome]]
     let mut covered: Vec<(usize, usize)> = Vec::new();
     let mut from = 0;
     while let Some(rel) = text[from..].find(marker::OPENER) {
@@ -375,7 +370,6 @@ fn scan_segment(text: &str, is_span: bool, lineno: u64, out: &mut Vec<Found>) {
     mentions_in(text, &covered, lineno, out);
 }
 
-/// Tokenize `text` for path mentions, skipping any byte range in `covered`.
 fn mentions_in(text: &str, covered: &[(usize, usize)], lineno: u64, out: &mut Vec<Found>) {
     let bytes = text.as_bytes();
     let mut i = 0;
@@ -464,8 +458,6 @@ fn split_inline(line: &str) -> Vec<(&str, bool)> {
                 break;
             }
         }
-        // An unclosed opener leaves `close` empty: the backticks are literal
-        // prose, and the scan just keeps going.
         if let Some((close_start, close_end)) = close {
             if prose_from < open_start {
                 parts.push((&line[prose_from..open_start], false));
@@ -661,7 +653,6 @@ mod tests {
             let got = kinds(line, Host::Comments(rust));
             assert_eq!(got, vec!["1:marker:f"], "{line:?} -> {got:?}");
         }
-        // An unterminated opener swallows the rest of the line, as before.
         let got = kinds("let r = r#\"a \" b\"; // [[rr:f]]\n", Host::Comments(rust));
         assert_eq!(got, Vec::<String>::new(), "{got:?}");
     }

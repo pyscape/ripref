@@ -11,7 +11,6 @@ honors.
 
 use std::path::Path;
 
-/// The compiled-in defaults: the same rr.toml that documents them.
 const DEFAULTS: &str = include_str!("../rr.toml");
 
 /// The keys the binary reads; `[[rr:Configuration]]` is what they mean
@@ -24,14 +23,11 @@ pub struct Config {
     pub verify_exclude: Vec<String>,
     /// `[verify] rules`
     pub verify_rules: Vec<String>,
-    /// `[scan.<lang>] eligible`, one entry per language named so far, in the
-    /// order first declared. A later layer's `eligible` for the same
-    /// language replaces the entry wholesale rather than appending.
+    /// `[[rr:Configuration]]`
     pub scan: Vec<(String, Vec<String>)>,
 }
 
-/// Load the profile: defaults, then the project's `.rr.toml` merged over
-/// them, key by key.
+/// `[[rr:doc/ad/0001-domain-model.md#Decision outcome]]`
 pub fn load(root: &Path) -> Config {
     let mut cfg = Config {
         verify_in_scope: Vec::new(),
@@ -46,8 +42,6 @@ pub fn load(root: &Path) -> Config {
     cfg
 }
 
-/// Fold one TOML text into `cfg`. A key present in `text` replaces the value
-/// wholesale; a key absent leaves the lower layer's value standing.
 fn apply(text: &str, cfg: &mut Config) {
     let mut section = String::new();
     let mut lines = text.lines();
@@ -95,8 +89,6 @@ fn apply(text: &str, cfg: &mut Config) {
     }
 }
 
-/// TOML lets a key or table name be quoted, naming the same thing as the
-/// bare form. One matching pair only, so a quote inside the name survives.
 fn unquote(s: &str) -> &str {
     for q in ['"', '\''] {
         if let Some(inner) = s.strip_prefix(q).and_then(|rest| rest.strip_suffix(q)) {
@@ -156,8 +148,6 @@ fn open_brackets(value: &str) -> i32 {
     depth
 }
 
-/// Every quoted string in `value`, in order. A string closes on the quote
-/// that opened it, so `"it's"` is one string, not an unterminated `'`.
 fn strings_in(value: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut rest = value;
@@ -173,8 +163,6 @@ fn strings_in(value: &str) -> Vec<String> {
     out
 }
 
-/// Build the scope matcher for the verify/search/index scanners from the
-/// profile globs, rooted at `root`.
 pub fn scope_matcher(root: &Path, cfg: &Config) -> Result<ignore::overrides::Override, String> {
     let mut b = ignore::overrides::OverrideBuilder::new(root);
     for glob in &cfg.verify_in_scope {
@@ -212,14 +200,10 @@ mod tests {
 
     #[test]
     fn literal_strings_parse_like_basic_ones() {
-        // Reading only `"` made a literal-string list empty, which for
-        // `rules` silently disabled the gate.
         assert_eq!(strings_in(r#"['a', 'b']"#), ["a", "b"]);
         assert_eq!(strings_in(r#"["a", 'b']"#), ["a", "b"]);
-        // A string closes on its own quote, so the other one is content.
         assert_eq!(strings_in(r#"["it's"]"#), ["it's"]);
         assert_eq!(strings_in(r#"['say "hi"']"#), [r#"say "hi""#]);
-        // `#` and brackets inside either quote are content, not syntax.
         assert_eq!(strip_comment("k = ['a#b'] # c"), "k = ['a#b'] ");
         assert_eq!(open_brackets("k = ['a['"), 1);
 
@@ -338,7 +322,6 @@ mod tests {
 
     #[test]
     fn a_quoted_key_names_the_same_key() {
-        // Ignoring the quoted form silently left the defaults standing.
         assert_eq!(unquote("\"rules\""), "rules");
         assert_eq!(unquote("'rules'"), "rules");
         assert_eq!(unquote("rules"), "rules");
