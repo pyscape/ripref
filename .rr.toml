@@ -1,6 +1,19 @@
 # This repository's profile, merged over the rr.toml defaults.
 
 [verify]
+# Markdown plus Rust comments, so the markers in this crate's own source are
+# judged by the gate that judges its docs.
+in-scope = ["**/*.md", "**/*.rs"]
 # tests/data holds fixture corpora with deliberate reference violations;
 # the gate must not judge fixtures.
-exclude = ["tests/data/**"]
+#
+# src/marker.rs and src/refidx.rs document the marker grammar and the
+# location grammar by writing them out, and a comment host has no fenced
+# block to hide them in the way `[[rr:AD-2]]` gives Markdown. Their
+# illustrations would every one be a finding.
+exclude = ["tests/data/**", "src/marker.rs", "src/refidx.rs"]
+
+[scan.rust]
+# The comment is the region, so a marker in a string literal (a test
+# fixture, a query) is invisible to the gate.
+eligible = ["comments"]
