@@ -61,6 +61,8 @@ pub struct Language {
     /// [[rr:AD-1]]
     pub level: fn(&str) -> u32,
     pub titles: Option<TitleFinder>,
+    /// [[rr:AD-1]]
+    pub records: bool,
 }
 
 /// Every first-class language.
@@ -101,6 +103,7 @@ impl Language {
         let captures = match self.titles {
             Some(titles) => titles(content)
                 .into_iter()
+                .filter(|(text, _)| !text.trim().is_empty())
                 .map(|(text, row)| Capture {
                     text,
                     start_row: row,
@@ -117,7 +120,7 @@ impl Language {
                     location: format!("{rel_path}:{}-{}", c.start_row + 1, c.end_row + 1),
                 })
                 .collect(),
-            Mode::Sections => sections(rel_path, content, captures, self.level),
+            Mode::Sections => sections(rel_path, content, captures, self.level, self.records),
         }
     }
 
@@ -190,6 +193,7 @@ fn sections(
     content: &str,
     mut titles: Vec<Capture>,
     level: fn(&str) -> u32,
+    records: bool,
 ) -> Vec<ForwardEntry> {
     let lines: Vec<&str> = content.lines().collect();
     let total = lines.len() as u64;
@@ -208,7 +212,11 @@ fn sections(
                 .find(|(_, &lvl)| lvl <= levels[i])
                 .map(|(next, _)| next.start_row - 1)
                 .unwrap_or_else(|| total.saturating_sub(1).max(t.start_row));
-            let identity = record_id(&t.text).unwrap_or(&t.text);
+            let identity = if records {
+                record_id(&t.text).unwrap_or(&t.text)
+            } else {
+                &t.text
+            };
             ForwardEntry {
                 anchor: identity.to_string(),
                 location: format!("{rel_path}:{}-{}", t.start_row + 1, end_row + 1),
@@ -241,6 +249,33 @@ mod tests {
             .into_iter()
             .map(|e| (e.anchor, e.location))
             .collect()
+    }
+
+    // The seam owes what run_query already does, so no title finder has to
+    // repeat it.
+    #[test]
+    fn lexical_titles_drop_an_empty_identity() {
+        let src = "Feature: Real\n  Scenario:    \n    Given a board\n";
+        let got = entries(&gherkin::LANGUAGE, "x.feature", src);
+        assert_eq!(
+            got,
+            vec![("Real".to_string(), "x.feature:1-3".to_string())],
+            "{got:?}"
+        );
+    }
+
+    #[test]
+    fn gherkin_titles_are_not_records() {
+        let src = "Feature: Real\n  Scenario: AD-9: record-looking\n    Given a board\n";
+        let got = entries(&gherkin::LANGUAGE, "x.feature", src);
+        assert!(
+            got.contains(&(
+                "AD-9: record-looking".to_string(),
+                "x.feature:2-3".to_string()
+            )),
+            "the title text is the identity: {got:?}"
+        );
+        assert!(!got.iter().any(|(a, _)| a == "AD-9"), "{got:?}");
     }
 
     #[test]

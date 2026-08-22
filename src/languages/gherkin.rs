@@ -12,6 +12,7 @@ pub const LANGUAGE: Language = Language {
     mode: Mode::Sections,
     level,
     titles: Some(titles),
+    records: false,
 };
 
 const KEYWORDS: &[&str] = &[

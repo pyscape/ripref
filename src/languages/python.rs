@@ -10,6 +10,7 @@ pub const LANGUAGE: Language = Language {
     mode: Mode::Symbols,
     level: |_| u32::MAX,
     titles: None,
+    records: false,
 };
 
 // `function_definition` also matches methods and `async def`, so neither

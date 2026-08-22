@@ -13,6 +13,7 @@ pub const LANGUAGE: Language = Language {
     mode: Mode::Symbols,
     level: |_| u32::MAX,
     titles: None,
+    records: false,
 };
 
 // `function_item` also matches methods — they are `function_item` nodes

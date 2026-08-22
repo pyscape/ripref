@@ -15,6 +15,7 @@ pub const LANGUAGE: Language = Language {
     mode: Mode::Sections,
     level: heading_level,
     titles: None,
+    records: true,
 };
 
 fn heading_level(line: &str) -> u32 {
