@@ -1,4 +1,6 @@
-//! `[[rr:AD-1]]`
+//! Python: `def` and `class` definitions as the symbol anchors of
+//! `[[rr:AD-1#Decision outcome]]`, via the `tree-sitter-python` grammar.
+//! Editing the query below changes which definitions anchor, nothing else.
 
 use std::sync::OnceLock;
 

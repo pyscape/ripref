@@ -1,4 +1,8 @@
-//! `[[rr:AD-1#Decision outcome]]`
+//! Rust: the ten named item forms (`fn`, `struct`, `enum`, `union`,
+//! `trait`, `type`, `const`, `static`, `mod`, `macro_rules!`) as the
+//! symbol anchors of `[[rr:AD-1#Decision outcome]]`, via the
+//! `tree-sitter-rust` grammar. Editing the query below changes which
+//! items anchor, nothing else.
 
 use std::sync::OnceLock;
 

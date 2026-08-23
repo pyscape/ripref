@@ -1,4 +1,7 @@
-//! `[[rr:AD-1]]`
+//! Gherkin: `Feature:`, `Rule:`, and the scenario keywords as the titled
+//! regions of `[[rr:AD-1#Decision outcome]]`. Found lexically rather
+//! than by a grammar, so `Language` names a [`Source::Titles`] and this
+//! module carries no tree-sitter query.
 
 use std::sync::OnceLock;
 
