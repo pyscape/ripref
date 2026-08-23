@@ -10,6 +10,7 @@ codes follow `[[rr:AD-4]]`.
 */
 
 use std::collections::HashSet;
+use std::fmt::Write as _;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
@@ -469,9 +470,7 @@ pub fn run_search(args: &LowArgs) -> Result<u8, String> {
         .map(|p| p.to_string_lossy().into_owned())
         .collect();
 
-    let mut lines = Vec::new();
-    let mut json = String::from(r#"{"matches":["#);
-    let mut count = 0usize;
+    let mut sink = SearchSink::new(args.format);
     for file in scoped_files(root, &matcher, &cfg, &paths)? {
         for found in scan::scan(&file.content, file.host) {
             match (&found.what, args.mentions) {
@@ -481,47 +480,24 @@ pub fn run_search(args: &LowArgs) -> Result<u8, String> {
                             continue;
                         }
                     }
-                    lines.push(format!("{}:{}: {raw}", file.rel, found.line));
-                    if count > 0 {
-                        json.push(',');
-                    }
-                    json.push_str("{\"file\":");
-                    push_json_str(&mut json, &file.rel);
-                    json.push_str(&format!(",\"line\":{}", found.line));
-                    json.push_str(",\"anchor\":");
-                    push_json_str(&mut json, anchor);
-                    json.push_str(",\"marker\":");
-                    push_json_str(&mut json, raw);
-                    json.push('}');
-                    count += 1;
+                    sink.marker(&file.rel, found.line, anchor, raw);
                 }
                 (What::Mention { token, .. }, true) => {
-                    lines.push(format!("{}:{}: {token}", file.rel, found.line));
-                    if count > 0 {
-                        json.push(',');
-                    }
-                    json.push_str("{\"file\":");
-                    push_json_str(&mut json, &file.rel);
-                    json.push_str(&format!(",\"line\":{}", found.line));
-                    json.push_str(",\"mention\":");
-                    push_json_str(&mut json, token);
-                    json.push('}');
-                    count += 1;
+                    sink.mention(&file.rel, found.line, token);
                 }
                 _ => {}
             }
         }
     }
-    json.push_str("]}");
+    let count = sink.count;
+    let body = sink.finish();
 
     let code = if count > 0 { exit::OK } else { exit::ADVERSE };
     emit(code, |w| {
         if args.format == OutputFormat::Json {
-            writeln!(w, "{}", envelope("search", &json))
+            writeln!(w, "{}", envelope("search", &body))
         } else {
-            for line in &lines {
-                writeln!(w, "{line}")?;
-            }
+            w.write_all(body.as_bytes())?;
             if args.quiet {
                 return Ok(());
             }
@@ -532,6 +508,74 @@ pub fn run_search(args: &LowArgs) -> Result<u8, String> {
             )
         }
     })
+}
+
+/// `[[rr:AD-4#Decision outcome]]`
+struct SearchSink {
+    buf: String,
+    json: bool,
+    count: usize,
+}
+
+impl SearchSink {
+    fn new(format: OutputFormat) -> Self {
+        let json = format == OutputFormat::Json;
+        let mut buf = String::new();
+        if json {
+            buf.push_str(r#"{"matches":["#);
+        }
+        Self {
+            buf,
+            json,
+            count: 0,
+        }
+    }
+
+    fn marker(&mut self, rel: &str, line: u64, anchor: &str, raw: &str) {
+        if self.json {
+            self.open(rel, line);
+            self.buf.push_str(",\"anchor\":");
+            push_json_str(&mut self.buf, anchor);
+            self.buf.push_str(",\"marker\":");
+            push_json_str(&mut self.buf, raw);
+            self.buf.push('}');
+        } else {
+            self.text(rel, line, raw);
+        }
+        self.count += 1;
+    }
+
+    fn mention(&mut self, rel: &str, line: u64, token: &str) {
+        if self.json {
+            self.open(rel, line);
+            self.buf.push_str(",\"mention\":");
+            push_json_str(&mut self.buf, token);
+            self.buf.push('}');
+        } else {
+            self.text(rel, line, token);
+        }
+        self.count += 1;
+    }
+
+    fn open(&mut self, rel: &str, line: u64) {
+        if self.count > 0 {
+            self.buf.push(',');
+        }
+        self.buf.push_str("{\"file\":");
+        push_json_str(&mut self.buf, rel);
+        write!(self.buf, ",\"line\":{line}").expect("a String never fails to write");
+    }
+
+    fn text(&mut self, rel: &str, line: u64, what: &str) {
+        writeln!(self.buf, "{rel}:{line}: {what}").expect("a String never fails to write");
+    }
+
+    fn finish(mut self) -> String {
+        if self.json {
+            self.buf.push_str("]}");
+        }
+        self.buf
+    }
 }
 
 /// Whether a search filter matches a decoded marker anchor: an unqualified
