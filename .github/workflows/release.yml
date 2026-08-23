@@ -6,15 +6,33 @@ on:
   push:
     tags: ['v*']
 
-# softprops/action-gh-release needs write access to create the draft release.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  # The tag names the version, so a tag that disagrees with the manifest would
+  # ship archives named for a version the binary does not report.
+  tag:
+    name: tag matches Cargo.toml
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare the tag with the manifest version
+        # `[package]` opens Cargo.toml, so the first `version =` at column 0
+        # is the crate's own, not a dependency's.
+        run: |
+          manifest=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          tag=${GITHUB_REF_NAME#v}
+          if [ "$manifest" != "$tag" ]; then
+            echo "error: tag $GITHUB_REF_NAME does not match Cargo.toml version $manifest"
+            exit 1
+          fi
+
   # Same three runners as the `rust` job in ci.yml. Keep the two lists in sync:
   # a platform that gates PRs must also be a platform we can ship from.
   build:
     name: build (${{ matrix.os }})
+    needs: tag
     strategy:
       fail-fast: false
       matrix:
@@ -58,6 +76,9 @@ jobs:
     name: release
     needs: build
     runs-on: ubuntu-latest
+    # softprops/action-gh-release creates the draft release.
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:

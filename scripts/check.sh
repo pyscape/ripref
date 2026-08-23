@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run every local quality gate in one shot. Mirrors .github/workflows/ci.yml, so
-# a green run here is a green run there. The six fast gates run by default; add
-# the slow coverage gate (needs cargo-llvm-cov) with --cov.
+# a green run here is a green run there. The fast gates run by default; add the
+# slow coverage gate (needs cargo-llvm-cov) with --cov.
 #
 # Usage: scripts/check.sh [--cov]
 set -uo pipefail
@@ -53,7 +53,18 @@ require() {
 
 run "Format (cargo fmt-check)" cargo fmt-check
 run "Lint (cargo lint)" cargo lint
-run "Test (cargo test --all)" cargo test --all
+run "Test (cargo test --workspace)" cargo test --workspace
+run "Docs (cargo doc)" env RUSTDOCFLAGS=-D\ warnings cargo doc --no-deps --locked --quiet
+
+# CI builds at the manifest's MSRV. That needs the pinned toolchain installed,
+# so a machine with only stable skips rather than failing, as the python3 gate
+# below does.
+msrv=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)
+if rustup toolchain list 2>/dev/null | grep -q "^${msrv}"; then
+  run "MSRV (cargo +${msrv} build)" cargo "+${msrv}" build --locked --quiet
+else
+  printf '\nskip: MSRV build (rustup toolchain %s not installed)\n' "$msrv"
+fi
 
 # The marker grammar's canonical regex (scripts/marker_regex_oracle.py) is the
 # oracle the hand-rolled marker::decode is tested against. Re-assert its own
