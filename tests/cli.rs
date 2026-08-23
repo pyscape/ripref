@@ -609,11 +609,11 @@ rrtest!(
         assert_eq!(code(&out), 0, "a warning is not an answer: {out:?}");
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(
-            stderr.contains(r#".rr.toml: line 2: unknown key "rule" under [verify]"#),
+            stderr.contains(".rr.toml: line 2: unknown key 'rule' under [verify]"),
             "{stderr}"
         );
         assert!(
-            stderr.contains(r#".rr.toml: line 5: unknown key "eligable" under [scan.rust]"#),
+            stderr.contains(".rr.toml: line 5: unknown key 'eligable' under [scan.rust]"),
             "{stderr}"
         );
 

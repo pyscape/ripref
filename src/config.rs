@@ -80,7 +80,7 @@ fn apply(source: &str, text: &str, cfg: &mut Config) -> Result<(), String> {
             // is rejected like an unknown name. [[rr:Configuration]]
             if quote != Quote::Outside {
                 return Err(format!(
-                    "line {lineno}: unterminated string in value for {key:?}"
+                    "line {lineno}: unterminated string in value for '{key}'"
                 ));
             }
             if depth <= 0 {
@@ -88,14 +88,14 @@ fn apply(source: &str, text: &str, cfg: &mut Config) -> Result<(), String> {
             }
             let Some((_, next)) = lines.next() else {
                 return Err(format!(
-                    "line {lineno}: unterminated array in value for {key:?}"
+                    "line {lineno}: unterminated array in value for '{key}'"
                 ));
             };
             value.push(' ');
             value.push_str(strip_comment(next).trim());
         }
         let strings = |value: &str| {
-            strings_in(value).map_err(|e| format!("line {lineno}: {e} in value for {key:?}"))
+            strings_in(value).map_err(|e| format!("line {lineno}: {e} in value for '{key}'"))
         };
         if section == "verify" {
             match key {
@@ -103,7 +103,7 @@ fn apply(source: &str, text: &str, cfg: &mut Config) -> Result<(), String> {
                 "exclude" => cfg.verify_exclude = strings(&value)?,
                 "rules" => cfg.verify_rules = strings(&value)?,
                 _ => messages::warn(format_args!(
-                    "{source}: line {lineno}: unknown key {key:?} under [{section}]"
+                    "{source}: line {lineno}: unknown key '{key}' under [{section}]"
                 )),
             }
         } else if let Some(lang) = section.strip_prefix("scan.") {
@@ -116,7 +116,7 @@ fn apply(source: &str, text: &str, cfg: &mut Config) -> Result<(), String> {
                 }
             } else {
                 messages::warn(format_args!(
-                    "{source}: line {lineno}: unknown key {key:?} under [{section}]"
+                    "{source}: line {lineno}: unknown key '{key}' under [{section}]"
                 ));
             }
         }
@@ -260,11 +260,11 @@ pub fn scope_matcher(root: &Path, cfg: &Config) -> Result<ignore::overrides::Ove
     let mut b = ignore::overrides::OverrideBuilder::new(root);
     for glob in &cfg.verify_in_scope {
         b.add(glob)
-            .map_err(|e| format!("bad in-scope glob {glob:?}: {e}"))?;
+            .map_err(|e| format!("bad in-scope glob '{glob}': {e}"))?;
     }
     for glob in &cfg.verify_exclude {
         b.add(&format!("!{glob}"))
-            .map_err(|e| format!("bad exclude glob {glob:?}: {e}"))?;
+            .map_err(|e| format!("bad exclude glob '{glob}': {e}"))?;
     }
     b.build().map_err(|e| format!("bad scope globs: {e}"))
 }
@@ -510,7 +510,7 @@ mod tests {
         let err = apply("[verify]\nin-scope = [\"a\\u00e9\"]\n", &mut cfg).unwrap_err();
         assert_eq!(
             err,
-            r#"line 2: unsupported escape \u (write the character itself) in value for "in-scope""#
+            "line 2: unsupported escape \\u (write the character itself) in value for 'in-scope'"
         );
     }
 
@@ -524,10 +524,10 @@ mod tests {
         };
 
         let err = apply("\n# note\n[verify]\nrules = [\"path-line", &mut cfg).unwrap_err();
-        assert_eq!(err, "line 4: unterminated string in value for \"rules\"");
+        assert_eq!(err, "line 4: unterminated string in value for 'rules'");
 
         let err = apply("[verify]\nrules = [\n  \"path-line\",\n", &mut cfg).unwrap_err();
-        assert_eq!(err, "line 2: unterminated array in value for \"rules\"");
+        assert_eq!(err, "line 2: unterminated array in value for 'rules'");
     }
 
     #[test]

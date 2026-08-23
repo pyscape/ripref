@@ -178,7 +178,7 @@ impl<'a> Reader<'a> {
         let magic = next_line(&mut lines)?;
         if magic != MAGIC {
             return Err(format!(
-                "unrecognized index format {magic:?} (expected {MAGIC:?})"
+                "unrecognized index format '{magic}' (expected '{MAGIC}')"
             ));
         }
         let mtime = next_line(&mut lines)?
@@ -195,11 +195,11 @@ impl<'a> Reader<'a> {
         loop {
             let line = next_line(&mut lines)?;
             if line.is_empty() {
-                break; // blank line terminates the section table
+                break;
             }
             let rest = line
                 .strip_prefix("section:")
-                .ok_or_else(|| format!("malformed section line: {line:?}"))?;
+                .ok_or_else(|| format!("malformed section line: '{line}'"))?;
             let mut parts = rest.rsplitn(3, ':');
             let len: usize = parts
                 .next()
@@ -221,10 +221,10 @@ impl<'a> Reader<'a> {
         for (name, &(off, len)) in &sections {
             let end = off
                 .checked_add(len)
-                .ok_or_else(|| format!("section {name:?} offset+length overflows"))?;
+                .ok_or_else(|| format!("section '{name}' offset+length overflows"))?;
             if end > bytes.len() {
                 return Err(format!(
-                    "section {name:?} extends past end of index ({end} > {})",
+                    "section '{name}' extends past end of index ({end} > {})",
                     bytes.len()
                 ));
             }

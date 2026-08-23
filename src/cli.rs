@@ -215,7 +215,12 @@ impl Flag for FormatFlag {
         args.format = match v.to_str() {
             Some("text") => OutputFormat::Text,
             Some("json") => OutputFormat::Json,
-            _ => return Err(format!("--format expects 'text' or 'json', got {v:?}")),
+            _ => {
+                return Err(format!(
+                    "--format expects 'text' or 'json', got '{}'",
+                    v.to_string_lossy()
+                ))
+            }
         };
         Ok(())
     }
@@ -238,7 +243,12 @@ impl Flag for ColorFlag {
             Some("auto") => Color::Auto,
             Some("always") => Color::Always,
             Some("never") => Color::Never,
-            _ => return Err(format!("--color expects auto|always|never, got {v:?}")),
+            _ => {
+                return Err(format!(
+                    "--color expects 'auto', 'always', or 'never', got '{}'",
+                    v.to_string_lossy()
+                ))
+            }
         };
         Ok(())
     }
@@ -389,7 +399,7 @@ pub(crate) fn parse(argv: &[OsString]) -> Result<ParseOutcome, String> {
                 return Ok(ParseOutcome::Special(Special::Version));
             }
             _ => Subcommand::from_token(tok)
-                .ok_or_else(|| format!("unknown command: {}", tok.to_string_lossy()))?,
+                .ok_or_else(|| format!("unknown command: '{}'", tok.to_string_lossy()))?,
         },
     };
     let mut args = LowArgs::new(command);
@@ -507,18 +517,18 @@ fn validate(args: &LowArgs) -> Result<(), String> {
 
 /// Split a `<file>:<line>` location into its parts, per the location grammar
 /// of `[[rr:AD-1]]`: the span is the numeric suffix after the last colon, so
-/// a path containing a colon (a Windows drive) keeps its prefix. The line
-/// must be a bare `u64`; `at` takes a single line, never a range.
+/// a path containing a colon (a Windows drive) keeps its prefix. `at` takes
+/// a single line, never a range.
 pub(crate) fn parse_position(s: &str) -> Result<(String, u64), String> {
     let (file, line) = s
         .rsplit_once(':')
-        .ok_or_else(|| format!("expected <file>:<line>, got {s:?}"))?;
+        .ok_or_else(|| format!("expected <file>:<line>, got '{s}'"))?;
     if file.is_empty() {
-        return Err(format!("expected <file>:<line>, got {s:?}"));
+        return Err(format!("expected <file>:<line>, got '{s}'"));
     }
     let line = line
         .parse::<u64>()
-        .map_err(|_| format!("line must be a number in <file>:<line>, got {s:?}"))?;
+        .map_err(|_| format!("line must be a number in <file>:<line>, got '{s}'"))?;
     Ok((file.replace('\\', "/"), line))
 }
 
@@ -703,7 +713,11 @@ mod tests {
     fn switches_reject_values_and_value_flags_require_them() {
         assert!(parse_err(&["at", "a.rs:1", "--all=yes"]).contains("switch"));
         assert!(parse_err(&["index", "--format"]).contains("requires a value"));
-        assert!(parse_err(&["index", "--format", "xml"]).contains("text"));
+        assert_eq!(
+            parse_err(&["index", "--format", "xml"]),
+            "--format expects 'text' or 'json', got 'xml'",
+            "a rejected value is echoed in single quotes, never Debug-quoted"
+        );
     }
 
     #[test]

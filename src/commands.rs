@@ -232,10 +232,10 @@ pub(crate) fn run_read(args: &LowArgs) -> Result<u8, String> {
             }
         })?;
         match locations.len() {
-            0 => messages::warn(format_args!("no such anchor: {anchor}")),
+            0 => messages::warn(format_args!("no such anchor: '{anchor}'")),
             1 => {}
             n => messages::warn(format_args!(
-                "ambiguous anchor: {anchor} resolves to {n} definitions (add a qualifier)"
+                "ambiguous anchor: '{anchor}' resolves to {n} definitions (add a qualifier)"
             )),
         }
         Ok(code)
@@ -300,7 +300,7 @@ pub(crate) fn run_at(args: &LowArgs) -> Result<u8, String> {
         } else {
             for (form, n) in &uninvertible {
                 messages::warn(format_args!(
-                    "ambiguous marker for {file}:{line}: {form} resolves to \
+                    "ambiguous marker for {file}:{line}: '{form}' resolves to \
                      {n} definitions (retitle one)"
                 ));
             }
