@@ -407,22 +407,19 @@ fn lookup_short(ch: char) -> Option<&'static dyn Flag> {
     FLAGS.iter().copied().find(|f| f.name_short() == Some(ch))
 }
 
-/// Parse argv (already stripped of the leading program name) into a
-/// [`ParseOutcome`].
+/// `argv` is already stripped of the leading program name.
 pub fn parse(argv: &[OsString]) -> Result<ParseOutcome, String> {
-    for tok in argv {
-        match tok.to_str() {
-            Some("-h") | Some("--help") => return Ok(ParseOutcome::Special(Special::Help)),
-            Some("-V") | Some("--version") => return Ok(ParseOutcome::Special(Special::Version)),
-            _ => {}
-        }
-    }
-
     let mut iter = argv.iter();
     let command = match iter.next() {
         None => return Err("no command given (try 'index' or 'read')".to_string()),
-        Some(tok) => Subcommand::from_token(tok)
-            .ok_or_else(|| format!("unknown command: {}", tok.to_string_lossy()))?,
+        Some(tok) => match tok.to_str() {
+            Some("-h") | Some("--help") => return Ok(ParseOutcome::Special(Special::Help)),
+            Some("-V") | Some("--version") => {
+                return Ok(ParseOutcome::Special(Special::Version));
+            }
+            _ => Subcommand::from_token(tok)
+                .ok_or_else(|| format!("unknown command: {}", tok.to_string_lossy()))?,
+        },
     };
     let mut args = LowArgs::new(command);
 
@@ -433,8 +430,11 @@ pub fn parse(argv: &[OsString]) -> Result<ParseOutcome, String> {
             args.positional.push(tok.clone());
         } else if text == "--" {
             positional_only = true;
+        } else if text == "-h" || text == "--help" {
+            return Ok(ParseOutcome::Special(Special::Help));
+        } else if text == "-V" || text == "--version" {
+            return Ok(ParseOutcome::Special(Special::Version));
         } else if let Some(rest) = text.strip_prefix("--") {
-            // Long flag, possibly `--name=value`.
             let (name, inline) = match rest.split_once('=') {
                 Some((n, v)) => (n, Some(OsString::from(v))),
                 None => (rest, None),
@@ -696,6 +696,14 @@ mod tests {
             parse(&[OsString::from("-V")]),
             Ok(ParseOutcome::Special(Special::Version))
         ));
+    }
+
+    #[test]
+    fn help_after_a_double_dash_is_an_anchor() {
+        let args = parse_run(&["read", "--", "--help"]);
+        assert_eq!(args.positional, vec![OsString::from("--help")]);
+        let args = parse_run(&["search", "--", "-V"]);
+        assert_eq!(args.positional, vec![OsString::from("-V")]);
     }
 
     #[test]

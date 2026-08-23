@@ -42,6 +42,17 @@ rrtest!(
 );
 
 rrtest!(
+    a_double_dash_hands_the_anchor_over_intact,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file("a.md", "# --help\n\nbody\n");
+        cmd.arg("index").assert_exit_code(0);
+
+        let loc = cmd.args(["read", "--", "--help"]).stdout();
+        assert_eq!(loc.trim(), "a.md:1-3");
+    }
+);
+
+rrtest!(
     unknown_anchor_exits_one,
     |mut dir: Dir, mut cmd: TestCommand| {
         dir.file("a.md", "# alpha\n");
