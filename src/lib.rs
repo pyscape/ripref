@@ -38,6 +38,24 @@ pub mod exit {
     pub const STALE: u8 = 3;
 }
 
+/// A non-fatal failure prints here and flips a flag `run` reads once the
+/// walk is over, so one unreadable file neither aborts the run nor passes
+/// unreported. Mirrors ripgrep's `messages::set_errored`.
+pub mod messages {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static ERRORED: AtomicBool = AtomicBool::new(false);
+
+    pub fn error(msg: impl std::fmt::Display) {
+        ERRORED.store(true, Ordering::Relaxed);
+        eprintln!("rr: {msg}");
+    }
+
+    pub fn errored() -> bool {
+        ERRORED.load(Ordering::Relaxed)
+    }
+}
+
 pub fn run() -> u8 {
     let argv: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
     let args = match cli::parse(&argv) {
@@ -66,6 +84,10 @@ pub fn run() -> u8 {
     };
 
     match result {
+        // A stale index is its own answer and keeps saying so; anything else
+        // yields to a failure the run already reported.
+        Ok(exit::STALE) => exit::STALE,
+        Ok(_) if messages::errored() => exit::USAGE,
         Ok(code) => code,
         Err(err) => {
             eprintln!("rr: {err}");

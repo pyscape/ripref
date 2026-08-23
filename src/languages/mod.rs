@@ -13,8 +13,6 @@ languages that ship as a prebuilt `.wasm` load through a separate path, see
 the grammar-loading benchmark in benches/.
 */
 
-use std::path::Path;
-
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Parser, Query, QueryCursor};
 use tree_sitter_language::LanguageFn;
@@ -86,17 +84,8 @@ struct Capture {
 }
 
 impl Language {
-    /// Read `disk_path` and emit one [`ForwardEntry`] per anchor. Any read or
-    /// parse failure yields an empty result rather than a panic.
-    pub fn extract(&self, rel_path: &str, disk_path: &Path) -> Vec<ForwardEntry> {
-        match std::fs::read_to_string(disk_path) {
-            Ok(content) => self.extract_from_str(rel_path, &content),
-            Err(_) => Vec::new(),
-        }
-    }
-
-    /// The core of [`extract`](Self::extract), over in-memory `content`,
-    /// separated so it is unit-testable without touching disk.
+    /// One [`ForwardEntry`] per anchor. A parse failure yields an empty
+    /// result rather than a panic; the caller owns the read.
     pub fn extract_from_str(&self, rel_path: &str, content: &str) -> Vec<ForwardEntry> {
         let captures = match self.titles {
             Some(titles) => titles(content)

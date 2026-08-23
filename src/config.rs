@@ -38,8 +38,12 @@ pub fn load(root: &Path) -> Result<Config, String> {
         scan: Vec::new(),
     };
     apply(DEFAULTS, &mut cfg).map_err(|e| format!("built-in rr.toml: {e}"))?;
-    if let Ok(text) = std::fs::read_to_string(root.join(".rr.toml")) {
-        apply(&text, &mut cfg).map_err(|e| format!(".rr.toml: {e}"))?;
+    match std::fs::read_to_string(root.join(".rr.toml")) {
+        Ok(text) => apply(&text, &mut cfg).map_err(|e| format!(".rr.toml: {e}"))?,
+        // Absent is the normal case; unreadable would silently drop the
+        // project layer and answer from the defaults instead.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!(".rr.toml: {e}")),
     }
     Ok(cfg)
 }

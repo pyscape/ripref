@@ -20,6 +20,7 @@ use ignore::{WalkBuilder, WalkState};
 
 use crate::config;
 use crate::languages;
+use crate::messages;
 use crate::refidx::{ForwardEntry, IndexData, MentionEntry};
 use crate::scan::{self, What};
 
@@ -68,7 +69,10 @@ pub fn build(
         Box::new(move |result| {
             let dent = match result {
                 Ok(d) => d,
-                Err(_) => return WalkState::Continue, // skip unreadable entries
+                Err(e) => {
+                    messages::error(e);
+                    return WalkState::Continue;
+                }
             };
             if !dent.file_type().is_some_and(|t| t.is_file()) {
                 return WalkState::Continue;
@@ -81,21 +85,35 @@ pub fn build(
             let ext = rel.extension().and_then(|e| e.to_str());
 
             let mut anchors = Vec::new();
-            if let Some(language) = languages::for_extension(ext) {
-                anchors = language.extract(&rel_path, dent.path());
-            }
-
             let mut mentions = Vec::new();
-            if config::in_scope(scope, &rel_path) {
-                if let Ok(content) = std::fs::read_to_string(dent.path()) {
-                    for found in scan::scan(&content, scan::host_for(ext, cfg)) {
-                        if let What::Mention { token, .. } = found.what {
-                            mentions.push(MentionEntry {
-                                token,
-                                location: format!("{rel_path}:{}-{}", found.line, found.line),
-                            });
+            let language = languages::for_extension(ext);
+            let in_scope = config::in_scope(scope, &rel_path);
+            // One read feeds both halves, so a file that is anchored and in
+            // scope is neither read twice nor reported twice.
+            if language.is_some() || in_scope {
+                match std::fs::read_to_string(dent.path()) {
+                    Ok(content) => {
+                        if let Some(language) = language {
+                            anchors = language.extract_from_str(&rel_path, &content);
+                        }
+                        if in_scope {
+                            for found in scan::scan(&content, scan::host_for(ext, cfg)) {
+                                if let What::Mention { token, .. } = found.what {
+                                    mentions.push(MentionEntry {
+                                        token,
+                                        location: format!(
+                                            "{rel_path}:{}-{}",
+                                            found.line, found.line
+                                        ),
+                                    });
+                                }
+                            }
                         }
                     }
+                    // Not valid UTF-8 is a binary file, which is simply not
+                    // scoped text.
+                    Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {}
+                    Err(e) => messages::error(format_args!("{rel_path}: {e}")),
                 }
             }
 

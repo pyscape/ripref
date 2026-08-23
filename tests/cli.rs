@@ -1088,6 +1088,43 @@ fn commit_all(dir: &Dir, msg: &str) {
     git(dir, &["commit", "-q", "-m", msg]);
 }
 
+// A read that fails for any reason but absence is reported, and the run
+// answers 2 rather than answering from what it could read.
+rrtest!(
+    an_unreadable_project_profile_is_not_an_absent_one,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file("a.md", "# Head\n");
+        std::fs::create_dir(dir.path().join(".rr.toml")).unwrap();
+
+        let out = cmd.arg("index").run();
+        assert_eq!(code(&out), 2, "{out:?}");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains(".rr.toml"),
+            "{out:?}"
+        );
+    }
+);
+
+#[cfg(unix)]
+rrtest!(
+    an_unreadable_file_is_reported_and_changes_the_exit_code,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        use std::os::unix::fs::PermissionsExt;
+        dir.file("a.md", "# Head\n").file("locked.md", "# Locked\n");
+        let locked = dir.path().join("locked.md");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let out = cmd.arg("index").run();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(code(&out), 2, "{out:?}");
+        assert!(stderr.contains("locked.md"), "{out:?}");
+        // One read per file, so one line, not one per half of the walk.
+        assert_eq!(stderr.matches("locked.md").count(), 1, "{out:?}");
+
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
+);
+
 /// Run `rr <args>` in `dir` while counting the top-level git processes it
 /// spawns, via `GIT_TRACE2_EVENT` (each git process emits exactly one
 /// `version` event). The trace lands outside the repo so it is never walked.

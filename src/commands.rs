@@ -21,6 +21,7 @@ use crate::config;
 use crate::exit;
 use crate::indexer;
 use crate::marker;
+use crate::messages;
 use crate::refidx::{self, AnchorHit, Reader};
 use crate::scan::{self, What};
 
@@ -115,7 +116,10 @@ enum IndexState {
 fn load_index(index_path: &Path, root: &Path, skip_freshness: bool) -> Result<IndexState, String> {
     let file = match std::fs::File::open(index_path) {
         Ok(f) => f,
-        Err(_) => return Ok(IndexState::Missing),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(IndexState::Missing);
+        }
+        Err(e) => return Err(format!("failed to open {}: {e}", index_path.display())),
     };
     let bytes: Vec<u8> = {
         // SAFETY: the index is a regular file we just opened; `rr index`
@@ -425,8 +429,15 @@ fn scoped_files(
         if !config::in_scope(matcher, &rel) {
             continue;
         }
-        let Ok(content) = std::fs::read_to_string(dent.path()) else {
-            continue; // binary or unreadable: not scoped text
+        let content = match std::fs::read_to_string(dent.path()) {
+            Ok(content) => content,
+            // Not valid UTF-8 is a binary file, which is simply not scoped
+            // text; anything else is a failure to read text that is.
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => continue,
+            Err(e) => {
+                messages::error(format_args!("{rel}: {e}"));
+                continue;
+            }
         };
         let ext = rel.rsplit('.').next();
         out.push(ScopedFile {
