@@ -173,13 +173,13 @@ fn resolve<'a>(reader: &Reader<'a>, anchor: &str) -> Vec<Location<'a>> {
         .collect()
 }
 
+/// The form to print, and how many definitions it lands on when that is not
+/// this hit; `None` is the checked case, so `run_at` never resolves again.
 /// `[[rr:AD-6#Decision outcome]]`
-fn minimal_form(reader: &Reader, hit: &AnchorHit) -> String {
-    // A candidate that resolves to exactly one definition is not enough: the
-    // one it lands on has to be this hit.
+fn minimal_form(reader: &Reader, hit: &AnchorHit) -> (String, Option<usize>) {
     let target: Location = (&hit.file, hit.start_line, hit.end_line);
-    if reader.forward_lookup(&hit.anchor).len() == 1 {
-        return hit.anchor.clone();
+    if resolve(reader, &hit.anchor).as_slice() == [target] {
+        return (hit.anchor.clone(), None);
     }
     let enclosing = reader
         .covering(&hit.file, hit.start_line)
@@ -192,7 +192,13 @@ fn minimal_form(reader: &Reader, hit: &AnchorHit) -> String {
         .filter(|q| reader.forward_lookup(&q.anchor).len() == 1)
         .map(|q| format!("{}#{}", q.anchor, hit.anchor))
         .find(|form| resolve(reader, form).as_slice() == [target]);
-    enclosing.unwrap_or_else(|| format!("{}#{}", hit.file, hit.anchor))
+    if let Some(form) = enclosing {
+        return (form, None);
+    }
+    let fallback = format!("{}#{}", hit.file, hit.anchor);
+    let found = resolve(reader, &fallback);
+    let stray = (found.as_slice() != [target]).then_some(found.len());
+    (fallback, stray)
 }
 
 /// `[[rr:help_text]]`. The reader strips a pasted marker's wrapper and
@@ -262,21 +268,19 @@ pub(crate) fn run_at(args: &LowArgs) -> Result<u8, String> {
         } else {
             Vec::new()
         };
-        let forms: Vec<(String, &AnchorHit)> = emitted
+        let (forms, strays): (Vec<(String, &AnchorHit)>, Vec<Option<usize>>) = emitted
             .iter()
-            .map(|h| (minimal_form(reader, h), *h))
-            .collect();
+            .map(|h| {
+                let (form, stray) = minimal_form(reader, h);
+                ((form, *h), stray)
+            })
+            .unzip();
 
-        // `minimal_form` tests each candidate, but returns its path fallback
-        // unchecked, so the printed form may still not invert.
         // [[rr:AD-4#Decision outcome]]
         let uninvertible: Vec<(&str, usize)> = forms
             .iter()
-            .filter_map(|(form, h)| {
-                let target: Location = (&h.file, h.start_line, h.end_line);
-                let found = resolve(reader, form);
-                (found.as_slice() != [target]).then_some((form.as_str(), found.len()))
-            })
+            .zip(&strays)
+            .filter_map(|((form, _), stray)| stray.map(|n| (form.as_str(), n)))
             .collect();
 
         let code = if forms.is_empty() || (!args.all && forms.len() > 1) || !uninvertible.is_empty()
