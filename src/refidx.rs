@@ -387,11 +387,11 @@ fn record_value(line: &[u8]) -> Option<&str> {
     std::str::from_utf8(&line[tab + 1..]).ok()
 }
 
-/// One definition's place in the tree, parsed out of a `file:start-end`
-/// location body. Borrows the path from the index image it was read from.
+/// A parsed location borrowed from the index image, where [`AnchorHit`] owns
+/// its copy. `[[rr:AD-1#Decision outcome]]`
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Location<'a> {
-    /// As [`AnchorHit::file`], borrowed rather than owned.
+    /// As [`AnchorHit::file`].
     pub file: &'a str,
     /// As [`AnchorHit::start_line`].
     pub start_line: u64,

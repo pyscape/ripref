@@ -24,7 +24,6 @@ use crate::messages;
 use crate::refidx::{ForwardEntry, IndexData, MentionEntry};
 use crate::scan::{self, What};
 
-/// What one worker produces for one file.
 struct FileRecords {
     anchors: Vec<ForwardEntry>,
     mentions: Vec<MentionEntry>,
