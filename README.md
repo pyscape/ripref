@@ -375,7 +375,7 @@ usage error, so a typo cannot silently disable nothing.
 
 Every command accepts:
 
-- `--index <path>` (or the `REF_INDEX` environment variable): location of
+- `--index <path>` (or the `RIPREF_INDEX` environment variable): location of
   the index. Defaults to `.ref-cache/index`.
 - `--format text|json`: human-readable text (default), or one `rr-json`
   envelope for piping into other tools (`[[rr:AD-4]]`).

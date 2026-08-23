@@ -5,17 +5,18 @@
 
 use std::sync::OnceLock;
 
-use crate::languages::{Language, Mode};
+use crate::languages::{Language, Mode, Source};
 
 pub(crate) static LANGUAGE: Language = Language {
     extensions: &["md", "markdown"],
-    grammar: tree_sitter_md::LANGUAGE,
-    // In tree-sitter-md, `heading_content` is a field of `atx_heading` whose
-    // node is `inline` (the heading text). Capture that node.
-    anchors_query: "(atx_heading heading_content: (inline) @anchor)",
+    source: Source::Grammar {
+        grammar: tree_sitter_md::LANGUAGE,
+        // In tree-sitter-md, `heading_content` is a field of `atx_heading`
+        // whose node is `inline` (the heading text). Capture that node.
+        anchors_query: "(atx_heading heading_content: (inline) @anchor)",
+    },
     mode: Mode::Sections,
     level: heading_level,
-    titles: None,
     records: true,
     compiled: OnceLock::new(),
 };

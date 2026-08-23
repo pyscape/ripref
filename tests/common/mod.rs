@@ -60,6 +60,7 @@ impl Dir {
             bin: OsString::from(env!("CARGO_BIN_EXE_rr")),
             dir: self.dir.clone(),
             args: Vec::new(),
+            envs: Vec::new(),
         }
     }
 
@@ -101,12 +102,23 @@ pub struct TestCommand {
     bin: OsString,
     dir: PathBuf,
     args: Vec<OsString>,
+    envs: Vec<(OsString, OsString)>,
 }
 
 impl TestCommand {
     /// Append one argument.
     pub fn arg(&mut self, a: impl Into<OsString>) -> &mut Self {
         self.args.push(a.into());
+        self
+    }
+
+    /// Set an environment variable for the next run.
+    pub fn env(
+        &mut self,
+        key: impl Into<OsString>,
+        value: impl Into<OsString>,
+    ) -> &mut Self {
+        self.envs.push((key.into(), value.into()));
         self
     }
 
@@ -121,8 +133,10 @@ impl TestCommand {
 
     pub fn run(&mut self) -> Output {
         let args = std::mem::take(&mut self.args);
+        let envs = std::mem::take(&mut self.envs);
         Command::new(&self.bin)
             .args(&args)
+            .envs(envs)
             .current_dir(&self.dir)
             .output()
             .unwrap_or_else(|e| panic!("failed to spawn rr: {e}"))

@@ -16,14 +16,14 @@ use crate::marker;
 
 /// One scanner hit, located by 1-based line number.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Found {
+pub(crate) struct Hit {
     pub line: u64,
-    pub what: What,
+    pub kind: Kind,
 }
 
 /// What the scanners find.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum What {
+pub(crate) enum Kind {
     Marker {
         raw: String,
         anchor: String,
@@ -258,7 +258,7 @@ fn line_comment_text<'a>(
 /// writes, in line order.
 /// `[[rr:AD-2#Decision outcome]]`
 /// `[[rr:AD-5#Decision outcome]]`
-pub(crate) fn scan(content: &str, host: Host) -> Vec<Found> {
+pub(crate) fn scan(content: &str, host: Host) -> Vec<Hit> {
     let mut out = Vec::new();
     let mut fence: Option<&str> = None; // the delimiter that opened the fence
     let mut awaiting_close: Option<&'static str> = None;
@@ -266,121 +266,145 @@ pub(crate) fn scan(content: &str, host: Host) -> Vec<Found> {
     for (i, line) in content.lines().enumerate() {
         let lineno = (i + 1) as u64;
         match host {
-            Host::Markdown => {
-                let trimmed = line.trim_start();
-                let delim = if trimmed.starts_with("```") {
-                    Some("```")
-                } else if trimmed.starts_with("~~~") {
-                    Some("~~~")
-                } else {
-                    None
-                };
-                match (fence, delim) {
-                    (None, Some(d)) => {
-                        flush_paragraph(&mut paragraph, &mut out);
-                        fence = Some(d);
-                        continue;
-                    }
-                    (Some(open), Some(d)) if open == d => {
-                        fence = None;
-                        continue;
-                    }
-                    (Some(_), _) => continue, // inside a fence: invisible
-                    (None, None) => {}
-                }
-                if trimmed.is_empty() {
-                    flush_paragraph(&mut paragraph, &mut out);
-                    continue;
-                }
-                if opens_leaf_block(trimmed) {
-                    flush_paragraph(&mut paragraph, &mut out);
-                }
-                extend_paragraph(&mut paragraph, lineno, line);
-                // A heading is the whole block, so the next line is not its
-                // continuation either.
-                if is_atx_heading(trimmed) {
-                    flush_paragraph(&mut paragraph, &mut out);
-                }
-            }
-            // [[rr:AD-5#Decision outcome]]
-            Host::Comments(syntax) => {
-                let mut pos = 0;
-                let mut commented = false;
-                loop {
-                    if let Some(close) = awaiting_close {
-                        let (body, next) = match line[pos..].find(close) {
-                            Some(idx) => (
-                                &line[pos..pos + idx],
-                                Some(pos + idx + close.len()),
-                            ),
-                            None => (&line[pos..], None),
-                        };
-                        if syntax.block_is_comment {
-                            if body.trim().is_empty() {
-                                flush_paragraph(&mut paragraph, &mut out);
-                            } else {
-                                extend_paragraph(&mut paragraph, lineno, body);
-                            }
-                            commented = true;
-                        }
-                        match next {
-                            Some(n) => {
-                                pos = n;
-                                awaiting_close = None;
-                                flush_paragraph(&mut paragraph, &mut out);
-                            }
-                            None => break,
-                        }
-                    } else {
-                        let Some((off, start)) =
-                            next_comment_start(&line[pos..], syntax)
-                        else {
-                            break;
-                        };
-                        if !line[..pos + off].trim().is_empty() {
-                            flush_paragraph(&mut paragraph, &mut out);
-                        }
-                        match start {
-                            CommentStart::Block { len, close } => {
-                                pos += off + len;
-                                awaiting_close = Some(close);
-                            }
-                            CommentStart::Line { len } => {
-                                // `//!` and `#!` are prefixes too.
-                                let mut body = &line[pos + off + len..];
-                                let last = syntax.line.as_bytes()
-                                    [syntax.line.len() - 1];
-                                while body
-                                    .as_bytes()
-                                    .first()
-                                    .is_some_and(|&b| b == last || b == b'!')
-                                {
-                                    body = &body[1..];
-                                }
-                                if body.trim().is_empty() {
-                                    flush_paragraph(&mut paragraph, &mut out);
-                                } else {
-                                    extend_paragraph(
-                                        &mut paragraph,
-                                        lineno,
-                                        body,
-                                    );
-                                }
-                                commented = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-                if !commented {
-                    flush_paragraph(&mut paragraph, &mut out);
-                }
-            }
+            Host::Markdown => markdown_line(
+                line,
+                lineno,
+                &mut fence,
+                &mut paragraph,
+                &mut out,
+            ),
+            Host::Comments(syntax) => comment_line(
+                line,
+                lineno,
+                syntax,
+                &mut awaiting_close,
+                &mut paragraph,
+                &mut out,
+            ),
             Host::Plain => scan_segment(line, false, lineno, &mut out),
         }
     }
     flush_paragraph(&mut paragraph, &mut out);
     out
+}
+
+/// `[[rr:AD-2#Decision outcome]]`
+fn markdown_line<'a>(
+    line: &'a str,
+    lineno: u64,
+    fence: &mut Option<&'a str>,
+    paragraph: &mut Option<Paragraph>,
+    out: &mut Vec<Hit>,
+) {
+    let trimmed = line.trim_start();
+    let delim = if trimmed.starts_with("```") {
+        Some("```")
+    } else if trimmed.starts_with("~~~") {
+        Some("~~~")
+    } else {
+        None
+    };
+    match (*fence, delim) {
+        (None, Some(d)) => {
+            flush_paragraph(paragraph, out);
+            *fence = Some(d);
+            return;
+        }
+        (Some(open), Some(d)) if open == d => {
+            *fence = None;
+            return;
+        }
+        (Some(_), _) => return, // inside a fence: invisible
+        (None, None) => {}
+    }
+    if trimmed.is_empty() {
+        flush_paragraph(paragraph, out);
+        return;
+    }
+    if opens_leaf_block(trimmed) {
+        flush_paragraph(paragraph, out);
+    }
+    extend_paragraph(paragraph, lineno, line);
+    // A heading is the whole block, so the next line is not its
+    // continuation either.
+    if is_atx_heading(trimmed) {
+        flush_paragraph(paragraph, out);
+    }
+}
+
+/// `[[rr:AD-5#Decision outcome]]`
+fn comment_line(
+    line: &str,
+    lineno: u64,
+    syntax: &'static CommentSyntax,
+    awaiting_close: &mut Option<&'static str>,
+    paragraph: &mut Option<Paragraph>,
+    out: &mut Vec<Hit>,
+) {
+    let mut pos = 0;
+    let mut commented = false;
+    loop {
+        if let Some(close) = *awaiting_close {
+            let (body, next) = match line[pos..].find(close) {
+                Some(idx) => {
+                    (&line[pos..pos + idx], Some(pos + idx + close.len()))
+                }
+                None => (&line[pos..], None),
+            };
+            if syntax.block_is_comment {
+                if body.trim().is_empty() {
+                    flush_paragraph(paragraph, out);
+                } else {
+                    extend_paragraph(paragraph, lineno, body);
+                }
+                commented = true;
+            }
+            match next {
+                Some(n) => {
+                    pos = n;
+                    *awaiting_close = None;
+                    flush_paragraph(paragraph, out);
+                }
+                None => break,
+            }
+        } else {
+            let Some((off, start)) = next_comment_start(&line[pos..], syntax)
+            else {
+                break;
+            };
+            if !line[..pos + off].trim().is_empty() {
+                flush_paragraph(paragraph, out);
+            }
+            match start {
+                CommentStart::Block { len, close } => {
+                    pos += off + len;
+                    *awaiting_close = Some(close);
+                }
+                CommentStart::Line { len } => {
+                    // `//!` and `#!` are prefixes too.
+                    let mut body = &line[pos + off + len..];
+                    let last = syntax.line.as_bytes()[syntax.line.len() - 1];
+                    while body
+                        .as_bytes()
+                        .first()
+                        .is_some_and(|&b| b == last || b == b'!')
+                    {
+                        body = &body[1..];
+                    }
+                    if body.trim().is_empty() {
+                        flush_paragraph(paragraph, out);
+                    } else {
+                        extend_paragraph(paragraph, lineno, body);
+                    }
+                    commented = true;
+                    break;
+                }
+            }
+        }
+    }
+    if !commented {
+        flush_paragraph(paragraph, out);
+    }
 }
 
 struct Paragraph {
@@ -444,7 +468,7 @@ fn extend_paragraph(
 
 /// `[[rr:ripref (rr)#Anchors]]`
 /// `[[rr:AD-2#Decision outcome]]`
-fn flush_paragraph(paragraph: &mut Option<Paragraph>, out: &mut Vec<Found>) {
+fn flush_paragraph(paragraph: &mut Option<Paragraph>, out: &mut Vec<Hit>) {
     let Some(Paragraph { first_line, text }) = paragraph.take() else {
         return;
     };
@@ -467,20 +491,20 @@ fn flush_paragraph(paragraph: &mut Option<Paragraph>, out: &mut Vec<Found>) {
 
 /// Scan one region segment. The code-span rule is
 /// `[[rr:AD-5#Decision outcome]]`.
-fn scan_segment(text: &str, is_span: bool, lineno: u64, out: &mut Vec<Found>) {
+fn scan_segment(text: &str, is_span: bool, lineno: u64, out: &mut Vec<Hit>) {
     if is_span {
         if text.starts_with(marker::OPENER) {
             match marker::scan_token(text) {
-                marker::Token::Marker { len, anchor } => out.push(Found {
+                marker::Token::Marker { len, anchor } => out.push(Hit {
                     line: lineno,
-                    what: What::Marker {
+                    kind: Kind::Marker {
                         raw: text[..len].to_string(),
                         anchor,
                     },
                 }),
-                marker::Token::Malformed(reason) => out.push(Found {
+                marker::Token::Malformed(reason) => out.push(Hit {
                     line: lineno,
-                    what: What::Malformed { reason },
+                    kind: Kind::Malformed { reason },
                 }),
             }
         }
@@ -494,9 +518,9 @@ fn scan_segment(text: &str, is_span: bool, lineno: u64, out: &mut Vec<Found>) {
         let start = from + rel;
         match marker::scan_token(&text[start..]) {
             marker::Token::Marker { len, anchor } => {
-                out.push(Found {
+                out.push(Hit {
                     line: lineno,
-                    what: What::Marker {
+                    kind: Kind::Marker {
                         raw: text[start..start + len].to_string(),
                         anchor,
                     },
@@ -505,9 +529,9 @@ fn scan_segment(text: &str, is_span: bool, lineno: u64, out: &mut Vec<Found>) {
                 from = start + len;
             }
             marker::Token::Malformed(reason) => {
-                out.push(Found {
+                out.push(Hit {
                     line: lineno,
-                    what: What::Malformed { reason },
+                    kind: Kind::Malformed { reason },
                 });
                 covered.push((start, text.len()));
                 from = start + marker::OPENER.len();
@@ -522,7 +546,7 @@ fn mentions_in(
     text: &str,
     covered: &[(usize, usize)],
     lineno: u64,
-    out: &mut Vec<Found>,
+    out: &mut Vec<Hit>,
 ) {
     let bytes = text.as_bytes();
     let mut i = 0;
@@ -548,9 +572,9 @@ fn mentions_in(
         }
         let line_ref = bytes.get(i) == Some(&b':')
             && bytes.get(i + 1).is_some_and(|b| b.is_ascii_digit());
-        out.push(Found {
+        out.push(Hit {
             line: lineno,
-            what: What::Mention {
+            kind: Kind::Mention {
                 token: token.to_string(),
                 line_ref,
             },
@@ -633,12 +657,12 @@ mod tests {
     fn kinds(content: &str, host: Host) -> Vec<String> {
         scan(content, host)
             .into_iter()
-            .map(|f| match f.what {
-                What::Marker { anchor, .. } => {
+            .map(|f| match f.kind {
+                Kind::Marker { anchor, .. } => {
                     format!("{}:marker:{anchor}", f.line)
                 }
-                What::Malformed { .. } => format!("{}:malformed", f.line),
-                What::Mention { token, line_ref } => {
+                Kind::Malformed { .. } => format!("{}:malformed", f.line),
+                Kind::Mention { token, line_ref } => {
                     format!(
                         "{}:mention:{token}{}",
                         f.line,

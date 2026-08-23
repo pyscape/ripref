@@ -44,20 +44,28 @@ pub(crate) enum Mode {
     Sections,
 }
 
-/// A first-class language: a tree-sitter grammar and query, or (`titles`
-/// set) a lexical title finder, whose captures become anchors.
+/// Where a language's anchors come from. A grammar-backed language parses;
+/// a lexical one scans titles, and has no grammar to name.
+pub(crate) enum Source {
+    Grammar {
+        /// The grammar, from the language's crate.
+        grammar: LanguageFn,
+        /// S-expression query text.
+        anchors_query: &'static str,
+    },
+    Titles(TitleFinder),
+}
+
+/// A first-class language: a [`Source`] of captures, and the rules that turn
+/// them into anchors.
 pub(crate) struct Language {
     pub extensions: &'static [&'static str],
-    /// The grammar, from the language's crate.
-    pub grammar: LanguageFn,
-    /// S-expression query text.
-    pub anchors_query: &'static str,
+    pub source: Source,
     /// How captures become anchors.
     pub mode: Mode,
     /// The rank of a title line, deciding which titles nest inside which.
     /// `[[rr:AD-1]]`
     pub level: fn(&str) -> u32,
-    pub titles: Option<TitleFinder>,
     /// Whether a title may open a record ID, which then is the identity.
     /// `[[rr:AD-1]]`
     pub records: bool,
@@ -105,8 +113,8 @@ impl Language {
         rel_path: &str,
         content: &str,
     ) -> Vec<ForwardEntry> {
-        let captures = match self.titles {
-            Some(titles) => titles(content)
+        let captures = match self.source {
+            Source::Titles(titles) => titles(content)
                 .into_iter()
                 .filter(|(text, _)| !text.trim().is_empty())
                 .map(|(text, row)| Capture {
@@ -115,7 +123,7 @@ impl Language {
                     end_row: row,
                 })
                 .collect(),
-            None => self.run_query(content),
+            Source::Grammar { .. } => self.run_query(content),
         };
         match self.mode {
             Mode::Symbols => captures
@@ -138,8 +146,15 @@ impl Language {
     fn compiled(&self) -> Option<&Compiled> {
         self.compiled
             .get_or_init(|| {
-                let language = tree_sitter::Language::new(self.grammar);
-                let query = Query::new(&language, self.anchors_query).ok()?;
+                let Source::Grammar {
+                    grammar,
+                    anchors_query,
+                } = self.source
+                else {
+                    return None;
+                };
+                let language = tree_sitter::Language::new(grammar);
+                let query = Query::new(&language, anchors_query).ok()?;
                 let anchor_idx =
                     query.capture_index_for_name(ANCHOR_CAPTURE)?;
                 let span_idx = query.capture_index_for_name(SPAN_CAPTURE);

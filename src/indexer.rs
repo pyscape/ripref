@@ -22,7 +22,7 @@ use crate::config;
 use crate::languages;
 use crate::messages;
 use crate::refidx::{ForwardEntry, IndexData, MentionEntry};
-use crate::scan::{self, What};
+use crate::scan::{self, Kind};
 
 struct FileRecords {
     anchors: Vec<ForwardEntry>,
@@ -102,16 +102,15 @@ pub fn build(
                                 language.extract_from_str(&rel_path, &content);
                         }
                         if in_scope {
-                            for found in
+                            for hit in
                                 scan::scan(&content, scan::host_for(ext, cfg))
                             {
-                                if let What::Mention { token, .. } = found.what
-                                {
+                                if let Kind::Mention { token, .. } = hit.kind {
                                     mentions.push(MentionEntry {
                                         token,
                                         location: format!(
                                             "{rel_path}:{}-{}",
-                                            found.line, found.line
+                                            hit.line, hit.line
                                         ),
                                     });
                                 }

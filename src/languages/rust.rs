@@ -2,15 +2,16 @@
 
 use std::sync::OnceLock;
 
-use crate::languages::{Language, Mode};
+use crate::languages::{Language, Mode, Source};
 
 pub(crate) static LANGUAGE: Language = Language {
     extensions: &["rs"],
-    grammar: tree_sitter_rust::LANGUAGE,
-    anchors_query: ANCHORS,
+    source: Source::Grammar {
+        grammar: tree_sitter_rust::LANGUAGE,
+        anchors_query: ANCHORS,
+    },
     mode: Mode::Symbols,
     level: |_| u32::MAX,
-    titles: None,
     records: false,
     compiled: OnceLock::new(),
 };

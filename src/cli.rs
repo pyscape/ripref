@@ -209,7 +209,7 @@ impl Flag for IndexFlag {
         "index"
     }
     fn doc_short(&self) -> &'static str {
-        "Path to the index file (default .ref-cache/index)."
+        "Index path; else RIPREF_INDEX, else .ref-cache/index."
     }
     fn update(
         &self,
@@ -359,7 +359,7 @@ impl Flag for AllFlag {
         &[Subcommand::At]
     }
     fn doc_short(&self) -> &'static str {
-        "report the whole covering nest, outermost first."
+        "Report the whole covering nest, outermost first."
     }
     fn update(
         &self,
@@ -383,7 +383,7 @@ impl Flag for MentionsFlag {
         &[Subcommand::Search]
     }
     fn doc_short(&self) -> &'static str {
-        "list path mentions instead of markers."
+        "List path mentions instead of markers."
     }
     fn update(
         &self,
@@ -407,7 +407,7 @@ impl Flag for MarkersFlag {
         &[Subcommand::Search]
     }
     fn doc_short(&self) -> &'static str {
-        "list every marker, taking no <anchor>."
+        "List every marker, taking no <anchor>."
     }
     fn update(
         &self,
@@ -637,14 +637,14 @@ pub(crate) fn parse_position(s: &str) -> Result<(String, u64), String> {
     Ok((file.replace('\\', "/"), line))
 }
 
-/// The index file to read or write: `--index`, else `REF_INDEX`, else
+/// The index file to read or write: `--index`, else `RIPREF_INDEX`, else
 /// `.ref-cache/index`.
 /// `[[rr:Shared options]]`
 pub(crate) fn index_path(args: &LowArgs) -> OsString {
     if let Some(p) = &args.index {
         return p.clone();
     }
-    if let Some(p) = std::env::var_os("REF_INDEX") {
+    if let Some(p) = std::env::var_os("RIPREF_INDEX") {
         return p;
     }
     OsString::from(".ref-cache/index")

@@ -1,3 +1,6 @@
+//! The `rr` binary: a thin shell around the [`ripref`] library, which owns
+//! every verb, its output, and its exit code.
+
 // Mirror the library's lint posture for the binary crate root (see
 // src/lib.rs).
 #![warn(unsafe_code)]
@@ -6,7 +9,5 @@
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    // The whole program is a library; `main` only translates the chosen exit
-    // code into a process exit.
     ExitCode::from(ripref::run())
 }

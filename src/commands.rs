@@ -24,7 +24,7 @@ use crate::output::{
     at_json, at_text, emit, envelope, push_json_str, push_location, SearchSink,
 };
 use crate::refidx::{self, AnchorHit, Location, Reader};
-use crate::scan::{self, What};
+use crate::scan::{self, Kind};
 
 /// Build or refresh the index from the working tree.
 /// `[[rr:help_text]]`
@@ -498,18 +498,18 @@ pub(crate) fn run_search(args: &LowArgs) -> Result<u8, String> {
 
     let mut sink = SearchSink::new(args.format);
     for file in scoped_files(root, &matcher, &cfg, &paths)? {
-        for found in scan::scan(&file.content, file.host) {
-            match (&found.what, args.mentions) {
-                (What::Marker { raw, anchor }, false) => {
+        for hit in scan::scan(&file.content, file.host) {
+            match (&hit.kind, args.mentions) {
+                (Kind::Marker { raw, anchor }, false) => {
                     if let Some(want) = &filter {
                         if !filter_matches(want, anchor) {
                             continue;
                         }
                     }
-                    sink.marker(&file.rel, found.line, anchor, raw);
+                    sink.marker(&file.rel, hit.line, anchor, raw);
                 }
-                (What::Mention { token, .. }, true) => {
-                    sink.mention(&file.rel, found.line, token);
+                (Kind::Mention { token, .. }, true) => {
+                    sink.mention(&file.rel, hit.line, token);
                 }
                 _ => {}
             }

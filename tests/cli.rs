@@ -770,6 +770,36 @@ rrtest!(
     }
 );
 
+// [[rr:Shared options]]
+rrtest!(
+    the_index_path_falls_back_from_flag_to_env_to_default,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file("a.md", "# Doc\n\nbody\n");
+        cmd.args(["index", "--index", "flag.idx"])
+            .assert_exit_code(0);
+        cmd.env("RIPREF_INDEX", "env.idx")
+            .arg("index")
+            .assert_exit_code(0);
+
+        let out = cmd
+            .env("RIPREF_INDEX", "env.idx")
+            .args(["read", "Doc", "--index", "flag.idx"])
+            .stdout();
+        assert_eq!(out.trim(), "a.md:1-3");
+        let out = cmd
+            .env("RIPREF_INDEX", "env.idx")
+            .args(["read", "Doc"])
+            .stdout();
+        assert_eq!(out.trim(), "a.md:1-3");
+        cmd.args(["read", "Doc"]).assert_exit_code(3);
+
+        // The un-namespaced spelling is not read.
+        cmd.env("REF_INDEX", "env.idx")
+            .args(["read", "Doc"])
+            .assert_exit_code(3);
+    }
+);
+
 // [[rr:AD-1]]
 rrtest!(
     verify_named_paths_are_tree_paths,

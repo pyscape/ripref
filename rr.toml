@@ -7,7 +7,7 @@
 # by `[[rr:AD-1]]`; this file declares the default profile's kinds and scope.
 
 [index]
-path = ".ref-cache/index"          # or the REF_INDEX env var
+path = ".ref-cache/index"          # or the RIPREF_INDEX env var
 respect-gitignore = true           # honor .gitignore / .ignore / .rgignore
 hidden = false                     # skip dotfiles
 follow-symlinks = false

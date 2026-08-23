@@ -63,7 +63,7 @@ enumerates anchors for the token under the cursor. Trigger it on the marker
 opener rather than on every word; the opener is the five fixed bytes
 `[[rr:AD-2]]` specifies, so it never fires mid-sentence. Insert the marker
 `rr at` prints. Pass `--no-color` to keep escape codes out
-of the buffer, and `--index <path>` (or `REF_INDEX`) when the editor's
+of the buffer, and `--index <path>` (or `RIPREF_INDEX`) when the editor's
 working directory is not the project root.
 
 ## VS Code

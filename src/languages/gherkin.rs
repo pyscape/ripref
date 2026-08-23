@@ -1,18 +1,14 @@
-//! `[[rr:AD-1]]`. `grammar` and `anchors_query` are required by `Language`
-//! but unused here; they point at the Markdown grammar and an empty
-//! query.
+//! `[[rr:AD-1]]`
 
 use std::sync::OnceLock;
 
-use crate::languages::{Language, Mode};
+use crate::languages::{Language, Mode, Source};
 
 pub(crate) static LANGUAGE: Language = Language {
     extensions: &["feature"],
-    grammar: tree_sitter_md::LANGUAGE,
-    anchors_query: "",
+    source: Source::Titles(titles),
     mode: Mode::Sections,
     level,
-    titles: Some(titles),
     records: false,
     compiled: OnceLock::new(),
 };

@@ -9,7 +9,7 @@ use crate::commands::{resolve, scoped_files, with_fresh_reader};
 use crate::config;
 use crate::exit;
 use crate::output::{emit, envelope, push_json_str};
-use crate::scan::{self, What};
+use crate::scan::{self, Kind};
 
 /// One of the six finding kinds of `[[rr:AD-3]]`, selected by the name a
 /// profile writes in `[[rr:Configuration]]`, beside the text a person reads.
@@ -91,10 +91,10 @@ pub(crate) fn run_verify(args: &LowArgs) -> Result<u8, String> {
     with_fresh_reader(&index_path, root, args.no_freshness, |reader| {
         let mut findings: Vec<Finding> = Vec::new();
         for file in scoped_files(root, &matcher, &cfg, &paths)? {
-            for found in scan::scan(&file.content, file.host) {
-                let (rule, detail) = match &found.what {
-                    What::Malformed { reason } => (MALFORMED, reason.clone()),
-                    What::Marker { raw, anchor } => {
+            for hit in scan::scan(&file.content, file.host) {
+                let (rule, detail) = match &hit.kind {
+                    Kind::Malformed { reason } => (MALFORMED, reason.clone()),
+                    Kind::Marker { raw, anchor } => {
                         if !anchor.contains('#')
                             && scan::is_path_shaped(anchor)
                         {
@@ -112,7 +112,7 @@ pub(crate) fn run_verify(args: &LowArgs) -> Result<u8, String> {
                             }
                         }
                     }
-                    What::Mention { token, line_ref } => {
+                    Kind::Mention { token, line_ref } => {
                         // [[rr:AD-5#Decision outcome]]
                         let first = token.split('/').next().unwrap_or("");
                         if first.is_empty() || !root.join(first).is_dir() {
@@ -132,7 +132,7 @@ pub(crate) fn run_verify(args: &LowArgs) -> Result<u8, String> {
                 }
                 findings.push(Finding {
                     file: file.rel.clone(),
-                    line: found.line,
+                    line: hit.line,
                     rule,
                     detail,
                 });

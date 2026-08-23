@@ -2,15 +2,16 @@
 
 use std::sync::OnceLock;
 
-use crate::languages::{Language, Mode};
+use crate::languages::{Language, Mode, Source};
 
 pub(crate) static LANGUAGE: Language = Language {
     extensions: &["py", "pyi", "pyw"],
-    grammar: tree_sitter_python::LANGUAGE,
-    anchors_query: ANCHORS,
+    source: Source::Grammar {
+        grammar: tree_sitter_python::LANGUAGE,
+        anchors_query: ANCHORS,
+    },
     mode: Mode::Symbols,
     level: |_| u32::MAX,
-    titles: None,
     records: false,
     compiled: OnceLock::new(),
 };
