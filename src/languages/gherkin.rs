@@ -2,9 +2,11 @@
 //! but unused here; they point at the Markdown grammar and an empty
 //! query.
 
+use std::sync::OnceLock;
+
 use crate::languages::{Language, Mode};
 
-pub(crate) const LANGUAGE: Language = Language {
+pub(crate) static LANGUAGE: Language = Language {
     extensions: &["feature"],
     grammar: tree_sitter_md::LANGUAGE,
     anchors_query: "",
@@ -12,6 +14,7 @@ pub(crate) const LANGUAGE: Language = Language {
     level,
     titles: Some(titles),
     records: false,
+    compiled: OnceLock::new(),
 };
 
 const KEYWORDS: &[&str] = &[

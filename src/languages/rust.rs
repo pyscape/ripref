@@ -1,8 +1,10 @@
 //! `[[rr:AD-1#Decision outcome]]`
 
+use std::sync::OnceLock;
+
 use crate::languages::{Language, Mode};
 
-pub(crate) const LANGUAGE: Language = Language {
+pub(crate) static LANGUAGE: Language = Language {
     extensions: &["rs"],
     grammar: tree_sitter_rust::LANGUAGE,
     anchors_query: ANCHORS,
@@ -10,6 +12,7 @@ pub(crate) const LANGUAGE: Language = Language {
     level: |_| u32::MAX,
     titles: None,
     records: false,
+    compiled: OnceLock::new(),
 };
 
 // `function_item` also matches methods: they are `function_item` nodes

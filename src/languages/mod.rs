@@ -13,6 +13,8 @@ languages that ship as a prebuilt `.wasm` load through a separate path, see
 the grammar-loading benchmark in benches/.
 */
 
+use std::sync::OnceLock;
+
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Parser, Query, QueryCursor};
 use tree_sitter_language::LanguageFn;
@@ -59,19 +61,33 @@ pub(crate) struct Language {
     /// Whether a title may open a record ID, which then is the identity.
     /// `[[rr:AD-1]]`
     pub records: bool,
+    /// `None` caches a failed compile, so a bad query is not retried per
+    /// file.
+    pub compiled: OnceLock<Option<Compiled>>,
 }
 
-/// Every first-class language.
-pub(crate) static LANGUAGES: &[Language] = &[
-    markdown::LANGUAGE,
-    rust::LANGUAGE,
-    gherkin::LANGUAGE,
-    python::LANGUAGE,
+/// `[[rr:Grammar loading: native vs WASM]]`
+/// The per-language work that does not depend on the file.
+pub(crate) struct Compiled {
+    language: tree_sitter::Language,
+    query: Query,
+    anchor_idx: u32,
+    span_idx: Option<u32>,
+}
+
+pub(crate) static LANGUAGES: [&Language; 4] = [
+    &markdown::LANGUAGE,
+    &rust::LANGUAGE,
+    &gherkin::LANGUAGE,
+    &python::LANGUAGE,
 ];
 
 pub(crate) fn for_extension(ext: Option<&str>) -> Option<&'static Language> {
     let ext = ext?;
-    LANGUAGES.iter().find(|l| l.extensions.contains(&ext))
+    LANGUAGES
+        .iter()
+        .copied()
+        .find(|l| l.extensions.contains(&ext))
 }
 
 /// A raw capture: identity text plus 0-based start/end rows.
@@ -109,18 +125,31 @@ impl Language {
         }
     }
 
+    fn compiled(&self) -> Option<&Compiled> {
+        self.compiled
+            .get_or_init(|| {
+                let language = tree_sitter::Language::new(self.grammar);
+                let query = Query::new(&language, self.anchors_query).ok()?;
+                let anchor_idx = query.capture_index_for_name(ANCHOR_CAPTURE)?;
+                let span_idx = query.capture_index_for_name(SPAN_CAPTURE);
+                Some(Compiled {
+                    language,
+                    query,
+                    anchor_idx,
+                    span_idx,
+                })
+            })
+            .as_ref()
+    }
+
     fn run_query(&self, content: &str) -> Vec<Capture> {
-        let language = tree_sitter::Language::new(self.grammar);
-        let Ok(query) = Query::new(&language, self.anchors_query) else {
+        let Some(compiled) = self.compiled() else {
             return Vec::new();
         };
-        let Some(anchor_idx) = query.capture_index_for_name(ANCHOR_CAPTURE) else {
-            return Vec::new();
-        };
-        let span_idx = query.capture_index_for_name(SPAN_CAPTURE);
+        let (anchor_idx, span_idx) = (compiled.anchor_idx, compiled.span_idx);
 
         let mut parser = Parser::new();
-        if parser.set_language(&language).is_err() {
+        if parser.set_language(&compiled.language).is_err() {
             return Vec::new();
         }
         let Some(tree) = parser.parse(content, None) else {
@@ -128,7 +157,7 @@ impl Language {
         };
 
         let mut cursor = QueryCursor::new();
-        let mut matches = cursor.matches(&query, tree.root_node(), content.as_bytes());
+        let mut matches = cursor.matches(&compiled.query, tree.root_node(), content.as_bytes());
         let mut out = Vec::new();
         while let Some(m) = matches.next() {
             let mut text = None;

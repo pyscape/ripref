@@ -3,9 +3,11 @@
 //! `tree-sitter-md` block grammar. Editing the query below changes what
 //! counts as a title, nothing else.
 
+use std::sync::OnceLock;
+
 use crate::languages::{Language, Mode};
 
-pub(crate) const LANGUAGE: Language = Language {
+pub(crate) static LANGUAGE: Language = Language {
     extensions: &["md", "markdown"],
     grammar: tree_sitter_md::LANGUAGE,
     // In tree-sitter-md, `heading_content` is a field of `atx_heading` whose
@@ -15,6 +17,7 @@ pub(crate) const LANGUAGE: Language = Language {
     level: heading_level,
     titles: None,
     records: true,
+    compiled: OnceLock::new(),
 };
 
 fn heading_level(line: &str) -> u32 {
