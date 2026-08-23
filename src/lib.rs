@@ -54,6 +54,10 @@ pub mod messages {
     pub fn errored() -> bool {
         ERRORED.load(Ordering::Relaxed)
     }
+
+    pub fn warn(msg: impl std::fmt::Display) {
+        eprintln!("rr: {msg}");
+    }
 }
 
 pub fn run() -> u8 {

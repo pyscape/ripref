@@ -4,12 +4,15 @@ project's `.rr.toml` (`[[rr:AD-1]]` puts kinds and scope in configuration).
 
 This is a deliberate subset of TOML, hand-rolled per the crate's no-new-crates
 ethos: section headers, quoted keys and strings, and string arrays (possibly
-multiline). It reads only the keys the binary consumes; unknown keys pass
-through unread, so the shipped rr.toml can document more than the code yet
-honors.
+multiline). It reads only the keys the binary consumes. Under `[index]` and
+`[anchor.*]` an unread key passes in silence, so the shipped rr.toml can
+document more than the code yet honors; under `[verify]` and `[scan.*]`,
+where every documented key is live, one warns.
 */
 
 use std::path::Path;
+
+use crate::messages;
 
 const DEFAULTS: &str = include_str!("../rr.toml");
 
@@ -37,9 +40,9 @@ pub fn load(root: &Path) -> Result<Config, String> {
         verify_rules: Vec::new(),
         scan: Vec::new(),
     };
-    apply(DEFAULTS, &mut cfg).map_err(|e| format!("built-in rr.toml: {e}"))?;
+    apply("built-in rr.toml", DEFAULTS, &mut cfg).map_err(|e| format!("built-in rr.toml: {e}"))?;
     match std::fs::read_to_string(root.join(".rr.toml")) {
-        Ok(text) => apply(&text, &mut cfg).map_err(|e| format!(".rr.toml: {e}"))?,
+        Ok(text) => apply(".rr.toml", &text, &mut cfg).map_err(|e| format!(".rr.toml: {e}"))?,
         // Unreadable would otherwise drop the project layer in silence and
         // answer from the defaults.
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -48,7 +51,7 @@ pub fn load(root: &Path) -> Result<Config, String> {
     Ok(cfg)
 }
 
-fn apply(text: &str, cfg: &mut Config) -> Result<(), String> {
+fn apply(source: &str, text: &str, cfg: &mut Config) -> Result<(), String> {
     let mut section = String::new();
     let mut lines = text.lines().enumerate();
     while let Some((idx, line)) = lines.next() {
@@ -91,21 +94,30 @@ fn apply(text: &str, cfg: &mut Config) -> Result<(), String> {
             value.push(' ');
             value.push_str(strip_comment(next).trim());
         }
+        let strings = |value: &str| {
+            strings_in(value).map_err(|e| format!("line {lineno}: {e} in value for {key:?}"))
+        };
         if section == "verify" {
             match key {
-                "in-scope" => cfg.verify_in_scope = strings_in(&value),
-                "exclude" => cfg.verify_exclude = strings_in(&value),
-                "rules" => cfg.verify_rules = strings_in(&value),
-                _ => {}
+                "in-scope" => cfg.verify_in_scope = strings(&value)?,
+                "exclude" => cfg.verify_exclude = strings(&value)?,
+                "rules" => cfg.verify_rules = strings(&value)?,
+                _ => messages::warn(format_args!(
+                    "{source}: line {lineno}: unknown key {key:?} under [{section}]"
+                )),
             }
         } else if let Some(lang) = section.strip_prefix("scan.") {
             let lang = unquote(lang);
             if key == "eligible" {
-                let eligible = strings_in(&value);
+                let eligible = strings(&value)?;
                 match cfg.scan.iter_mut().find(|(l, _)| l == lang) {
                     Some(entry) => entry.1 = eligible,
                     None => cfg.scan.push((lang.to_string(), eligible)),
                 }
+            } else {
+                messages::warn(format_args!(
+                    "{source}: line {lineno}: unknown key {key:?} under [{section}]"
+                ));
             }
         }
     }
@@ -129,6 +141,9 @@ fn unquote(s: &str) -> &str {
 enum Quote {
     Outside,
     Double,
+    /// A literal string takes no escapes, which is the whole difference
+    /// between the two in TOML.
+    DoubleEscape,
     Single,
 }
 
@@ -137,6 +152,8 @@ impl Quote {
         match (self, c) {
             (Quote::Outside, '"') => Quote::Double,
             (Quote::Outside, '\'') => Quote::Single,
+            (Quote::Double, '\\') => Quote::DoubleEscape,
+            (Quote::DoubleEscape, _) => Quote::Double,
             (Quote::Double, '"') | (Quote::Single, '\'') => Quote::Outside,
             _ => self,
         }
@@ -173,19 +190,69 @@ fn tally(value: &str) -> (i32, Quote) {
     (depth, quote)
 }
 
-fn strings_in(value: &str) -> Vec<String> {
+/// An unterminated tail is dropped rather than reported: `apply` has already
+/// rejected it, and every other caller is a test.
+fn strings_in(value: &str) -> Result<Vec<String>, String> {
     let mut out = Vec::new();
-    let mut rest = value;
-    while let Some(open) = rest.find(['"', '\'']) {
-        let delim = rest[open..].chars().next().unwrap_or('"');
-        let after = &rest[open + delim.len_utf8()..];
-        let Some(close) = after.find(delim) else {
-            break;
+    let mut chars = value.chars();
+    while let Some(c) = chars.next() {
+        let basic = match c {
+            '"' => true,
+            '\'' => false,
+            _ => continue,
         };
-        out.push(after[..close].to_string());
-        rest = &after[close + delim.len_utf8()..];
+        let mut raw = String::new();
+        let mut closed = false;
+        while let Some(c) = chars.next() {
+            if basic && c == '\\' {
+                raw.push(c);
+                if let Some(escaped) = chars.next() {
+                    raw.push(escaped);
+                }
+                continue;
+            }
+            if (basic && c == '"') || (!basic && c == '\'') {
+                closed = true;
+                break;
+            }
+            raw.push(c);
+        }
+        if !closed {
+            break;
+        }
+        out.push(if basic { unescape(&raw)? } else { raw });
     }
-    out
+    Ok(out)
+}
+
+/// An escape this does not know is refused rather than passed through as
+/// its own two characters, which would reach a glob as a backslash the
+/// matcher reads as an escape of its own.
+fn unescape(s: &str) -> Result<String, String> {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('"') => out.push('"'),
+            Some('\\') => out.push('\\'),
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('r') => out.push('\r'),
+            Some('b') => out.push('\u{8}'),
+            Some('f') => out.push('\u{c}'),
+            Some(other) => {
+                return Err(format!(
+                    "unsupported escape \\{other} (write the character itself)"
+                ));
+            }
+            None => return Err("value ends in a lone backslash".to_string()),
+        }
+    }
+    Ok(out)
 }
 
 pub fn scope_matcher(root: &Path, cfg: &Config) -> Result<ignore::overrides::Override, String> {
@@ -209,6 +276,14 @@ pub fn in_scope(matcher: &ignore::overrides::Override, rel: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn apply(text: &str, cfg: &mut Config) -> Result<(), String> {
+        super::apply("test", text, cfg)
+    }
+
+    fn strings_in(value: &str) -> Vec<String> {
+        super::strings_in(value).unwrap()
+    }
 
     #[test]
     fn defaults_scope_markdown() {
@@ -414,6 +489,28 @@ mod tests {
 
         let err = apply("[verify]\nrules = [\n  \"path-line\",\n", &mut blank()).unwrap_err();
         assert!(err.contains("unterminated array"), "{err}");
+    }
+
+    #[test]
+    fn a_basic_string_carries_escapes() {
+        assert_eq!(strings_in(r#"["a\"b/**"]"#), [r#"a"b/**"#]);
+        assert_eq!(strings_in(r#"["a\\b"]"#), [r"a\b"]);
+        assert_eq!(strings_in(r#"["a\tb", 'c\td']"#), ["a\tb", r"c\td"]);
+
+        let mut cfg = Config {
+            verify_in_scope: Vec::new(),
+            verify_exclude: Vec::new(),
+            verify_rules: Vec::new(),
+            scan: Vec::new(),
+        };
+        apply("[verify]\nin-scope = [\"a\\\"b/**\"]\n", &mut cfg).unwrap();
+        assert_eq!(cfg.verify_in_scope, [r#"a"b/**"#]);
+
+        let err = apply("[verify]\nin-scope = [\"a\\u00e9\"]\n", &mut cfg).unwrap_err();
+        assert_eq!(
+            err,
+            r#"line 2: unsupported escape \u (write the character itself) in value for "in-scope""#
+        );
     }
 
     #[test]

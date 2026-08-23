@@ -597,6 +597,56 @@ rrtest!(
     }
 );
 
+rrtest!(
+    a_key_the_binary_never_reads_is_warned_about,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file("a.md", "# T\n\nbad [[rr:nope]]\n").file(
+            ".rr.toml",
+            "[verify]\nrule = []\n\n[scan.rust]\neligable = [\"comments\"]\n",
+        );
+
+        let out = cmd.arg("index").run();
+        assert_eq!(code(&out), 0, "a warning is not an answer: {out:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains(r#".rr.toml: line 2: unknown key "rule" under [verify]"#),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains(r#".rr.toml: line 5: unknown key "eligable" under [scan.rust]"#),
+            "{stderr}"
+        );
+
+        let out = cmd.arg("verify").run();
+        assert_eq!(
+            code(&out),
+            1,
+            "rule = [] left the six defaults standing, which is the silence \
+             the warning exists to break: {out:?}"
+        );
+    }
+);
+
+rrtest!(
+    an_escaped_quote_is_a_glob_not_an_unterminated_string,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file("a.md", "# T\n").file(
+            ".rr.toml",
+            "[verify]\nin-scope = [\"a\\\"b/**\", \"**/*.md\"]\n",
+        );
+        cmd.arg("index").assert_exit_code(0);
+        cmd.arg("verify").assert_exit_code(0);
+
+        dir.write(".rr.toml", "[verify]\nin-scope = [\"a\\u00e9/**\"]\n");
+        let out = cmd.arg("index").run();
+        assert_eq!(code(&out), 2, "{out:?}");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("unsupported escape"),
+            "{out:?}"
+        );
+    }
+);
+
 // [[rr:Configuration]], with one marker in a string literal and one in a
 // trailing comment.
 rrtest!(
