@@ -420,6 +420,9 @@ pub(crate) fn parse(argv: &[OsString]) -> Result<ParseOutcome, String> {
 
     let mut positional_only = false;
     while let Some(tok) = iter.next() {
+        // An inline value is cut from the raw bytes, never from a lossy
+        // rendering: a path argv carries need not be UTF-8.
+        let bytes = tok.as_encoded_bytes();
         let text = tok.to_string_lossy();
         if positional_only {
             args.positional.push(tok.clone());
@@ -429,12 +432,13 @@ pub(crate) fn parse(argv: &[OsString]) -> Result<ParseOutcome, String> {
             return Ok(ParseOutcome::Special(Special::Help));
         } else if text == "-V" || text == "--version" {
             return Ok(ParseOutcome::Special(Special::Version));
-        } else if let Some(rest) = text.strip_prefix("--") {
-            let (name, inline) = match rest.split_once('=') {
-                Some((n, v)) => (n, Some(OsString::from(v))),
+        } else if let Some(rest) = bytes.strip_prefix(b"--") {
+            let (name, inline) = match rest.iter().position(|&b| b == b'=') {
+                Some(eq) => (&rest[..eq], Some(os_string_from_bytes(&rest[eq + 1..]))),
                 None => (rest, None),
             };
-            let flag = lookup_long(name).ok_or_else(|| format!("unknown flag: --{name}"))?;
+            let name = String::from_utf8_lossy(name);
+            let flag = lookup_long(&name).ok_or_else(|| format!("unknown flag: --{name}"))?;
             // A scope error names the spelling the caller typed, not the one
             // it negates.
             let (name, negated) = match flag.name_negated() {
@@ -447,11 +451,9 @@ pub(crate) fn parse(argv: &[OsString]) -> Result<ParseOutcome, String> {
         } else if text.starts_with('-') && text != "-" {
             let ch = text.chars().nth(1).unwrap();
             let flag = lookup_short(ch).ok_or_else(|| format!("unknown flag: -{ch}"))?;
-            let inline = if text.len() > 2 {
-                Some(OsString::from(&text[2..]))
-            } else {
-                None
-            };
+            // Every registered short is one ASCII byte, so a value starts
+            // at byte 2.
+            let inline = (bytes.len() > 2).then(|| os_string_from_bytes(&bytes[2..]));
             let value = take_value(flag, flag.name_long(), false, inline, &mut iter)?;
             flag.update(value, &mut args)?;
             args.seen_flags.push(flag.name_long());
@@ -462,6 +464,16 @@ pub(crate) fn parse(argv: &[OsString]) -> Result<ParseOutcome, String> {
 
     validate(&args)?;
     Ok(ParseOutcome::Run(args))
+}
+
+fn os_string_from_bytes(bytes: &[u8]) -> OsString {
+    // SAFETY: `bytes` is a suffix of one argv token's encoded bytes, cut only
+    // after an ASCII `=` or an ASCII short name. The encoding is a
+    // self-synchronizing superset of UTF-8, which `OsStr` documents as safe to
+    // split on an ASCII boundary, so the suffix is itself well-formed.
+    #[allow(unsafe_code)]
+    let s = unsafe { OsStr::from_encoded_bytes_unchecked(bytes) };
+    s.to_os_string()
 }
 
 fn take_value(
@@ -726,6 +738,26 @@ mod tests {
         assert_eq!(args.positional, vec![OsString::from("--help")]);
         let args = parse_run(&["search", "--", "-V"]);
         assert_eq!(args.positional, vec![OsString::from("-V")]);
+    }
+
+    /// Windows has no safe way to build an ill-formed `OsString`.
+    #[cfg(unix)]
+    #[test]
+    fn an_inline_value_keeps_bytes_that_are_not_utf8() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let bad = OsString::from_vec(vec![b'i', 0x80, b'x']);
+        let mut inline = OsString::from("--index=");
+        inline.push(&bad);
+        let argv = vec![OsString::from("index"), inline];
+        let Ok(ParseOutcome::Run(args)) = parse(&argv) else {
+            panic!("expected Run");
+        };
+        assert_eq!(
+            args.index.unwrap(),
+            bad,
+            "a lossy rendering would substitute U+FFFD"
+        );
     }
 
     #[test]
