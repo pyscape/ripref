@@ -447,12 +447,14 @@ pub(crate) fn scoped_files(
         if !dent.file_type().is_some_and(|t| t.is_file()) {
             continue;
         }
-        let rel = dent
-            .path()
-            .strip_prefix(root)
-            .unwrap_or(dent.path())
-            .to_string_lossy()
-            .replace('\\', "/");
+        let rel = dent.path().strip_prefix(root).unwrap_or(dent.path());
+        let Some(rel) = indexer::to_unix(rel) else {
+            messages::error(format_args!(
+                "{}: file name is not valid UTF-8, skipped",
+                rel.display()
+            ));
+            continue;
+        };
         if !config::in_scope(matcher, &rel) {
             continue;
         }

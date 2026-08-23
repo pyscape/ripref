@@ -15,8 +15,7 @@ use std::process::{Command, Output};
 
 use common::{code, Dir, TestCommand};
 
-// --- index + read: the forward path
-// ------------------------------------------
+// --- index + read: the forward path -----------------------------------------
 
 // Pins the index summary format (anchors, mentions, files) and the read
 // output (`file:start-end`, one definition per line). The heading's span is
@@ -161,8 +160,7 @@ rrtest!(
     }
 );
 
-// --- at: the inverse path
-// -----------------------------------------------------
+// --- at: the inverse path ---------------------------------------------------
 
 // [[rr:AD-4#Decision outcome]]
 rrtest!(
@@ -432,8 +430,7 @@ rrtest!(
     }
 );
 
-// --- read input hygiene
-// -------------------------------------------------------
+// --- read input hygiene -----------------------------------------------------
 
 // A pasted marker is stripped and unescaped before resolving.
 rrtest!(
@@ -458,8 +455,7 @@ rrtest!(
     }
 );
 
-// --- search: lexical, index-free
-// ----------------------------------------------
+// --- search: lexical, index-free --------------------------------------------
 
 // [[rr:AD-3#Decision outcome]]
 rrtest!(
@@ -530,8 +526,7 @@ rrtest!(
     }
 );
 
-// --- verify: the gate
-// ----------------------------------------------------------
+// --- verify: the gate -------------------------------------------------------
 
 // [[rr:AD-3#Decision outcome]], one fixture: the corpus
 // under tests/data carries one violation per line plus a clean section that
@@ -863,8 +858,74 @@ rrtest!(
     }
 );
 
-// --- the scenario kind
-// -----------------------------------------------------------
+// CRLF needs no special case: `\r` delimits a mention token and trims off a
+// title, so a CRLF document anchors, resolves, and judges like the same
+// text with LF endings.
+rrtest!(
+    crlf_documents_anchor_and_resolve_like_lf,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file(
+            "crlf.md",
+            "# Title\r\n\r\nsee [[rr:Title]] and src/main.rs\r\n",
+        )
+        .file("src/main.rs", "fn main() {}\n");
+        cmd.arg("index").assert_exit_code(0);
+
+        assert_eq!(cmd.args(["read", "Title"]).stdout().trim(), "crlf.md:1-3");
+        assert_eq!(
+            cmd.args(["at", "crlf.md:3"]).stdout().trim(),
+            "[[rr:Title]]"
+        );
+        eqnice!(
+            "crlf.md:3: [[rr:Title]]\n1 markers\n",
+            cmd.args(["search", "--markers"]).stdout()
+        );
+        eqnice!(
+            "crlf.md:3: src/main.rs\n1 mentions\n",
+            cmd.args(["search", "--mentions"]).stdout()
+        );
+        let out = cmd.arg("verify").run();
+        assert_eq!(code(&out), 0, "no finding from the line ending: {out:?}");
+
+        dir.file(
+            "x.feature",
+            "Feature: Login\r\n\r\n  Scenario: A user signs in\r\n",
+        );
+        cmd.arg("index").assert_exit_code(0);
+        assert_eq!(
+            cmd.args(["read", "A user signs in"]).stdout().trim(),
+            "x.feature:3-3"
+        );
+    }
+);
+
+#[cfg(unix)]
+rrtest!(
+    a_file_name_that_is_not_utf8_is_reported_not_indexed,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        use std::os::unix::ffi::OsStrExt;
+
+        dir.file("ok.md", "# Fine\n\nbody\n");
+        let bad = dir.path().join(std::ffi::OsStr::from_bytes(b"bad\xff.md"));
+        std::fs::write(&bad, "# Heading\n\nbody\n").unwrap();
+
+        let out = cmd.arg("index").run();
+        assert_eq!(code(&out), 2, "a skipped file is reported: {out:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("not valid UTF-8"), "{stderr}");
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("across 1 files"),
+            "{out:?}"
+        );
+
+        // No phantom path: absent, rather than filed under a name that
+        // cannot be opened.
+        cmd.args(["read", "Heading"]).assert_exit_code(1);
+        assert_eq!(cmd.args(["read", "Fine"]).stdout().trim(), "ok.md:1-3");
+    }
+);
+
+// --- the scenario kind ------------------------------------------------------
 
 // [[rr:AD-1]]
 rrtest!(
@@ -887,8 +948,7 @@ rrtest!(
     }
 );
 
-// --- python
-// -----------------------------------------------------------------------
+// --- python -----------------------------------------------------------------
 
 rrtest!(
     python_method_ats_and_reads,
@@ -931,8 +991,7 @@ rrtest!(
     }
 );
 
-// --- a reader that stops reading
-// ---------------------------------------------------
+// --- a reader that stops reading --------------------------------------------
 
 // A hook that pipes into `head` closes the pipe early. Rust starts with
 // SIGPIPE ignored, so the write returns EPIPE instead of killing the
@@ -1020,8 +1079,7 @@ rrtest!(
     }
 );
 
-// --- the index artifact
-// ---------------------------------------------------------
+// --- the index artifact -----------------------------------------------------
 
 /// The default index path within a test [`Dir`].
 fn index_file(dir: &Dir) -> std::path::PathBuf {
@@ -1122,8 +1180,7 @@ rrtest!(
     }
 );
 
-// --- freshness
-// ------------------------------------------------------------------
+// --- freshness --------------------------------------------------------------
 
 // [[rr:README.md#Freshness]]
 rrtest!(
@@ -1199,8 +1256,7 @@ rrtest!(
     }
 );
 
-// --- CLI surface
-// ------------------------------------------------------------------
+// --- CLI surface ------------------------------------------------------------
 
 rrtest!(version_exits_zero, |_dir: Dir, mut cmd: TestCommand| {
     let v = cmd.arg("--version").run();
@@ -1252,8 +1308,7 @@ rrtest!(
     }
 );
 
-// --- dogfood
-// ------------------------------------------------------------------------
+// --- dogfood ----------------------------------------------------------------
 
 // The index lives in a throwaway location, never the repo's own
 // `.ref-cache/`, even though the tree walked is the real repo.
@@ -1320,8 +1375,7 @@ rrtest!(
     }
 );
 
-// --- git helpers
-// ----------------------------------------------------------------
+// --- git helpers ------------------------------------------------------------
 
 fn git_available() -> bool {
     Command::new("git")

@@ -86,7 +86,15 @@ pub fn build(
             if rel == index_rel {
                 return WalkState::Continue;
             }
-            let rel_path = to_unix(rel);
+            // Indexing a name lossily would file the anchors under a path
+            // nothing can open, and leave freshness blind to the real one.
+            let Some(rel_path) = to_unix(rel) else {
+                messages::error(format_args!(
+                    "{}: file name is not valid UTF-8, skipped",
+                    rel.display()
+                ));
+                return WalkState::Continue;
+            };
             let ext = rel.extension().and_then(|e| e.to_str());
 
             let mut anchors = Vec::new();
@@ -178,9 +186,11 @@ pub fn build(
     }
 }
 
+/// The repo-relative path as the index writes it, or `None` when the name is
+/// not UTF-8, which has no faithful spelling here.
 /// `[[rr:AD-1#Decision outcome]]`
-fn to_unix(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
+pub(crate) fn to_unix(path: &Path) -> Option<String> {
+    Some(path.to_str()?.replace('\\', "/"))
 }
 
 /// `[[rr:ripref (rr)#Freshness]]`
