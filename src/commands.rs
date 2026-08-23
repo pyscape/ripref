@@ -23,7 +23,7 @@ use crate::exit;
 use crate::indexer;
 use crate::marker;
 use crate::messages;
-use crate::refidx::{self, AnchorHit, Reader};
+use crate::refidx::{self, AnchorHit, Location, Reader};
 use crate::scan::{self, What};
 
 /// Build or refresh the index from the working tree.
@@ -136,8 +136,6 @@ fn fresh(reader: &Reader, root: &Path, skip_freshness: bool) -> bool {
     indexer::newest_mtime(&reader.paths(), root) <= reader.mtime
 }
 
-type Location<'a> = (&'a str, u64, u64);
-
 fn parse_all<'a>(locs: Vec<&'a str>) -> Vec<Location<'a>> {
     locs.into_iter()
         .filter_map(refidx::parse_location)
@@ -156,19 +154,24 @@ fn resolve<'a>(reader: &Reader<'a>, anchor: &str) -> Vec<Location<'a>> {
     let definitions = parse_all(reader.forward_lookup(identity));
     let by_path: Vec<Location> = definitions
         .iter()
-        .filter(|(f, _, _)| *f == qualifier)
+        .filter(|loc| loc.file == qualifier)
         .copied()
         .collect();
     if !by_path.is_empty() {
         return by_path;
     }
     let scope = parse_all(reader.forward_lookup(qualifier));
-    let [(file, start, end)] = scope.as_slice() else {
+    let [scope] = scope.as_slice() else {
         return Vec::new();
     };
     definitions
         .into_iter()
-        .filter(|(f, s, e)| f == file && start <= s && e <= end && (s, e) != (start, end))
+        .filter(|loc| {
+            loc.file == scope.file
+                && scope.start_line <= loc.start_line
+                && loc.end_line <= scope.end_line
+                && (loc.start_line, loc.end_line) != (scope.start_line, scope.end_line)
+        })
         .collect()
 }
 
@@ -176,7 +179,11 @@ fn resolve<'a>(reader: &Reader<'a>, anchor: &str) -> Vec<Location<'a>> {
 /// this hit; `None` is the checked case, so `run_at` never resolves again.
 /// `[[rr:AD-6#Decision outcome]]`
 fn minimal_form(reader: &Reader, hit: &AnchorHit) -> (String, Option<usize>) {
-    let target: Location = (&hit.file, hit.start_line, hit.end_line);
+    let target = Location {
+        file: &hit.file,
+        start_line: hit.start_line,
+        end_line: hit.end_line,
+    };
     if resolve(reader, &hit.anchor).as_slice() == [target] {
         return (hit.anchor.clone(), None);
     }
@@ -225,13 +232,13 @@ pub(crate) fn run_read(args: &LowArgs) -> Result<u8, String> {
                     if i > 0 {
                         data.push(',');
                     }
-                    push_location(&mut data, loc.0, loc.1, loc.2);
+                    push_location(&mut data, loc.file, loc.start_line, loc.end_line);
                 }
                 data.push_str("]}");
                 writeln!(w, "{}", envelope("read", &data))
             } else {
-                for (file, start, end) in &locations {
-                    writeln!(w, "{file}:{start}-{end}")?;
+                for loc in &locations {
+                    writeln!(w, "{}:{}-{}", loc.file, loc.start_line, loc.end_line)?;
                 }
                 Ok(())
             }

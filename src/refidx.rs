@@ -309,17 +309,17 @@ impl<'a> Reader<'a> {
             let Ok(anchor) = std::str::from_utf8(record_key(record, b"fwd:")) else {
                 continue;
             };
-            let Some((loc_file, start, end)) = record_value(record).and_then(parse_location) else {
+            let Some(loc) = record_value(record).and_then(parse_location) else {
                 continue;
             };
             // Exact file match (not a prefix): `a/b.rs` must not answer for
             // `b.rs`.
-            if loc_file == file && start <= line && line <= end {
+            if loc.file == file && loc.start_line <= line && line <= loc.end_line {
                 hits.push(AnchorHit {
                     anchor: anchor.to_string(),
-                    file: loc_file.to_string(),
-                    start_line: start,
-                    end_line: end,
+                    file: loc.file.to_string(),
+                    start_line: loc.start_line,
+                    end_line: loc.end_line,
                 });
             }
         }
@@ -332,16 +332,19 @@ impl<'a> Reader<'a> {
         hits
     }
 
-    /// Every mention-table entry, as `(token, location)` pairs in on-disk
-    /// (token-sorted) order. The table serves completion and rename tooling
-    /// `[[rr:AD-5]]`; the scanners never read it.
-    pub fn mentions(&self) -> Vec<(String, String)> {
+    /// Every mention-table entry, in on-disk (token-sorted) order. The table
+    /// serves completion and rename tooling `[[rr:AD-5]]`; the scanners never
+    /// read it.
+    pub fn mentions(&self) -> Vec<MentionEntry> {
         split_records(self.section("mentions"))
             .into_iter()
             .filter_map(|l| {
                 let key = std::str::from_utf8(record_key(l, b"men:")).ok()?;
                 let loc = record_value(l)?;
-                Some((key.to_string(), loc.to_string()))
+                Some(MentionEntry {
+                    token: key.to_string(),
+                    location: loc.to_string(),
+                })
             })
             .collect()
     }
@@ -384,13 +387,29 @@ fn record_value(line: &[u8]) -> Option<&str> {
     std::str::from_utf8(&line[tab + 1..]).ok()
 }
 
-/// Split a `file:start-end` location into `(file, start, end)`. Parses from
-/// the right so a colon in the path keeps its prefix `[[rr:AD-1]]`; returns
-/// `None` if the trailing span is not `<u64>-<u64>`.
-pub fn parse_location(loc: &str) -> Option<(&str, u64, u64)> {
+/// One definition's place in the tree, parsed out of a `file:start-end`
+/// location body. Borrows the path from the index image it was read from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Location<'a> {
+    /// As [`AnchorHit::file`], borrowed rather than owned.
+    pub file: &'a str,
+    /// As [`AnchorHit::start_line`].
+    pub start_line: u64,
+    /// As [`AnchorHit::end_line`].
+    pub end_line: u64,
+}
+
+/// Split a `file:start-end` location into its parts. Parses from the right so
+/// a colon in the path keeps its prefix `[[rr:AD-1]]`; returns `None` if the
+/// trailing span is not `<u64>-<u64>`.
+pub fn parse_location(loc: &str) -> Option<Location<'_>> {
     let (file, span) = loc.rsplit_once(':')?;
     let (start, end) = span.split_once('-')?;
-    Some((file, start.parse().ok()?, end.parse().ok()?))
+    Some(Location {
+        file,
+        start_line: start.parse().ok()?,
+        end_line: end.parse().ok()?,
+    })
 }
 
 #[cfg(test)]
@@ -431,7 +450,10 @@ mod tests {
         assert!(r.forward_lookup("missing").is_empty());
         assert_eq!(
             r.mentions(),
-            vec![("src/cli.rs".to_string(), "a/one.md:4-4".to_string())]
+            vec![MentionEntry {
+                token: "src/cli.rs".to_string(),
+                location: "a/one.md:4-4".to_string(),
+            }]
         );
         assert_eq!(r.paths(), vec!["a/one.md", "b/two.rs"]);
     }

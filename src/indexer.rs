@@ -24,9 +24,12 @@ use crate::messages;
 use crate::refidx::{ForwardEntry, IndexData, MentionEntry};
 use crate::scan::{self, What};
 
-/// What one worker produces for one file: its anchors, its mentions, and its
-/// repo-relative path.
-type FileRecords = (Vec<ForwardEntry>, Vec<MentionEntry>, String);
+/// What one worker produces for one file.
+struct FileRecords {
+    anchors: Vec<ForwardEntry>,
+    mentions: Vec<MentionEntry>,
+    path: String,
+}
 
 /// Walk `root` and build the index contents. `index_path` is excluded so the
 /// index never indexes (or freshness-checks against) itself; `scope` selects
@@ -116,7 +119,11 @@ pub fn build(root: &Path, index_path: &Path, scope: &Override, cfg: &config::Con
 
             // The receiver outlives the walk, so this only errs if it
             // panicked; dropping the file's work is the right thing then.
-            let _ = tx.send((anchors, mentions, rel_path));
+            let _ = tx.send(FileRecords {
+                anchors,
+                mentions,
+                path: rel_path,
+            });
             WalkState::Continue
         })
     });
@@ -127,10 +134,10 @@ pub fn build(root: &Path, index_path: &Path, scope: &Override, cfg: &config::Con
     let mut forward = Vec::new();
     let mut mentions = Vec::new();
     let mut paths = Vec::new();
-    for (anchors, file_mentions, rel_path) in rx {
-        forward.extend(anchors);
-        mentions.extend(file_mentions);
-        paths.push(rel_path);
+    for records in rx {
+        forward.extend(records.anchors);
+        mentions.extend(records.mentions);
+        paths.push(records.path);
     }
 
     // Sort into the canonical total order here, so the returned `IndexData`
