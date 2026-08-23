@@ -792,6 +792,53 @@ rrtest!(
 // SIGPIPE ignored, so the write returns EPIPE instead of killing the
 // process, and `println!` would panic (exit 101) on it.
 rrtest!(
+    every_diagnostic_carries_the_program_prefix,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file("a.md", "## Dup\n\nbody\n")
+            .file("b.md", "## Dup\n\nbody\n");
+        cmd.arg("index").assert_exit_code(0);
+
+        for args in [
+            &["read", "nope"][..],
+            &["read", "Dup"],
+            &["at", "a.md:99"],
+            &["--nope"],
+            &["verify", "--format", "xml"],
+        ] {
+            let out = cmd.args(args).run();
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert!(!stderr.is_empty(), "{args:?} should say why: {out:?}");
+            for line in stderr.lines() {
+                assert!(line.starts_with("rr: "), "{args:?} unprefixed: {line}");
+            }
+        }
+    }
+);
+
+rrtest!(
+    a_closed_stderr_is_not_a_panic,
+    |mut dir: Dir, _cmd: TestCommand| {
+        dir.file("a.md", "# T\n");
+        dir.run(&["index"]);
+
+        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_rr"))
+            .args(["read", "nope"])
+            .current_dir(dir.path())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn rr");
+        drop(child.stderr.take());
+        let out = child.wait_with_output().expect("wait rr");
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "the adverse answer survives a closed stderr"
+        );
+    }
+);
+
+rrtest!(
     broken_pipe_is_not_a_panic,
     |mut dir: Dir, _cmd: TestCommand| {
         // Enough findings to overrun the pipe buffer; a smaller answer lands

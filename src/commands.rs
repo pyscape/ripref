@@ -86,12 +86,15 @@ where
     F: FnOnce(&Reader) -> Result<u8, String>,
 {
     let Some(bytes) = read_index(index_path)? else {
-        eprintln!("no index at {}: run `rr index`", index_path.display());
+        messages::warn(format_args!(
+            "no index at {}: run `rr index`",
+            index_path.display()
+        ));
         return Ok(exit::STALE);
     };
     let reader = Reader::parse(&bytes).map_err(|e| format!("corrupt index: {e}"))?;
     if !fresh(&reader, root, skip_freshness) {
-        eprintln!("index is stale: rebuild with `rr index`");
+        messages::warn("index is stale: rebuild with `rr index`");
         return Ok(exit::STALE);
     }
     f(&reader)
@@ -229,11 +232,11 @@ pub(crate) fn run_read(args: &LowArgs) -> Result<u8, String> {
             }
         })?;
         match locations.len() {
-            0 => eprintln!("no such anchor: {anchor}"),
+            0 => messages::warn(format_args!("no such anchor: {anchor}")),
             1 => {}
-            n => eprintln!(
+            n => messages::warn(format_args!(
                 "ambiguous anchor: {anchor} resolves to {n} definitions (add a qualifier)"
-            ),
+            )),
         }
         Ok(code)
     })
@@ -288,18 +291,18 @@ pub(crate) fn run_at(args: &LowArgs) -> Result<u8, String> {
             OutputFormat::Text => writeln!(w, "{}", at_text(&forms)),
         })?;
         if forms.is_empty() {
-            eprintln!("no anchor covers {file}:{line}");
+            messages::warn(format_args!("no anchor covers {file}:{line}"));
         } else if !args.all && forms.len() > 1 {
-            eprintln!(
+            messages::warn(format_args!(
                 "ambiguous: {} anchors tie on the innermost span",
                 forms.len()
-            );
+            ));
         } else {
             for (form, n) in &uninvertible {
-                eprintln!(
+                messages::warn(format_args!(
                     "ambiguous marker for {file}:{line}: {form} resolves to \
                      {n} definitions (retitle one)"
-                );
+                ));
             }
         }
         Ok(code)

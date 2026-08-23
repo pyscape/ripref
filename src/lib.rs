@@ -40,17 +40,28 @@ pub(crate) mod exit {
     pub(crate) const STALE: u8 = 3;
 }
 
-/// A non-fatal failure prints here and flips a flag, so one unreadable file
-/// neither aborts the run nor passes unreported. Mirrors ripgrep's
-/// `messages::set_errored`.
+/// Every diagnostic prints here; a failure also flips a flag, so one
+/// unreadable file neither aborts the run nor passes unreported. Mirrors
+/// ripgrep's `message` beside its `err_message`.
 pub(crate) mod messages {
+    use std::io::Write;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     static ERRORED: AtomicBool = AtomicBool::new(false);
 
+    /// stdout is held across the write, so a diagnostic never lands inside a
+    /// line of output; the write error is dropped because a closed stderr
+    /// must not abort the run, which is what `eprintln!` would do.
+    fn print(msg: impl std::fmt::Display) {
+        let mut stderr = std::io::stderr().lock();
+        let stdout = std::io::stdout();
+        let _held = stdout.lock();
+        let _ = writeln!(stderr, "rr: {msg}");
+    }
+
     pub(crate) fn error(msg: impl std::fmt::Display) {
         ERRORED.store(true, Ordering::Relaxed);
-        eprintln!("rr: {msg}");
+        print(msg);
     }
 
     pub(crate) fn errored() -> bool {
@@ -58,7 +69,7 @@ pub(crate) mod messages {
     }
 
     pub(crate) fn warn(msg: impl std::fmt::Display) {
-        eprintln!("rr: {msg}");
+        print(msg);
     }
 }
 
@@ -76,8 +87,8 @@ pub fn run() -> u8 {
         }
         Ok(ParseOutcome::Run(args)) => args,
         Err(err) => {
-            eprintln!("rr: {err}");
-            eprintln!("Try 'rr --help' for more information.");
+            messages::error(err);
+            messages::warn("Try 'rr --help' for more information.");
             return exit::USAGE;
         }
     };
@@ -98,7 +109,7 @@ pub fn run() -> u8 {
         Ok(_) if messages::errored() => exit::USAGE,
         Ok(code) => code,
         Err(err) => {
-            eprintln!("rr: {err}");
+            messages::error(err);
             exit::USAGE
         }
     }
