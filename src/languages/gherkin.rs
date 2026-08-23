@@ -42,11 +42,15 @@ fn titles(content: &str) -> Vec<(String, u64)> {
             }
             continue;
         }
-        if let Some(open) = DOCSTRINGS.iter().find(|d| trimmed.starts_with(**d)) {
+        if let Some(open) =
+            DOCSTRINGS.iter().find(|d| trimmed.starts_with(**d))
+        {
             docstring = Some(open);
             continue;
         }
-        if let Some(text) = KEYWORDS.iter().find_map(|kw| trimmed.strip_prefix(kw)) {
+        if let Some(text) =
+            KEYWORDS.iter().find_map(|kw| trimmed.strip_prefix(kw))
+        {
             out.push((text.trim().to_string(), row as u64));
         }
     }
@@ -85,8 +89,13 @@ mod tests {
             .map(|e| (e.anchor, e.location))
             .collect();
         assert_eq!(got.len(), 3, "{got:?}");
-        assert!(got.contains(&("Login".to_string(), "x.feature:1-7".to_string())));
-        assert!(got.contains(&("Valid credentials".to_string(), "x.feature:3-5".to_string())));
+        assert!(
+            got.contains(&("Login".to_string(), "x.feature:1-7".to_string()))
+        );
+        assert!(got.contains(&(
+            "Valid credentials".to_string(),
+            "x.feature:3-5".to_string()
+        )));
         assert!(got.contains(&(
             "Invalid credentials".to_string(),
             "x.feature:6-7".to_string()
@@ -108,11 +117,17 @@ mod tests {
                 .collect();
             assert_eq!(got.len(), 3, "{open}: {got:?}");
             assert!(
-                got.contains(&("One".to_string(), "x.feature:2-7".to_string())),
+                got.contains(&(
+                    "One".to_string(),
+                    "x.feature:2-7".to_string()
+                )),
                 "the docstring stays inside the scenario: {open}: {got:?}"
             );
             assert!(
-                got.contains(&("Two".to_string(), "x.feature:8-9".to_string())),
+                got.contains(&(
+                    "Two".to_string(),
+                    "x.feature:8-9".to_string()
+                )),
                 "{open}: {got:?}"
             );
         }

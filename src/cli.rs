@@ -156,7 +156,9 @@ impl FlagValue {
     fn into_value(self, long: &str) -> Result<OsString, String> {
         match self {
             FlagValue::Value(v) => Ok(v),
-            FlagValue::Switch => Err(format!("flag --{long} requires a value")),
+            FlagValue::Switch => {
+                Err(format!("flag --{long} requires a value"))
+            }
         }
     }
 }
@@ -191,7 +193,11 @@ pub(crate) trait Flag: Sync {
     /// Terse one-line help string, without the verb prefix `verbs` writes.
     fn doc_short(&self) -> &'static str;
     /// Fold a parsed value into the low-level args.
-    fn update(&self, value: FlagValue, args: &mut LowArgs) -> Result<(), String>;
+    fn update(
+        &self,
+        value: FlagValue,
+        args: &mut LowArgs,
+    ) -> Result<(), String>;
 }
 
 struct IndexFlag;
@@ -205,7 +211,11 @@ impl Flag for IndexFlag {
     fn doc_short(&self) -> &'static str {
         "Path to the index file (default .ref-cache/index)."
     }
-    fn update(&self, value: FlagValue, args: &mut LowArgs) -> Result<(), String> {
+    fn update(
+        &self,
+        value: FlagValue,
+        args: &mut LowArgs,
+    ) -> Result<(), String> {
         args.index = Some(value.into_value(self.name_long())?);
         Ok(())
     }
@@ -225,12 +235,22 @@ impl Flag for FormatFlag {
     fn doc_short(&self) -> &'static str {
         "Output format."
     }
-    fn update(&self, value: FlagValue, args: &mut LowArgs) -> Result<(), String> {
+    fn update(
+        &self,
+        value: FlagValue,
+        args: &mut LowArgs,
+    ) -> Result<(), String> {
         let v = value.into_value(self.name_long())?;
         args.format = match v.to_str() {
             Some("text") => OutputFormat::Text,
             Some("json") => OutputFormat::Json,
-            _ => return Err(expected_one_of(self.name_long(), self.doc_choices(), &v)),
+            _ => {
+                return Err(expected_one_of(
+                    self.name_long(),
+                    self.doc_choices(),
+                    &v,
+                ))
+            }
         };
         Ok(())
     }
@@ -254,7 +274,11 @@ impl Flag for ColorFlag {
     fn doc_short(&self) -> &'static str {
         "When to colorize."
     }
-    fn update(&self, value: FlagValue, args: &mut LowArgs) -> Result<(), String> {
+    fn update(
+        &self,
+        value: FlagValue,
+        args: &mut LowArgs,
+    ) -> Result<(), String> {
         let v = match value {
             FlagValue::Switch => {
                 args.color = Color::Never;
@@ -266,7 +290,13 @@ impl Flag for ColorFlag {
             Some("auto") => Color::Auto,
             Some("always") => Color::Always,
             Some("never") => Color::Never,
-            _ => return Err(expected_one_of(self.name_long(), self.doc_choices(), &v)),
+            _ => {
+                return Err(expected_one_of(
+                    self.name_long(),
+                    self.doc_choices(),
+                    &v,
+                ))
+            }
         };
         Ok(())
     }
@@ -286,7 +316,11 @@ impl Flag for QuietFlag {
     fn doc_short(&self) -> &'static str {
         "Suppress the summary line; the answer still prints."
     }
-    fn update(&self, _value: FlagValue, args: &mut LowArgs) -> Result<(), String> {
+    fn update(
+        &self,
+        _value: FlagValue,
+        args: &mut LowArgs,
+    ) -> Result<(), String> {
         args.quiet = true;
         Ok(())
     }
@@ -303,7 +337,11 @@ impl Flag for NoFreshnessFlag {
     fn doc_short(&self) -> &'static str {
         "Skip the staleness check and answer from the index as-is."
     }
-    fn update(&self, _value: FlagValue, args: &mut LowArgs) -> Result<(), String> {
+    fn update(
+        &self,
+        _value: FlagValue,
+        args: &mut LowArgs,
+    ) -> Result<(), String> {
         args.no_freshness = true;
         Ok(())
     }
@@ -323,7 +361,11 @@ impl Flag for AllFlag {
     fn doc_short(&self) -> &'static str {
         "report the whole covering nest, outermost first."
     }
-    fn update(&self, _value: FlagValue, args: &mut LowArgs) -> Result<(), String> {
+    fn update(
+        &self,
+        _value: FlagValue,
+        args: &mut LowArgs,
+    ) -> Result<(), String> {
         args.all = true;
         Ok(())
     }
@@ -343,7 +385,11 @@ impl Flag for MentionsFlag {
     fn doc_short(&self) -> &'static str {
         "list path mentions instead of markers."
     }
-    fn update(&self, _value: FlagValue, args: &mut LowArgs) -> Result<(), String> {
+    fn update(
+        &self,
+        _value: FlagValue,
+        args: &mut LowArgs,
+    ) -> Result<(), String> {
         args.mentions = true;
         Ok(())
     }
@@ -363,7 +409,11 @@ impl Flag for MarkersFlag {
     fn doc_short(&self) -> &'static str {
         "list every marker, taking no <anchor>."
     }
-    fn update(&self, _value: FlagValue, args: &mut LowArgs) -> Result<(), String> {
+    fn update(
+        &self,
+        _value: FlagValue,
+        args: &mut LowArgs,
+    ) -> Result<(), String> {
         args.markers = true;
         Ok(())
     }
@@ -387,8 +437,13 @@ fn lookup_long(name: &str) -> Option<&'static dyn Flag> {
         .find(|f| f.name_long() == name || f.name_negated() == Some(name))
 }
 
-fn expected_one_of(long: &str, choices: &[&'static str], got: &OsStr) -> String {
-    let quoted: Vec<String> = choices.iter().map(|c| format!("'{c}'")).collect();
+fn expected_one_of(
+    long: &str,
+    choices: &[&'static str],
+    got: &OsStr,
+) -> String {
+    let quoted: Vec<String> =
+        choices.iter().map(|c| format!("'{c}'")).collect();
     let list = match quoted.as_slice() {
         [] => String::new(),
         [one] => one.clone(),
@@ -406,14 +461,19 @@ fn lookup_short(ch: char) -> Option<&'static dyn Flag> {
 pub(crate) fn parse(argv: &[OsString]) -> Result<ParseOutcome, String> {
     let mut iter = argv.iter();
     let command = match iter.next() {
-        None => return Err("no command given (try 'index' or 'read')".to_string()),
+        None => {
+            return Err("no command given (try 'index' or 'read')".to_string())
+        }
         Some(tok) => match tok.to_str() {
-            Some("-h") | Some("--help") => return Ok(ParseOutcome::Special(Special::Help)),
+            Some("-h") | Some("--help") => {
+                return Ok(ParseOutcome::Special(Special::Help))
+            }
             Some("-V") | Some("--version") => {
                 return Ok(ParseOutcome::Special(Special::Version));
             }
-            _ => Subcommand::from_token(tok)
-                .ok_or_else(|| format!("unknown command: '{}'", tok.to_string_lossy()))?,
+            _ => Subcommand::from_token(tok).ok_or_else(|| {
+                format!("unknown command: '{}'", tok.to_string_lossy())
+            })?,
         },
     };
     let mut args = LowArgs::new(command);
@@ -434,11 +494,14 @@ pub(crate) fn parse(argv: &[OsString]) -> Result<ParseOutcome, String> {
             return Ok(ParseOutcome::Special(Special::Version));
         } else if let Some(rest) = bytes.strip_prefix(b"--") {
             let (name, inline) = match rest.iter().position(|&b| b == b'=') {
-                Some(eq) => (&rest[..eq], Some(os_string_from_bytes(&rest[eq + 1..]))),
+                Some(eq) => {
+                    (&rest[..eq], Some(os_string_from_bytes(&rest[eq + 1..])))
+                }
                 None => (rest, None),
             };
             let name = String::from_utf8_lossy(name);
-            let flag = lookup_long(&name).ok_or_else(|| format!("unknown flag: --{name}"))?;
+            let flag = lookup_long(&name)
+                .ok_or_else(|| format!("unknown flag: --{name}"))?;
             // A scope error names the spelling the caller typed, not the one
             // it negates.
             let (name, negated) = match flag.name_negated() {
@@ -450,11 +513,14 @@ pub(crate) fn parse(argv: &[OsString]) -> Result<ParseOutcome, String> {
             args.seen_flags.push(name);
         } else if text.starts_with('-') && text != "-" {
             let ch = text.chars().nth(1).unwrap();
-            let flag = lookup_short(ch).ok_or_else(|| format!("unknown flag: -{ch}"))?;
+            let flag = lookup_short(ch)
+                .ok_or_else(|| format!("unknown flag: -{ch}"))?;
             // Every registered short is one ASCII byte, so a value starts
             // at byte 2.
-            let inline = (bytes.len() > 2).then(|| os_string_from_bytes(&bytes[2..]));
-            let value = take_value(flag, flag.name_long(), false, inline, &mut iter)?;
+            let inline =
+                (bytes.len() > 2).then(|| os_string_from_bytes(&bytes[2..]));
+            let value =
+                take_value(flag, flag.name_long(), false, inline, &mut iter)?;
             flag.update(value, &mut args)?;
             args.seen_flags.push(flag.name_long());
         } else {
@@ -485,7 +551,9 @@ fn take_value(
 ) -> Result<FlagValue, String> {
     if negated || flag.is_switch() {
         if inline.is_some() {
-            return Err(format!("flag --{name} is a switch and takes no value"));
+            return Err(format!(
+                "flag --{name} is a switch and takes no value"
+            ));
         }
         Ok(FlagValue::Switch)
     } else {
@@ -516,7 +584,10 @@ fn validate(args: &LowArgs) -> Result<(), String> {
         };
         let verbs = flag.verbs();
         if !verbs.is_empty() && !verbs.contains(&args.command) {
-            return Err(format!("--{name} applies to {} only", verb_list(verbs)));
+            return Err(format!(
+                "--{name} applies to {} only",
+                verb_list(verbs)
+            ));
         }
     }
     match args.command {
@@ -530,7 +601,8 @@ fn validate(args: &LowArgs) -> Result<(), String> {
             // Resolved before any verb reads the index, so a malformed
             // location answers as a usage error and not as a stale index.
             // [[rr:AD-4#Decision outcome]]
-            1 => parse_position(&args.positional[0].to_string_lossy()).map(|_| ()),
+            1 => parse_position(&args.positional[0].to_string_lossy())
+                .map(|_| ()),
             _ => Err("at takes exactly one <file>:<line>".to_string()),
         },
         Subcommand::Index => {
@@ -559,9 +631,9 @@ pub(crate) fn parse_position(s: &str) -> Result<(String, u64), String> {
     if file.is_empty() {
         return Err(format!("expected <file>:<line>, got '{s}'"));
     }
-    let line = line
-        .parse::<u64>()
-        .map_err(|_| format!("line must be a number in <file>:<line>, got '{s}'"))?;
+    let line = line.parse::<u64>().map_err(|_| {
+        format!("line must be a number in <file>:<line>, got '{s}'")
+    })?;
     Ok((file.replace('\\', "/"), line))
 }
 
@@ -592,7 +664,9 @@ pub(crate) fn help_text() -> String {
     out.push_str("    search [<anchor>|--markers|--mentions] [<path>...]\n");
     out.push_str("             List the markers scoped text writes, or the path mentions\n");
     out.push_str("    verify [<path>...]\n");
-    out.push_str("             Judge references in scoped text; findings exit 1\n\n");
+    out.push_str(
+        "             Judge references in scoped text; findings exit 1\n\n",
+    );
     out.push_str("OPTIONS:\n");
     for flag in FLAGS {
         let short = match flag.name_short() {
@@ -882,7 +956,8 @@ mod tests {
             parse_run(&["search", "a", "b"]).positional,
             vec![OsString::from("a"), OsString::from("b")]
         );
-        assert!(parse_err(&["search", "--markers", "--mentions"]).contains("not both"));
+        assert!(parse_err(&["search", "--markers", "--mentions"])
+            .contains("not both"));
         assert_eq!(
             parse_run(&["verify", "stray"]).positional,
             vec![OsString::from("stray")]

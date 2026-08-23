@@ -40,9 +40,11 @@ pub fn load(root: &Path) -> Result<Config, String> {
         verify_rules: Vec::new(),
         scan: Vec::new(),
     };
-    apply("built-in rr.toml", DEFAULTS, &mut cfg).map_err(|e| format!("built-in rr.toml: {e}"))?;
+    apply("built-in rr.toml", DEFAULTS, &mut cfg)
+        .map_err(|e| format!("built-in rr.toml: {e}"))?;
     match std::fs::read_to_string(root.join(".rr.toml")) {
-        Ok(text) => apply(".rr.toml", &text, &mut cfg).map_err(|e| format!(".rr.toml: {e}"))?,
+        Ok(text) => apply(".rr.toml", &text, &mut cfg)
+            .map_err(|e| format!(".rr.toml: {e}"))?,
         // Unreadable would otherwise drop the project layer in silence and
         // answer from the defaults.
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -95,7 +97,9 @@ fn apply(source: &str, text: &str, cfg: &mut Config) -> Result<(), String> {
             value.push_str(strip_comment(next).trim());
         }
         let strings = |value: &str| {
-            strings_in(value).map_err(|e| format!("line {lineno}: {e} in value for '{key}'"))
+            strings_in(value).map_err(|e| {
+                format!("line {lineno}: {e} in value for '{key}'")
+            })
         };
         if section == "verify" {
             match key {
@@ -126,7 +130,9 @@ fn apply(source: &str, text: &str, cfg: &mut Config) -> Result<(), String> {
 
 fn unquote(s: &str) -> &str {
     for q in ['"', '\''] {
-        if let Some(inner) = s.strip_prefix(q).and_then(|rest| rest.strip_suffix(q)) {
+        if let Some(inner) =
+            s.strip_prefix(q).and_then(|rest| rest.strip_suffix(q))
+        {
             return inner;
         }
     }
@@ -256,7 +262,10 @@ fn unescape(s: &str) -> Result<String, String> {
 }
 
 /// `[[rr:Configuration]]`
-pub fn scope_matcher(root: &Path, cfg: &Config) -> Result<ignore::overrides::Override, String> {
+pub fn scope_matcher(
+    root: &Path,
+    cfg: &Config,
+) -> Result<ignore::overrides::Override, String> {
     let mut b = ignore::overrides::OverrideBuilder::new(root);
     for glob in &cfg.verify_in_scope {
         b.add(glob)
@@ -371,13 +380,18 @@ mod tests {
             scan: Vec::new(),
         };
         apply("[verify]\nexclude = [\"tests/data/**\"]\n", &mut cfg).unwrap();
-        assert_eq!(cfg.verify_in_scope, vec!["**/*.md"], "untouched key stands");
+        assert_eq!(
+            cfg.verify_in_scope,
+            vec!["**/*.md"],
+            "untouched key stands"
+        );
         assert_eq!(cfg.verify_exclude, vec!["tests/data/**"]);
     }
 
     #[test]
     fn multiline_arrays_and_comments_parse() {
-        let text = "[verify]\nin-scope = [\n  \"a/**\", # docs\n  \"b/**\",\n]\n";
+        let text =
+            "[verify]\nin-scope = [\n  \"a/**\", # docs\n  \"b/**\",\n]\n";
         let mut cfg = Config {
             verify_in_scope: Vec::new(),
             verify_exclude: Vec::new(),
@@ -416,7 +430,8 @@ mod tests {
             verify_rules: Vec::new(),
             scan: Vec::new(),
         };
-        apply("[scan.\"python\"]\neligible = [\"comments\"]\n", &mut cfg).unwrap();
+        apply("[scan.\"python\"]\neligible = [\"comments\"]\n", &mut cfg)
+            .unwrap();
         assert_eq!(
             cfg.scan,
             vec![("python".to_string(), vec!["comments".to_string()])]
@@ -478,7 +493,8 @@ mod tests {
             scan: Vec::new(),
         };
 
-        let err = apply("[verify]\nrules = [\"path-line", &mut blank()).unwrap_err();
+        let err =
+            apply("[verify]\nrules = [\"path-line", &mut blank()).unwrap_err();
         assert!(err.contains("unterminated string"), "{err}");
 
         let err = apply(
@@ -488,7 +504,9 @@ mod tests {
         .unwrap_err();
         assert!(err.contains("unterminated string"), "{err}");
 
-        let err = apply("[verify]\nrules = [\n  \"path-line\",\n", &mut blank()).unwrap_err();
+        let err =
+            apply("[verify]\nrules = [\n  \"path-line\",\n", &mut blank())
+                .unwrap_err();
         assert!(err.contains("unterminated array"), "{err}");
     }
 
@@ -507,7 +525,8 @@ mod tests {
         apply("[verify]\nin-scope = [\"a\\\"b/**\"]\n", &mut cfg).unwrap();
         assert_eq!(cfg.verify_in_scope, [r#"a"b/**"#]);
 
-        let err = apply("[verify]\nin-scope = [\"a\\u00e9\"]\n", &mut cfg).unwrap_err();
+        let err = apply("[verify]\nin-scope = [\"a\\u00e9\"]\n", &mut cfg)
+            .unwrap_err();
         assert_eq!(
             err,
             "line 2: unsupported escape \\u (write the character itself) in value for 'in-scope'"
@@ -523,10 +542,12 @@ mod tests {
             scan: Vec::new(),
         };
 
-        let err = apply("\n# note\n[verify]\nrules = [\"path-line", &mut cfg).unwrap_err();
+        let err = apply("\n# note\n[verify]\nrules = [\"path-line", &mut cfg)
+            .unwrap_err();
         assert_eq!(err, "line 4: unterminated string in value for 'rules'");
 
-        let err = apply("[verify]\nrules = [\n  \"path-line\",\n", &mut cfg).unwrap_err();
+        let err = apply("[verify]\nrules = [\n  \"path-line\",\n", &mut cfg)
+            .unwrap_err();
         assert_eq!(err, "line 2: unterminated array in value for 'rules'");
     }
 

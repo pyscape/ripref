@@ -81,8 +81,12 @@ pub fn decode(token: &str) -> Decoded {
         return Decoded::Bare;
     }
     match scan_token(token) {
-        Token::Marker { len, anchor } if len == token.len() => Decoded::Marker(anchor),
-        Token::Marker { .. } => Decoded::Malformed("trailing text after ]] in marker".to_string()),
+        Token::Marker { len, anchor } if len == token.len() => {
+            Decoded::Marker(anchor)
+        }
+        Token::Marker { .. } => {
+            Decoded::Malformed("trailing text after ]] in marker".to_string())
+        }
         Token::Malformed(why) => Decoded::Malformed(why),
     }
 }
@@ -103,15 +107,20 @@ pub fn scan_token(s: &str) -> Token {
             return Token::Malformed("unterminated [[rr: marker".to_string());
         };
         match c {
-            '\\' => match chars.next() {
-                None => return Token::Malformed("marker ends in a dangling backslash".to_string()),
-                Some((_, n @ ('\\' | '[' | ']'))) => anchor.push(n),
-                Some(_) => {
-                    return Token::Malformed(
-                        "undefined escape in marker (only \\[ \\] \\\\ exist)".to_string(),
-                    )
+            '\\' => {
+                match chars.next() {
+                    None => {
+                        return Token::Malformed(
+                            "marker ends in a dangling backslash".to_string(),
+                        )
+                    }
+                    Some((_, n @ ('\\' | '[' | ']'))) => anchor.push(n),
+                    Some(_) => return Token::Malformed(
+                        "undefined escape in marker (only \\[ \\] \\\\ exist)"
+                            .to_string(),
+                    ),
                 }
-            },
+            }
             ']' => {
                 // Peek a clone so a non-terminator `]` is not consumed.
                 let mut peek = chars.clone();
@@ -119,11 +128,19 @@ pub fn scan_token(s: &str) -> Token {
                     let len = OPENER.len() + i + 2;
                     return Token::Marker { len, anchor };
                 }
-                return Token::Malformed("unescaped ] in marker body".to_string());
+                return Token::Malformed(
+                    "unescaped ] in marker body".to_string(),
+                );
             }
-            '[' => return Token::Malformed("unescaped [ in marker body".to_string()),
+            '[' => {
+                return Token::Malformed(
+                    "unescaped [ in marker body".to_string(),
+                )
+            }
             '\t' | '\r' | '\n' => {
-                return Token::Malformed("control character in marker body".to_string())
+                return Token::Malformed(
+                    "control character in marker body".to_string(),
+                )
             }
             c => anchor.push(c),
         }
@@ -182,10 +199,10 @@ mod tests {
             ("[[rr:a\tb]]", Exp::Malformed), // raw TAB in body
             ("[[rr:a\nb]]", Exp::Malformed), // raw LF
             ("[[rr:café 日本語 🦀]]", Exp::Marker("café 日本語 🦀")), // UTF-8
-            (" [[rr:a]]", Exp::Bare),        // leading space: not a marker token
-            ("[[foo]]", Exp::Bare),          // wrong sentinel
-            ("[[RR:a]]", Exp::Bare),         // case-sensitive
-            ("[[rr:a", Exp::Malformed),      // unterminated
+            (" [[rr:a]]", Exp::Bare), // leading space: not a marker token
+            ("[[foo]]", Exp::Bare),   // wrong sentinel
+            ("[[RR:a]]", Exp::Bare),  // case-sensitive
+            ("[[rr:a", Exp::Malformed), // unterminated
             (r"[[rr:a\\\]]", Exp::Malformed), // \\ + \] -> no terminator
             // Bare extras: ordinary anchors must pass through untouched.
             ("support@example.com", Exp::Bare),
@@ -234,13 +251,17 @@ mod tests {
     #[test]
     fn round_trip_holds_for_random_anchors() {
         // A charset heavy on the dangerous bytes, plus multibyte chars.
-        let charset: Vec<char> = r#"\[]:@~#. abcAB12"#.chars().chain("é日🦀".chars()).collect();
+        let charset: Vec<char> =
+            r#"\[]:@~#. abcAB12"#.chars().chain("é日🦀".chars()).collect();
         let mut rng = Rng::new(0x1234_5678_9abc_def1);
         for _ in 0..2000 {
             let len = (rng.next() % 14) as usize;
-            let anchor: String = (0..len).map(|_| *rng.pick(&charset)).collect();
+            let anchor: String =
+                (0..len).map(|_| *rng.pick(&charset)).collect();
             match decode(&wrap(&anchor)) {
-                Decoded::Marker(a) => assert_eq!(a, anchor, "round-trip broke for {anchor:?}"),
+                Decoded::Marker(a) => {
+                    assert_eq!(a, anchor, "round-trip broke for {anchor:?}")
+                }
                 other => panic!("wrap/decode broke for {anchor:?}: {other:?}"),
             }
         }

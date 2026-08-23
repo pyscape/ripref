@@ -40,11 +40,18 @@ fn emit_to<W: Write>(
 /// `[[rr:AD-4]]`. Hand-rolled because the crate has no serde dependency
 /// and the schema is a hand-written source of truth.
 pub(crate) fn envelope(command: &str, data: &str) -> String {
-    format!(r#"{{"format":"rr-json","version":1,"command":"{command}","data":{data}}}"#)
+    format!(
+        r#"{{"format":"rr-json","version":1,"command":"{command}","data":{data}}}"#
+    )
 }
 
 /// Append a structured location object.
-pub(crate) fn push_location(out: &mut String, file: &str, start: u64, end: u64) {
+pub(crate) fn push_location(
+    out: &mut String,
+    file: &str,
+    start: u64,
+    end: u64,
+) {
     out.push_str("{\"file\":");
     push_json_str(out, file);
     out.push_str(&format!(",\"start_line\":{start},\"end_line\":{end}}}"));
@@ -60,7 +67,9 @@ pub(crate) fn push_json_str(out: &mut String, s: &str) {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c if (c as u32) < 0x20 => {
+                out.push_str(&format!("\\u{:04x}", c as u32))
+            }
             c => out.push(c),
         }
     }
@@ -119,7 +128,13 @@ impl SearchSink {
         }
     }
 
-    pub(crate) fn marker(&mut self, rel: &str, line: u64, anchor: &str, raw: &str) {
+    pub(crate) fn marker(
+        &mut self,
+        rel: &str,
+        line: u64,
+        anchor: &str,
+        raw: &str,
+    ) {
         if self.json {
             self.open(rel, line);
             self.buf.push_str(",\"anchor\":");
@@ -151,11 +166,13 @@ impl SearchSink {
         }
         self.buf.push_str("{\"file\":");
         push_json_str(&mut self.buf, rel);
-        write!(self.buf, ",\"line\":{line}").expect("a String never fails to write");
+        write!(self.buf, ",\"line\":{line}")
+            .expect("a String never fails to write");
     }
 
     fn text(&mut self, rel: &str, line: u64, what: &str) {
-        writeln!(self.buf, "{rel}:{line}: {what}").expect("a String never fails to write");
+        writeln!(self.buf, "{rel}:{line}: {what}")
+            .expect("a String never fails to write");
     }
 
     pub(crate) fn count(&self) -> usize {
@@ -244,7 +261,12 @@ mod tests {
         }
     }
 
-    fn hit(anchor: &str, file: &str, start_line: u64, end_line: u64) -> AnchorHit {
+    fn hit(
+        anchor: &str,
+        file: &str,
+        start_line: u64,
+        end_line: u64,
+    ) -> AnchorHit {
         AnchorHit {
             anchor: anchor.to_string(),
             file: file.to_string(),

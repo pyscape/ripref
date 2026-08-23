@@ -20,7 +20,9 @@ use crate::config;
 use crate::exit;
 use crate::indexer;
 use crate::messages;
-use crate::output::{at_json, at_text, emit, envelope, push_json_str, push_location, SearchSink};
+use crate::output::{
+    at_json, at_text, emit, envelope, push_json_str, push_location, SearchSink,
+};
 use crate::refidx::{self, AnchorHit, Location, Reader};
 use crate::scan::{self, What};
 
@@ -37,14 +39,16 @@ pub(crate) fn run_index(args: &LowArgs) -> Result<u8, String> {
 
     if let Some(parent) = index_path.parent() {
         if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+            std::fs::create_dir_all(parent).map_err(|e| {
+                format!("failed to create {}: {e}", parent.display())
+            })?;
         }
     }
     // A reader mmaps this file, so it must see either the whole old index or
     // the whole new one, never a torn half-write. [[rr:atomic_write]]
-    atomic::atomic_write(&index_path, &bytes)
-        .map_err(|e| format!("failed to write {}: {e}", index_path.display()))?;
+    atomic::atomic_write(&index_path, &bytes).map_err(|e| {
+        format!("failed to write {}: {e}", index_path.display())
+    })?;
 
     emit(exit::OK, |w| match args.format {
         OutputFormat::Json => writeln!(
@@ -89,7 +93,8 @@ where
         ));
         return Ok(exit::STALE);
     };
-    let reader = Reader::parse(&bytes).map_err(|e| format!("corrupt index: {e}"))?;
+    let reader =
+        Reader::parse(&bytes).map_err(|e| format!("corrupt index: {e}"))?;
     if !fresh(&reader, root, skip_freshness) {
         messages::warn("index is stale: rebuild with `rr index`");
         return Ok(exit::STALE);
@@ -107,7 +112,12 @@ fn read_index(index_path: &Path) -> Result<Option<Vec<u8>>, String> {
     let file = match std::fs::File::open(index_path) {
         Ok(f) => f,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(format!("failed to open {}: {e}", index_path.display())),
+        Err(e) => {
+            return Err(format!(
+                "failed to open {}: {e}",
+                index_path.display()
+            ))
+        }
     };
     // SAFETY: the index is a regular file we just opened; `rr index`
     // publishes new contents with an atomic rename, so the mapped inode
@@ -115,8 +125,9 @@ fn read_index(index_path: &Path) -> Result<Option<Vec<u8>>, String> {
     #[allow(unsafe_code)]
     let bytes = match unsafe { Mmap::map(&file) } {
         Ok(mmap) => mmap.to_vec(),
-        Err(_) => std::fs::read(index_path)
-            .map_err(|e| format!("failed to read {}: {e}", index_path.display()))?,
+        Err(_) => std::fs::read(index_path).map_err(|e| {
+            format!("failed to read {}: {e}", index_path.display())
+        })?,
     };
     Ok(Some(bytes))
 }
@@ -141,7 +152,10 @@ fn parse_all<'a>(locs: Vec<&'a str>) -> Vec<Location<'a>> {
 }
 
 /// `[[rr:AD-6#Decision outcome]]`
-pub(crate) fn resolve<'a>(reader: &Reader<'a>, anchor: &str) -> Vec<Location<'a>> {
+pub(crate) fn resolve<'a>(
+    reader: &Reader<'a>,
+    anchor: &str,
+) -> Vec<Location<'a>> {
     let direct = parse_all(reader.forward_lookup(anchor));
     if !direct.is_empty() {
         return direct;
@@ -168,7 +182,8 @@ pub(crate) fn resolve<'a>(reader: &Reader<'a>, anchor: &str) -> Vec<Location<'a>
             loc.file == scope.file
                 && scope.start_line <= loc.start_line
                 && loc.end_line <= scope.end_line
-                && (loc.start_line, loc.end_line) != (scope.start_line, scope.end_line)
+                && (loc.start_line, loc.end_line)
+                    != (scope.start_line, scope.end_line)
         })
         .collect()
 }
@@ -230,13 +245,22 @@ pub(crate) fn run_read(args: &LowArgs) -> Result<u8, String> {
                     if i > 0 {
                         data.push(',');
                     }
-                    push_location(&mut data, loc.file, loc.start_line, loc.end_line);
+                    push_location(
+                        &mut data,
+                        loc.file,
+                        loc.start_line,
+                        loc.end_line,
+                    );
                 }
                 data.push_str("]}");
                 writeln!(w, "{}", envelope("read", &data))
             } else {
                 for loc in &locations {
-                    writeln!(w, "{}:{}-{}", loc.file, loc.start_line, loc.end_line)?;
+                    writeln!(
+                        w,
+                        "{}:{}-{}",
+                        loc.file, loc.start_line, loc.end_line
+                    )?;
                 }
                 Ok(())
             }
@@ -258,7 +282,8 @@ pub(crate) fn run_at(args: &LowArgs) -> Result<u8, String> {
     let index_path = PathBuf::from(cli::index_path(args));
     // `validate` already accepted this; re-parsing here keeps the position
     // in one place rather than threading a parsed field through `LowArgs`.
-    let (file, line) = cli::parse_position(&args.positional[0].to_string_lossy())?;
+    let (file, line) =
+        cli::parse_position(&args.positional[0].to_string_lossy())?;
 
     with_fresh_reader(&index_path, root, args.no_freshness, |reader| {
         let hits = reader.covering(&file, line);
@@ -267,18 +292,22 @@ pub(crate) fn run_at(args: &LowArgs) -> Result<u8, String> {
             hits.iter().collect()
         } else if let Some(last) = hits.last() {
             hits.iter()
-                .filter(|h| h.start_line == last.start_line && h.end_line == last.end_line)
+                .filter(|h| {
+                    h.start_line == last.start_line
+                        && h.end_line == last.end_line
+                })
                 .collect()
         } else {
             Vec::new()
         };
-        let (forms, strays): (Vec<(String, &AnchorHit)>, Vec<Option<usize>>) = emitted
-            .iter()
-            .map(|h| {
-                let (form, stray) = minimal_form(reader, h);
-                ((form, *h), stray)
-            })
-            .unzip();
+        let (forms, strays): (Vec<(String, &AnchorHit)>, Vec<Option<usize>>) =
+            emitted
+                .iter()
+                .map(|h| {
+                    let (form, stray) = minimal_form(reader, h);
+                    ((form, *h), stray)
+                })
+                .unzip();
 
         // [[rr:AD-4#Decision outcome]]
         let uninvertible: Vec<(&str, usize)> = forms
@@ -287,14 +316,18 @@ pub(crate) fn run_at(args: &LowArgs) -> Result<u8, String> {
             .filter_map(|((form, _), stray)| stray.map(|n| (form.as_str(), n)))
             .collect();
 
-        let code = if forms.is_empty() || (!args.all && forms.len() > 1) || !uninvertible.is_empty()
+        let code = if forms.is_empty()
+            || (!args.all && forms.len() > 1)
+            || !uninvertible.is_empty()
         {
             exit::ADVERSE
         } else {
             exit::OK
         };
         let code = emit(code, |w| match args.format {
-            OutputFormat::Json => writeln!(w, "{}", envelope("at", &at_json(&forms))),
+            OutputFormat::Json => {
+                writeln!(w, "{}", envelope("at", &at_json(&forms)))
+            }
             OutputFormat::Text if forms.is_empty() => Ok(()),
             OutputFormat::Text => writeln!(w, "{}", at_text(&forms)),
         })?;
@@ -344,7 +377,10 @@ fn normalize_lexically(rel: &str) -> Option<String> {
 /// Only the directory chain is resolved, because `/tmp` and `/private/tmp`
 /// must meet; the last component keeps its name, so a symlinked file still
 /// reports as itself.
-fn absolute_to_tree_path(given: &str, root_abs: &Path) -> Result<String, String> {
+fn absolute_to_tree_path(
+    given: &str,
+    root_abs: &Path,
+) -> Result<String, String> {
     let path = Path::new(given);
     let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
         return Err(format!("outside the tree: {given}"));
@@ -379,8 +415,8 @@ pub(crate) fn scoped_files(
             } else {
                 given.clone()
             };
-            let rel =
-                normalize_lexically(&named).ok_or_else(|| format!("outside the tree: {given}"))?;
+            let rel = normalize_lexically(&named)
+                .ok_or_else(|| format!("outside the tree: {given}"))?;
             let abs = root.join(&rel);
             if !abs.is_file() {
                 return Err(format!("not a file: {given}"));
@@ -388,8 +424,8 @@ pub(crate) fn scoped_files(
             if !seen.insert(rel.clone()) {
                 continue;
             }
-            let content =
-                std::fs::read_to_string(&abs).map_err(|e| format!("cannot read {given}: {e}"))?;
+            let content = std::fs::read_to_string(&abs)
+                .map_err(|e| format!("cannot read {given}: {e}"))?;
             let ext = rel.rsplit('.').next();
             out.push(ScopedFile {
                 host: scan::host_for(ext, cfg),

@@ -15,7 +15,8 @@ fn main() {
     use tree_sitter::wasmtime::{Config, Engine, Module, OptLevel};
     use tree_sitter::WasmStore;
 
-    const WASM: &[u8] = include_bytes!("../benches/wasm/tree-sitter-markdown.wasm");
+    const WASM: &[u8] =
+        include_bytes!("../benches/wasm/tree-sitter-markdown.wasm");
 
     fn bench(label: &str, iters: u32, mut f: impl FnMut()) {
         f(); // warmup
@@ -47,8 +48,8 @@ fn main() {
         Module::new(&engine, WASM).unwrap();
     });
 
-    // AOT ceiling: compile once, cache the machine code, reload it. This is what
-    // wasmtime's Module::serialize/deserialize buys — but tree-sitter's
+    // AOT ceiling: compile once, cache the machine code, reload it. This is
+    // what wasmtime's Module::serialize/deserialize buys — but tree-sitter's
     // WasmStore does not expose it, so the bench can't use it today.
     let blob = Module::new(&engine, WASM).unwrap().serialize().unwrap();
     println!("serialized module blob: {} KB", blob.len() / 1024);

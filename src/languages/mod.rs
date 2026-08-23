@@ -100,7 +100,11 @@ struct Capture {
 impl Language {
     /// One [`ForwardEntry`] per anchor. A parse failure yields an empty
     /// result rather than a panic.
-    pub(crate) fn extract_from_str(&self, rel_path: &str, content: &str) -> Vec<ForwardEntry> {
+    pub(crate) fn extract_from_str(
+        &self,
+        rel_path: &str,
+        content: &str,
+    ) -> Vec<ForwardEntry> {
         let captures = match self.titles {
             Some(titles) => titles(content)
                 .into_iter()
@@ -118,10 +122,16 @@ impl Language {
                 .into_iter()
                 .map(|c| ForwardEntry {
                     anchor: c.text,
-                    location: format!("{rel_path}:{}-{}", c.start_row + 1, c.end_row + 1),
+                    location: format!(
+                        "{rel_path}:{}-{}",
+                        c.start_row + 1,
+                        c.end_row + 1
+                    ),
                 })
                 .collect(),
-            Mode::Sections => sections(rel_path, content, captures, self.level, self.records),
+            Mode::Sections => {
+                sections(rel_path, content, captures, self.level, self.records)
+            }
         }
     }
 
@@ -130,7 +140,8 @@ impl Language {
             .get_or_init(|| {
                 let language = tree_sitter::Language::new(self.grammar);
                 let query = Query::new(&language, self.anchors_query).ok()?;
-                let anchor_idx = query.capture_index_for_name(ANCHOR_CAPTURE)?;
+                let anchor_idx =
+                    query.capture_index_for_name(ANCHOR_CAPTURE)?;
                 let span_idx = query.capture_index_for_name(SPAN_CAPTURE);
                 Some(Compiled {
                     language,
@@ -157,7 +168,11 @@ impl Language {
         };
 
         let mut cursor = QueryCursor::new();
-        let mut matches = cursor.matches(&compiled.query, tree.root_node(), content.as_bytes());
+        let mut matches = cursor.matches(
+            &compiled.query,
+            tree.root_node(),
+            content.as_bytes(),
+        );
         let mut out = Vec::new();
         while let Some(m) = matches.next() {
             let mut text = None;
@@ -229,7 +244,11 @@ fn sections(
             };
             ForwardEntry {
                 anchor: identity.to_string(),
-                location: format!("{rel_path}:{}-{}", t.start_row + 1, end_row + 1),
+                location: format!(
+                    "{rel_path}:{}-{}",
+                    t.start_row + 1,
+                    end_row + 1
+                ),
             }
         })
         .collect()
@@ -243,8 +262,10 @@ pub(crate) fn record_id(title: &str) -> Option<&str> {
     let (alpha, digits) = head.split_once('-')?;
     let mut chars = alpha.chars();
     let first_upper = chars.next().is_some_and(|c| c.is_ascii_uppercase());
-    let alpha_ok = first_upper && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit());
-    let digits_ok = !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit());
+    let alpha_ok = first_upper
+        && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit());
+    let digits_ok =
+        !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit());
     (alpha_ok && digits_ok).then_some(head)
 }
 
@@ -252,7 +273,11 @@ pub(crate) fn record_id(title: &str) -> Option<&str> {
 mod tests {
     use super::*;
 
-    fn entries(language: &Language, rel_path: &str, src: &str) -> Vec<(String, String)> {
+    fn entries(
+        language: &Language,
+        rel_path: &str,
+        src: &str,
+    ) -> Vec<(String, String)> {
         language
             .extract_from_str(rel_path, src)
             .into_iter()
@@ -296,18 +321,25 @@ mod tests {
             "H1 spans the document: {got:?}"
         );
         assert!(
-            got.contains(&("Section One".to_string(), "doc.md:5-9".to_string())),
+            got.contains(&(
+                "Section One".to_string(),
+                "doc.md:5-9".to_string()
+            )),
             "H2 spans to the next H2: {got:?}"
         );
         assert!(
-            got.contains(&("Section Two".to_string(), "doc.md:10-12".to_string())),
+            got.contains(&(
+                "Section Two".to_string(),
+                "doc.md:10-12".to_string()
+            )),
             "final H2 spans to EOF: {got:?}"
         );
     }
 
     #[test]
     fn markdown_record_titles_define_the_id() {
-        let src = "# AD-7: A decision\n\nbody\n\n## Decision outcome\n\ntext\n";
+        let src =
+            "# AD-7: A decision\n\nbody\n\n## Decision outcome\n\ntext\n";
         let got = entries(&markdown::LANGUAGE, "doc/x.md", src);
         assert!(
             got.contains(&("AD-7".to_string(), "doc/x.md:1-7".to_string())),
@@ -337,7 +369,8 @@ mod tests {
 
     #[test]
     fn rust_symbols_span_their_definitions() {
-        let src = "pub fn alpha() {\n    let x = 1;\n    x;\n}\nstruct Beta;\n";
+        let src =
+            "pub fn alpha() {\n    let x = 1;\n    x;\n}\nstruct Beta;\n";
         let got = entries(&rust::LANGUAGE, "lib.rs", src);
         assert!(
             got.contains(&("alpha".to_string(), "lib.rs:1-4".to_string())),

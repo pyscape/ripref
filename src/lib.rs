@@ -12,8 +12,8 @@ domain model `[[rr:AD-1]]`, the marker grammar `[[rr:AD-2]]`, the verbs
 */
 
 // Lint posture. `rr` mmaps its index, so `unsafe` is expected, but every use
-// must be conspicuous: a `// SAFETY:` note plus a local `#[allow(unsafe_code)]`.
-// `cargo lint` (-D warnings) is the enforcing gate.
+// must be conspicuous: a `// SAFETY:` note plus a local
+// `#[allow(unsafe_code)]`. `cargo lint` (-D warnings) is the enforcing gate.
 #![warn(unsafe_code)]
 #![warn(clippy::all)]
 #![warn(unreachable_pub)]

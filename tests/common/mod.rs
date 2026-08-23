@@ -1,6 +1,6 @@
-// Each integration-test binary that `mod common;`s this file compiles the whole
-// module but may exercise only part of it; without this, the unused part warns
-// in that binary. Standard for a shared `tests/common` helper.
+// Each integration-test binary that `mod common;`s this file compiles the
+// whole module but may exercise only part of it; without this, the unused part
+// warns in that binary. Standard for a shared `tests/common` helper.
 #![allow(dead_code)]
 
 use std::ffi::OsString;
@@ -25,7 +25,8 @@ impl Dir {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let dir = std::env::temp_dir().join(format!("rr-it-{tag}-{}-{nanos}", std::process::id()));
+        let dir = std::env::temp_dir()
+            .join(format!("rr-it-{tag}-{}-{nanos}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         Dir { dir }
     }
@@ -62,7 +63,11 @@ impl Dir {
         }
     }
 
-    pub fn copy_fixture(&mut self, fixture_rel: &str, dest_rel: &str) -> &mut Self {
+    pub fn copy_fixture(
+        &mut self,
+        fixture_rel: &str,
+        dest_rel: &str,
+    ) -> &mut Self {
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/data")
             .join(fixture_rel);
@@ -70,7 +75,8 @@ impl Dir {
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent).unwrap();
         }
-        std::fs::copy(&src, &dest).unwrap_or_else(|e| panic!("copy fixture {fixture_rel}: {e}"));
+        std::fs::copy(&src, &dest)
+            .unwrap_or_else(|e| panic!("copy fixture {fixture_rel}: {e}"));
         self
     }
 
@@ -105,7 +111,10 @@ impl TestCommand {
     }
 
     /// Append multiple arguments.
-    pub fn args<S: Into<OsString>>(&mut self, iter: impl IntoIterator<Item = S>) -> &mut Self {
+    pub fn args<S: Into<OsString>>(
+        &mut self,
+        iter: impl IntoIterator<Item = S>,
+    ) -> &mut Self {
         self.args.extend(iter.into_iter().map(Into::into));
         self
     }

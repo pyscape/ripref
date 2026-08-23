@@ -95,13 +95,20 @@ pub(crate) fn run_verify(args: &LowArgs) -> Result<u8, String> {
                 let (rule, detail) = match &found.what {
                     What::Malformed { reason } => (MALFORMED, reason.clone()),
                     What::Marker { raw, anchor } => {
-                        if !anchor.contains('#') && scan::is_path_shaped(anchor) {
+                        if !anchor.contains('#')
+                            && scan::is_path_shaped(anchor)
+                        {
                             (PATH_ONLY, raw.clone())
                         } else {
                             match resolve(reader, anchor).len() {
                                 0 => (DANGLING, raw.clone()),
                                 1 => continue,
-                                n => (AMBIGUOUS, format!("{raw} resolves to {n} definitions")),
+                                n => (
+                                    AMBIGUOUS,
+                                    format!(
+                                        "{raw} resolves to {n} definitions"
+                                    ),
+                                ),
                             }
                         }
                     }
@@ -155,7 +162,11 @@ pub(crate) fn run_verify(args: &LowArgs) -> Result<u8, String> {
                 writeln!(w, "{}", envelope("verify", &data))
             } else {
                 for f in &findings {
-                    writeln!(w, "{}:{}: {}: {}", f.file, f.line, f.rule.text, f.detail)?;
+                    writeln!(
+                        w,
+                        "{}:{}: {}: {}",
+                        f.file, f.line, f.rule.text, f.detail
+                    )?;
                 }
                 if args.quiet {
                     return Ok(());

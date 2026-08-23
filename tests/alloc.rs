@@ -21,19 +21,21 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use ripref::refidx::{serialize, ForwardEntry, IndexData, Reader};
 
 /// A pass-through allocator that tallies what it hands out. `bytes` is a
-/// monotonic "gross bytes requested" odometer -- it only ever climbs, because a
-/// freed-then-reallocated buffer still cost a fresh allocation we want to count;
-/// a net "currently live" gauge would read zero for exactly the transient `Vec`
-/// this test exists to catch. `count` is the number of `alloc` calls.
+/// monotonic "gross bytes requested" odometer -- it only ever climbs, because
+/// a freed-then-reallocated buffer still cost a fresh allocation we want to
+/// count; a net "currently live" gauge would read zero for exactly the
+/// transient `Vec` this test exists to catch. `count` is the number of `alloc`
+/// calls.
 struct Counting {
     bytes: AtomicUsize,
     count: AtomicUsize,
 }
 
 // SAFETY: every method forwards verbatim to `System`, which is a sound
-// `GlobalAlloc`; the atomic tally has no bearing on the returned pointer or the
-// memory's validity. The `#[allow]` keeps this the one conspicuous `unsafe` in
-// the file, per the crate's lint posture (`#![warn(unsafe_code)]`).
+// `GlobalAlloc`; the atomic tally has no bearing on the returned pointer or
+// the memory's validity. The `#[allow]` keeps this the one conspicuous
+// `unsafe` in the file, per the crate's lint posture
+// (`#![warn(unsafe_code)]`).
 #[allow(unsafe_code)]
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
@@ -63,17 +65,19 @@ fn count() -> usize {
     A.count.load(Ordering::Relaxed)
 }
 
-/// A SORTED `IndexData` of `n` entries that round-trips the real format. Anchors
-/// `mod{i}::item{i}` are emitted in `i` order, which is also lexical order here
-/// (zero-padded), satisfying `forward`'s sorted-by-anchor invariant -- without
-/// it `forward_lookup`'s binary search would be wrong. Every span is `:1-10`, so
-/// line 5 of file `i` is covered by entry `i`.
+/// A SORTED `IndexData` of `n` entries that round-trips the real format.
+/// Anchors `mod{i}::item{i}` are emitted in `i` order, which is also lexical
+/// order here (zero-padded), satisfying `forward`'s sorted-by-anchor invariant
+/// -- without it `forward_lookup`'s binary search would be wrong. Every span
+/// is `:1-10`, so line 5 of file `i` is covered by entry `i`.
 fn sorted_index(n: usize) -> IndexData {
     let width = (n - 1).to_string().len();
     let forward = (0..n)
         .map(|i| ForwardEntry {
             anchor: format!("mod{i:0width$}::item{i:0width$}"),
-            location: format!("crates/c{i:0width$}/src/mod{i:0width$}.rs:1-10"),
+            location: format!(
+                "crates/c{i:0width$}/src/mod{i:0width$}.rs:1-10"
+            ),
         })
         .collect();
     let paths = (0..n)
@@ -89,9 +93,10 @@ fn sorted_index(n: usize) -> IndexData {
 }
 
 /// Bytes and `alloc`-call delta a single `f()` invocation costs. The two
-/// odometer reads bracket exactly one call with nothing else allocating between
-/// them. Each `f` already `black_box`es the operation's input and result
-/// internally, so the call cannot be elided as dead; nothing is needed here.
+/// odometer reads bracket exactly one call with nothing else allocating
+/// between them. Each `f` already `black_box`es the operation's input and
+/// result internally, so the call cannot be elided as dead; nothing is needed
+/// here.
 fn measure(f: impl FnOnce()) -> (usize, usize) {
     let (b0, c0) = (bytes(), count());
     f();
@@ -130,8 +135,10 @@ fn read_path_allocates_and_scales_with_index_size() {
     let large = sorted_index(LARGE);
     let small_bytes = serialize(&small);
     let large_bytes = serialize(&large);
-    let small_reader = Reader::parse(&small_bytes).expect("small index must parse");
-    let large_reader = Reader::parse(&large_bytes).expect("large index must parse");
+    let small_reader =
+        Reader::parse(&small_bytes).expect("small index must parse");
+    let large_reader =
+        Reader::parse(&large_bytes).expect("large index must parse");
 
     let small_hit = small.forward[SMALL / 2].anchor.clone();
     let large_hit = large.forward[LARGE / 2].anchor.clone();
@@ -171,10 +178,16 @@ fn read_path_allocates_and_scales_with_index_size() {
         black_box(large_reader.forward_lookup(black_box(&large_hit)));
     });
     let (cov_small_b, _cov_small_c) = measure(|| {
-        black_box(small_reader.covering(black_box(&small_cover_file), black_box(cover_line)));
+        black_box(
+            small_reader
+                .covering(black_box(&small_cover_file), black_box(cover_line)),
+        );
     });
     let (cov_large_b, _cov_large_c) = measure(|| {
-        black_box(large_reader.covering(black_box(&large_cover_file), black_box(cover_line)));
+        black_box(
+            large_reader
+                .covering(black_box(&large_cover_file), black_box(cover_line)),
+        );
     });
 
     assert!(

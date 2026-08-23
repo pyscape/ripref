@@ -41,8 +41,8 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let tmp = create_temp(dir, path)?;
     // After a successful rename there is nothing left to remove: the temp
     // path was consumed by it.
-    if let Err(e) =
-        write_and_sync(&tmp.path, bytes, perms).and_then(|()| std::fs::rename(&tmp.path, path))
+    if let Err(e) = write_and_sync(&tmp.path, bytes, perms)
+        .and_then(|()| std::fs::rename(&tmp.path, path))
     {
         let _ = std::fs::remove_file(&tmp.path);
         return Err(e);
@@ -56,8 +56,8 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
 
 /// A created temp file, held only by its `path`. There is no `Drop` guard, so
 /// cleanup on the error path is explicit in [`atomic_write`] and a successful
-/// rename consumes it. We reopen for writing so the handle's lifetime is scoped
-/// to the write.
+/// rename consumes it. We reopen for writing so the handle's lifetime is
+/// scoped to the write.
 struct TempFile {
     path: PathBuf,
 }
@@ -87,7 +87,11 @@ fn create_temp(dir: &Path, target: &Path) -> io::Result<TempFile> {
     }
 }
 
-fn write_and_sync(path: &Path, bytes: &[u8], perms: Option<Permissions>) -> io::Result<()> {
+fn write_and_sync(
+    path: &Path,
+    bytes: &[u8],
+    perms: Option<Permissions>,
+) -> io::Result<()> {
     let mut file = OpenOptions::new().write(true).truncate(true).open(path)?;
     file.write_all(bytes)?;
     if let Some(perms) = perms {
@@ -97,10 +101,10 @@ fn write_and_sync(path: &Path, bytes: &[u8], perms: Option<Permissions>) -> io::
 }
 
 /// The permissions to carry onto a replacement so an overwrite preserves the
-/// existing file's mode instead of resetting it to the umask default. Unix-only:
-/// there `Permissions` is the full mode, whereas on Windows it is just the
-/// read-only bit, and stamping that onto the temp could block the replace, so we
-/// let the replacement take its default permissions instead.
+/// existing file's mode instead of resetting it to the umask default.
+/// Unix-only: there `Permissions` is the full mode, whereas on Windows it is
+/// just the read-only bit, and stamping that onto the temp could block the
+/// replace, so we let the replacement take its default permissions instead.
 #[cfg(unix)]
 fn permissions_to_carry(target: &Path) -> Option<Permissions> {
     std::fs::metadata(target).map(|m| m.permissions()).ok()
@@ -120,8 +124,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let dir =
-            std::env::temp_dir().join(format!("rr-atomic-{tag}-{}-{nanos}", std::process::id()));
+        let dir = std::env::temp_dir()
+            .join(format!("rr-atomic-{tag}-{}-{nanos}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -160,12 +164,17 @@ mod tests {
         let dir = tmp_dir("perm");
         let path = dir.join("index");
         atomic_write(&path, b"old").unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::set_permissions(
+            &path,
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .unwrap();
 
         atomic_write(&path, b"new contents").unwrap();
 
         assert_eq!(std::fs::read(&path).unwrap(), b"new contents");
-        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        let mode =
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "overwrite must preserve the existing mode");
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -174,8 +183,8 @@ mod tests {
     fn large_file_roundtrip() {
         let dir = tmp_dir("large");
         let path = dir.join("index");
-        // A few MiB, deliberately not a page multiple, to catch any truncation or
-        // short write across page boundaries.
+        // A few MiB, deliberately not a page multiple, to catch any truncation
+        // or short write across page boundaries.
         let n = 3 * 1024 * 1024 + 7;
         let data: Vec<u8> = (0..n).map(|i| (i % 251) as u8).collect();
         atomic_write(&path, &data).unwrap();
@@ -187,8 +196,8 @@ mod tests {
     #[test]
     fn cleanup_on_rename_failure() {
         let dir = tmp_dir("rename-fail");
-        // A non-empty directory at the target path: renaming a file onto it fails
-        // (EISDIR), exercising the error path after the temp is created.
+        // A non-empty directory at the target path: renaming a file onto it
+        // fails (EISDIR), exercising the error path after the temp is created.
         let path = dir.join("index");
         std::fs::create_dir(&path).unwrap();
         std::fs::write(path.join("occupant"), b"x").unwrap();
@@ -219,8 +228,9 @@ mod tests {
         let dir = tmp_dir("concurrent");
         let path = dir.join("index");
 
-        // Each writer's payload is a distinct byte repeated a distinct length, so a
-        // torn or interleaved write would show up as a wrong-length or mixed file.
+        // Each writer's payload is a distinct byte repeated a distinct length,
+        // so a torn or interleaved write would show up as a wrong-length or
+        // mixed file.
         const WRITERS: usize = 8;
         let payloads: Vec<Vec<u8>> = (0..WRITERS)
             .map(|i| vec![b'a' + i as u8; 1000 + i * 333])
@@ -231,7 +241,9 @@ mod tests {
             .map(|payload| {
                 let payload = payload.clone();
                 let path = path.clone();
-                std::thread::spawn(move || atomic_write(&path, &payload).unwrap())
+                std::thread::spawn(move || {
+                    atomic_write(&path, &payload).unwrap()
+                })
             })
             .collect();
         for h in handles {

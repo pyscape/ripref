@@ -1,4 +1,5 @@
-// Mirror the library's lint posture for the binary crate root (see src/lib.rs).
+// Mirror the library's lint posture for the binary crate root (see
+// src/lib.rs).
 #![warn(unsafe_code)]
 #![warn(clippy::all)]
 

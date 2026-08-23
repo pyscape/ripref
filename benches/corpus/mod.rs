@@ -1,36 +1,37 @@
 #![allow(dead_code)]
 //! Shared deterministic corpus generators for the index and query benches.
 //!
-//! Both `benches/index.rs` (the writer path) and `benches/query.rs` (the reader
-//! path) need realistic, reproducible inputs, and previously each carried its own
-//! near-duplicate generator. This module is the single source of truth so the two
-//! cannot drift: a change to anchor density or naming lands in one place and both
-//! benches see it.
+//! Both `benches/index.rs` (the writer path) and `benches/query.rs` (the
+//! reader path) need realistic, reproducible inputs, and previously each
+//! carried its own near-duplicate generator. This module is the single source
+//! of truth so the two cannot drift: a change to anchor density or naming
+//! lands in one place and both benches see it.
 //!
 //! Two independent generators live here, one per bench:
 //!   - the on-disk file-tree side ([`make_corpus`] + [`rust_source`],
-//!     [`markdown_source`], [`index_path_for`], [`ITEMS_PER_RS_FILE`]) feeds the
-//!     writer bench, which walks and parses real files;
+//!     [`markdown_source`], [`index_path_for`], [`ITEMS_PER_RS_FILE`]) feeds
+//!     the writer bench, which walks and parses real files;
 //!   - the in-memory side ([`make_index`] + [`hit_anchor`], [`miss_anchor`],
-//!     [`ITEMS_PER_FILE`]) feeds the reader bench, which operates on a serialized
-//!     index and never touches tree-sitter.
+//!     [`ITEMS_PER_FILE`]) feeds the reader bench, which operates on a
+//!     serialized index and never touches tree-sitter.
 //!
 //! Each bench crate compiles the whole module but uses only its half, so the
-//! file-level `#![allow(dead_code)]` above is load-bearing: without it the unused
-//! half trips clippy's `-D warnings`.
+//! file-level `#![allow(dead_code)]` above is load-bearing: without it the
+//! unused half trips clippy's `-D warnings`.
 //!
 //! Invariants a plausible edit could break, most-violable first:
-//!   - Both generators are fully deterministic (no rng): names and bodies derive
-//!     from indices, so bench numbers are reproducible run to run. Introducing any
-//!     randomness here silently makes every dependent bench noisy.
+//!   - Both generators are fully deterministic (no rng): names and bodies
+//!     derive from indices, so bench numbers are reproducible run to run.
+//!     Introducing any randomness here silently makes every dependent bench
+//!     noisy.
 //!   - [`make_index`] returns `forward` sorted by `anchor` and `paths` sorted;
-//!     `refidx::serialize` does NOT enforce this, and `Reader::forward_lookup`'s
-//!     binary search is wrong without it.
-//!   - The two anchor-density consts are intentionally different (the on-disk side
-//!     counts every extracted item toward its total, the in-memory side adds a
-//!     file-spanning module anchor on top), but both are tuned so each corpus
-//!     averages ~12 anchors/file like the real clam tree. Keep that ~12 average
-//!     if you retune either.
+//!     `refidx::serialize` does NOT enforce this, and
+//!     `Reader::forward_lookup`'s binary search is wrong without it.
+//!   - The two anchor-density consts are intentionally different (the on-disk
+//!     side counts every extracted item toward its total, the in-memory side
+//!     adds a file-spanning module anchor on top), but both are tuned so each
+//!     corpus averages ~12 anchors/file like the real clam tree. Keep that ~12
+//!     average if you retune either.
 
 use std::path::{Path, PathBuf};
 
@@ -40,10 +41,11 @@ use ripref::refidx::{ForwardEntry, IndexData};
 // On-disk file-tree corpus (the writer / index bench)
 // ---------------------------------------------------------------------------
 
-// Each generated `.rs` file emits this many extractable items, spread across the
-// construct kinds the Rust anchors query matches (fn / struct / enum / trait /
-// const / type), so each Rust file yields roughly this many anchors; mixed with
-// Markdown the corpus averages close to clam's observed ~12 anchors/file.
+// Each generated `.rs` file emits this many extractable items, spread across
+// the construct kinds the Rust anchors query matches (fn / struct / enum /
+// trait / const / type), so each Rust file yields roughly this many anchors;
+// mixed with Markdown the corpus averages close to clam's observed ~12
+// anchors/file.
 pub const ITEMS_PER_RS_FILE: usize = 12;
 
 /// One realistic, parseable Rust source file whose item names are derived from
@@ -56,8 +58,8 @@ pub fn rust_source(i: usize) -> String {
     // A const and a type alias (both are anchor kinds in the Rust query).
     s.push_str(&format!("pub const LIMIT_{i}: usize = {i};\n"));
     s.push_str(&format!("pub type Alias{i} = u64;\n\n"));
-    // A struct plus an impl with a method (the method is a `function_item` nested
-    // in the impl, so it is captured too).
+    // A struct plus an impl with a method (the method is a `function_item`
+    // nested in the impl, so it is captured too).
     s.push_str(&format!(
         "pub struct Config{i} {{\n    pub value: u64,\n}}\n\n"
     ));
@@ -71,8 +73,8 @@ pub fn rust_source(i: usize) -> String {
     s.push_str(&format!(
         "pub trait Handler{i} {{\n    fn handle(&self) -> usize;\n}}\n\n"
     ));
-    // Free functions to top the file up to ITEMS_PER_RS_FILE items. Items so far:
-    // const, type, struct, method, enum, trait = 6.
+    // Free functions to top the file up to ITEMS_PER_RS_FILE items. Items so
+    // far: const, type, struct, method, enum, trait = 6.
     let already = 6;
     for f in 0..ITEMS_PER_RS_FILE.saturating_sub(already) {
         s.push_str(&format!(
@@ -99,20 +101,27 @@ pub fn markdown_source(i: usize) -> String {
 /// freshness.rs `make_tree`) so concurrent or repeated runs never collide.
 /// Files are NOT dot-prefixed, since the walker skips hidden entries.
 pub fn make_corpus(n: usize) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("rr-index-bench-{}-{}", std::process::id(), n));
+    let dir = std::env::temp_dir().join(format!(
+        "rr-index-bench-{}-{}",
+        std::process::id(),
+        n
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     for i in 0..n {
         if i % 5 == 0 {
-            std::fs::write(dir.join(format!("doc{i}.md")), markdown_source(i)).unwrap();
+            std::fs::write(dir.join(format!("doc{i}.md")), markdown_source(i))
+                .unwrap();
         } else {
-            std::fs::write(dir.join(format!("mod{i}.rs")), rust_source(i)).unwrap();
+            std::fs::write(dir.join(format!("mod{i}.rs")), rust_source(i))
+                .unwrap();
         }
     }
     dir
 }
 
-/// The index path passed to `build` only excludes the index file itself from the
-/// walk; it is dot-prefixed, so it is naturally skipped and need not exist.
+/// The index path passed to `build` only excludes the index file itself from
+/// the walk; it is dot-prefixed, so it is naturally skipped and need not
+/// exist.
 pub fn index_path_for(root: &Path) -> PathBuf {
     root.join(".ref-cache").join("index")
 }
@@ -122,15 +131,15 @@ pub fn index_path_for(root: &Path) -> PathBuf {
 // ---------------------------------------------------------------------------
 
 // Symbol anchors emitted per file, on top of one file-spanning module anchor.
-// Total anchors per file is therefore ITEMS_PER_FILE + 1, averaging ~12 like the
-// clam corpus.
+// Total anchors per file is therefore ITEMS_PER_FILE + 1, averaging ~12 like
+// the clam corpus.
 pub const ITEMS_PER_FILE: usize = 11;
 
 /// Build a synthesized-but-realistic [`IndexData`] for `files` files, fully in
 /// memory. Per file `i`: one file-spanning module anchor (lines 1-200), plus
-/// `ITEMS_PER_FILE` symbol anchors with realistic-length names and locations in
-/// that same file. Byte length affects parse and scan cost, so the names are the
-/// length of real Rust paths and symbols, not `a0`/`a1`.
+/// `ITEMS_PER_FILE` symbol anchors with realistic-length names and locations
+/// in that same file. Byte length affects parse and scan cost, so the names
+/// are the length of real Rust paths and symbols, not `a0`/`a1`.
 ///
 /// File 0 is given a genuine NEST so [`ripref::refidx::Reader::covering`] on a
 /// mid-line returns depth >= 3: the wide module anchor (1-200), a
@@ -164,9 +173,9 @@ pub fn make_index(files: usize) -> IndexData {
                 anchor: format!("mod{i}::Type{i}::run"),
                 location: format!("{path}:60-80"),
             });
-            // Top this file up to ITEMS_PER_FILE symbol anchors with non-nesting
-            // methods elsewhere in the file, so file 0 has the same anchor count
-            // as the rest.
+            // Top this file up to ITEMS_PER_FILE symbol anchors with
+            // non-nesting methods elsewhere in the file, so file 0 has the
+            // same anchor count as the rest.
             for j in 2..ITEMS_PER_FILE {
                 forward.push(ForwardEntry {
                     anchor: format!("mod{i}::Type{i}::method{j}"),
@@ -184,8 +193,8 @@ pub fn make_index(files: usize) -> IndexData {
         }
     }
 
-    // serialize does not sort, so the writer's "sorted by anchor" invariant is the
-    // caller's job; forward_lookup's binary search is wrong without it.
+    // serialize does not sort, so the writer's "sorted by anchor" invariant is
+    // the caller's job; forward_lookup's binary search is wrong without it.
     forward.sort_by(|a, b| a.anchor.cmp(&b.anchor));
     paths.sort();
 
@@ -205,8 +214,8 @@ pub fn hit_anchor(files: usize) -> String {
     format!("mod{mid}::Type{mid}::method0")
 }
 
-/// An anchor guaranteed absent from any corpus this generator produces (its file
-/// index is past `files`, and the `zz_` prefix matches nothing emitted).
+/// An anchor guaranteed absent from any corpus this generator produces (its
+/// file index is past `files`, and the `zz_` prefix matches nothing emitted).
 pub fn miss_anchor(files: usize) -> String {
     format!("zz_missing::mod{files}::nope")
 }

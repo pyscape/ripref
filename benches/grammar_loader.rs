@@ -44,8 +44,9 @@ More content.
 // A fixed, committed markdown fixture rather than the live README: parsing a
 // moving document would move the parse number every time that document was
 // edited, so the "large" parse input is pinned to a file that changes only on
-// purpose. Heading-dense on purpose, since the query extracts ATX headings. The
-// "readme" benchmark label is kept for output continuity despite the new source.
+// purpose. Heading-dense on purpose, since the query extracts ATX headings.
+// The "readme" benchmark label is kept for output continuity despite the new
+// source.
 const LARGE_DOC: &str = include_str!("../tests/data/grammar_bench.md");
 
 // Both sides use the same grammar — the `tree-sitter-md` crate — so only the
@@ -96,9 +97,13 @@ fn bench_native_parse(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("native/parse");
     for (label, source) in [("small", SMALL_DOC), ("readme", LARGE_DOC)] {
-        group.bench_with_input(BenchmarkId::new("throughput", label), source, |b, src| {
-            b.iter(|| black_box(count_captures(&mut parser, &query, src)));
-        });
+        group.bench_with_input(
+            BenchmarkId::new("throughput", label),
+            source,
+            |b, src| {
+                b.iter(|| black_box(count_captures(&mut parser, &query, src)));
+            },
+        );
     }
     group.finish();
 }
@@ -106,18 +111,18 @@ fn bench_native_parse(c: &mut Criterion) {
 // ---------------------------------------------------------------------------
 // WASM grammar loading (behind --features wasm)
 //
-// Mirrors the native benches one-for-one so the only difference measured is the
-// grammar's origin: a `.wasm` loaded through tree-sitter's wasmtime-backed
+// Mirrors the native benches one-for-one so the only difference measured is
+// the grammar's origin: a `.wasm` loaded through tree-sitter's wasmtime-backed
 // `WasmStore` instead of a statically-linked C function.
 //
 // A wasm `Language` is only valid while the `WasmStore` it was loaded from is
-// alive, so every bench keeps that store alive (for `parse`, the store is moved
-// into the parser, which then owns it). `WasmStore` does not expose wasmtime's
-// `Module::serialize` AOT cache, so `wasm/language_init` is the *un-cached* cost
-// — ~95% of which is the cranelift compile of the ~400 KB module (the rest is
-// store setup). AOT caching would cut that to well under 1 ms; a cheaper
-// `opt_level` does not help. See `examples/wasm_load_probe.rs` for the
-// decomposition and the cached ceiling.
+// alive, so every bench keeps that store alive (for `parse`, the store is
+// moved into the parser, which then owns it). `WasmStore` does not expose
+// wasmtime's `Module::serialize` AOT cache, so `wasm/language_init` is the
+// *un-cached* cost — ~95% of which is the cranelift compile of the ~400 KB
+// module (the rest is store setup). AOT caching would cut that to well under 1
+// ms; a cheaper `opt_level` does not help. See `examples/wasm_load_probe.rs`
+// for the decomposition and the cached ceiling.
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "wasm")]
@@ -127,8 +132,9 @@ mod wasm_bench {
 
     const WASM_BYTES: &[u8] = include_bytes!("wasm/tree-sitter-markdown.wasm");
 
-    // The wasm loader resolves the grammar's `tree_sitter_<name>` export, so the
-    // name must match the native grammar's symbol (`tree_sitter_markdown`).
+    // The wasm loader resolves the grammar's `tree_sitter_<name>` export, so
+    // the name must match the native grammar's symbol
+    // (`tree_sitter_markdown`).
     const GRAMMAR_NAME: &str = "markdown";
 
     pub fn language_init(c: &mut Criterion) {
@@ -137,8 +143,11 @@ mod wasm_bench {
             b.iter(|| {
                 let mut store = WasmStore::new(&engine).unwrap();
                 // The returned Language drops at the end of this statement,
-                // before `store` — so it never outlives the store it came from.
-                black_box(store.load_language(GRAMMAR_NAME, WASM_BYTES).unwrap());
+                // before `store` — so it never outlives the store it came
+                // from.
+                black_box(
+                    store.load_language(GRAMMAR_NAME, WASM_BYTES).unwrap(),
+                );
             });
         });
     }
@@ -159,18 +168,19 @@ mod wasm_bench {
         let language = store.load_language(GRAMMAR_NAME, WASM_BYTES).unwrap();
         let query = Query::new(&language, QUERY_SOURCE).unwrap();
         let mut parser = Parser::new();
-        // The parser takes ownership of the store that loaded `language`, which
-        // keeps `language` valid for as long as the parser lives.
+        // The parser takes ownership of the store that loaded `language`,
+        // which keeps `language` valid for as long as the parser lives.
         parser.set_wasm_store(store).unwrap();
         parser.set_language(&language).unwrap();
 
         // Correctness guard: a silently-broken `.wasm` (wrong/stale grammar,
-        // zero matches) would produce fast but meaningless timings. Require the
-        // wasm grammar to extract the same number of anchors as native before
-        // trusting any number below it.
+        // zero matches) would produce fast but meaningless timings. Require
+        // the wasm grammar to extract the same number of anchors as native
+        // before trusting any number below it.
         {
             let native_language = make_language();
-            let native_query = Query::new(&native_language, QUERY_SOURCE).unwrap();
+            let native_query =
+                Query::new(&native_language, QUERY_SOURCE).unwrap();
             let mut native_parser = Parser::new();
             native_parser.set_language(&native_language).unwrap();
             assert_eq!(
@@ -182,9 +192,15 @@ mod wasm_bench {
 
         let mut group = c.benchmark_group("wasm/parse");
         for (label, source) in [("small", SMALL_DOC), ("readme", LARGE_DOC)] {
-            group.bench_with_input(BenchmarkId::new("throughput", label), source, |b, src| {
-                b.iter(|| black_box(count_captures(&mut parser, &query, src)));
-            });
+            group.bench_with_input(
+                BenchmarkId::new("throughput", label),
+                source,
+                |b, src| {
+                    b.iter(|| {
+                        black_box(count_captures(&mut parser, &query, src))
+                    });
+                },
+            );
         }
         group.finish();
     }

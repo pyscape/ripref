@@ -44,7 +44,12 @@ struct FileRecords {
 ///
 /// Reports a failed read or walk entry rather than returning one
 /// (`[[rr:error]]`).
-pub fn build(root: &Path, index_path: &Path, scope: &Override, cfg: &config::Config) -> IndexData {
+pub fn build(
+    root: &Path,
+    index_path: &Path,
+    scope: &Override,
+    cfg: &config::Config,
+) -> IndexData {
     let index_rel = index_path
         .strip_prefix(root)
         .unwrap_or(index_path)
@@ -93,11 +98,15 @@ pub fn build(root: &Path, index_path: &Path, scope: &Override, cfg: &config::Con
                 match std::fs::read_to_string(dent.path()) {
                     Ok(content) => {
                         if let Some(language) = language {
-                            anchors = language.extract_from_str(&rel_path, &content);
+                            anchors =
+                                language.extract_from_str(&rel_path, &content);
                         }
                         if in_scope {
-                            for found in scan::scan(&content, scan::host_for(ext, cfg)) {
-                                if let What::Mention { token, .. } = found.what {
+                            for found in
+                                scan::scan(&content, scan::host_for(ext, cfg))
+                            {
+                                if let What::Mention { token, .. } = found.what
+                                {
                                     mentions.push(MentionEntry {
                                         token,
                                         location: format!(
@@ -263,7 +272,8 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
 
-        let names: Vec<String> = (0..300).map(|i| format!("f{i}.txt")).collect();
+        let names: Vec<String> =
+            (0..300).map(|i| format!("f{i}.txt")).collect();
         for name in &names {
             std::fs::write(dir.join(name), b"x").unwrap();
         }

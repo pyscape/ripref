@@ -61,9 +61,9 @@ pub(crate) fn host_for(ext: Option<&str>, cfg: &Config) -> Host {
             .iter()
             .filter(|(_, eligible)| eligible.iter().any(|e| e == "comments"))
             .find_map(|(lang, _)| {
-                COMMENT_SYNTAX
-                    .iter()
-                    .find(|(name, exts, _)| name == lang && exts.contains(&ext))
+                COMMENT_SYNTAX.iter().find(|(name, exts, _)| {
+                    name == lang && exts.contains(&ext)
+                })
             })
             .map_or(Host::Plain, |(_, _, syntax)| Host::Comments(syntax)),
         None => Host::Plain,
@@ -182,7 +182,10 @@ fn raw_hashes(prefix: &[u8]) -> Option<usize> {
     matches!(prefix[..end], [.., b'r' | b'R']).then(|| prefix.len() - end)
 }
 
-fn next_comment_start(line: &str, syntax: &CommentSyntax) -> Option<(usize, CommentStart)> {
+fn next_comment_start(
+    line: &str,
+    syntax: &CommentSyntax,
+) -> Option<(usize, CommentStart)> {
     let bytes = line.as_bytes();
     let line_marker = syntax.line.as_bytes();
     let mut quote: Option<(u8, bool, usize)> = None;
@@ -195,7 +198,10 @@ fn next_comment_start(line: &str, syntax: &CommentSyntax) -> Option<(usize, Comm
                 continue;
             }
             let close = i + 1 + hashes;
-            if b == q && close <= bytes.len() && bytes[i + 1..close].iter().all(|&h| h == b'#') {
+            if b == q
+                && close <= bytes.len()
+                && bytes[i + 1..close].iter().all(|&h| h == b'#')
+            {
                 quote = None;
                 i += hashes;
             }
@@ -238,7 +244,10 @@ fn next_comment_start(line: &str, syntax: &CommentSyntax) -> Option<(usize, Comm
 /// `next_comment_start` gives the shipped path. `None` for a block opener
 /// or no opener on the line.
 #[cfg(test)]
-fn line_comment_text<'a>(line: &'a str, syntax: &CommentSyntax) -> Option<&'a str> {
+fn line_comment_text<'a>(
+    line: &'a str,
+    syntax: &CommentSyntax,
+) -> Option<&'a str> {
     match next_comment_start(line, syntax)? {
         (off, CommentStart::Line { len }) => Some(line[off + len..].trim()),
         (_, CommentStart::Block { .. }) => None,
@@ -300,7 +309,10 @@ pub(crate) fn scan(content: &str, host: Host) -> Vec<Found> {
                 loop {
                     if let Some(close) = awaiting_close {
                         let (body, next) = match line[pos..].find(close) {
-                            Some(idx) => (&line[pos..pos + idx], Some(pos + idx + close.len())),
+                            Some(idx) => (
+                                &line[pos..pos + idx],
+                                Some(pos + idx + close.len()),
+                            ),
                             None => (&line[pos..], None),
                         };
                         if syntax.block_is_comment {
@@ -320,7 +332,9 @@ pub(crate) fn scan(content: &str, host: Host) -> Vec<Found> {
                             None => break,
                         }
                     } else {
-                        let Some((off, start)) = next_comment_start(&line[pos..], syntax) else {
+                        let Some((off, start)) =
+                            next_comment_start(&line[pos..], syntax)
+                        else {
                             break;
                         };
                         if !line[..pos + off].trim().is_empty() {
@@ -334,7 +348,8 @@ pub(crate) fn scan(content: &str, host: Host) -> Vec<Found> {
                             CommentStart::Line { len } => {
                                 // `//!` and `#!` are prefixes too.
                                 let mut body = &line[pos + off + len..];
-                                let last = syntax.line.as_bytes()[syntax.line.len() - 1];
+                                let last = syntax.line.as_bytes()
+                                    [syntax.line.len() - 1];
                                 while body
                                     .as_bytes()
                                     .first()
@@ -345,7 +360,11 @@ pub(crate) fn scan(content: &str, host: Host) -> Vec<Found> {
                                 if body.trim().is_empty() {
                                     flush_paragraph(&mut paragraph, &mut out);
                                 } else {
-                                    extend_paragraph(&mut paragraph, lineno, body);
+                                    extend_paragraph(
+                                        &mut paragraph,
+                                        lineno,
+                                        body,
+                                    );
                                 }
                                 commented = true;
                                 break;
@@ -385,14 +404,18 @@ fn is_atx_heading(trimmed: &str) -> bool {
 /// paragraph left to end.
 fn opens_leaf_block(trimmed: &str) -> bool {
     let bytes = trimmed.as_bytes();
-    let after = |n: usize| matches!(bytes.get(n), None | Some(b' ') | Some(b'\t'));
+    let after =
+        |n: usize| matches!(bytes.get(n), None | Some(b' ') | Some(b'\t'));
     match bytes[0] {
         b'>' => true,
         b'#' => is_atx_heading(trimmed),
         b'-' | b'*' | b'+' => after(1),
         b'0'..=b'9' => {
-            let digits = bytes.iter().take_while(|b| b.is_ascii_digit()).count();
-            digits <= 9 && matches!(bytes.get(digits), Some(b'.') | Some(b')')) && after(digits + 1)
+            let digits =
+                bytes.iter().take_while(|b| b.is_ascii_digit()).count();
+            digits <= 9
+                && matches!(bytes.get(digits), Some(b'.') | Some(b')'))
+                && after(digits + 1)
         }
         _ => false,
     }
@@ -400,7 +423,11 @@ fn opens_leaf_block(trimmed: &str) -> bool {
 
 /// CommonMark drops a continuation line's indent, so a span split there
 /// reads with one space at the break.
-fn extend_paragraph(paragraph: &mut Option<Paragraph>, lineno: u64, line: &str) {
+fn extend_paragraph(
+    paragraph: &mut Option<Paragraph>,
+    lineno: u64,
+    line: &str,
+) {
     match paragraph {
         Some(p) => {
             p.text.push('\n');
@@ -422,7 +449,9 @@ fn flush_paragraph(paragraph: &mut Option<Paragraph>, out: &mut Vec<Found>) {
         return;
     };
     for (range, is_span) in split_inline(&text) {
-        let line_at = |offset: usize| first_line + text[..offset].matches('\n').count() as u64;
+        let line_at = |offset: usize| {
+            first_line + text[..offset].matches('\n').count() as u64
+        };
         if is_span {
             let joined = text[range.clone()].replace('\n', " ");
             scan_segment(&joined, true, line_at(range.start), out);
@@ -489,7 +518,12 @@ fn scan_segment(text: &str, is_span: bool, lineno: u64, out: &mut Vec<Found>) {
     mentions_in(text, &covered, lineno, out);
 }
 
-fn mentions_in(text: &str, covered: &[(usize, usize)], lineno: u64, out: &mut Vec<Found>) {
+fn mentions_in(
+    text: &str,
+    covered: &[(usize, usize)],
+    lineno: u64,
+    out: &mut Vec<Found>,
+) {
     let bytes = text.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
@@ -512,8 +546,8 @@ fn mentions_in(text: &str, covered: &[(usize, usize)], lineno: u64, out: &mut Ve
         if !is_path_shaped(token) {
             continue;
         }
-        let line_ref =
-            bytes.get(i) == Some(&b':') && bytes.get(i + 1).is_some_and(|b| b.is_ascii_digit());
+        let line_ref = bytes.get(i) == Some(&b':')
+            && bytes.get(i + 1).is_some_and(|b| b.is_ascii_digit());
         out.push(Found {
             line: lineno,
             what: What::Mention {
@@ -600,7 +634,9 @@ mod tests {
         scan(content, host)
             .into_iter()
             .map(|f| match f.what {
-                What::Marker { anchor, .. } => format!("{}:marker:{anchor}", f.line),
+                What::Marker { anchor, .. } => {
+                    format!("{}:marker:{anchor}", f.line)
+                }
                 What::Malformed { .. } => format!("{}:malformed", f.line),
                 What::Mention { token, line_ref } => {
                     format!(
@@ -662,11 +698,17 @@ mod tests {
     fn lifetimes_and_loop_labels_do_not_open_a_quote() {
         let rust = comment_syntax("rust").unwrap();
         assert_eq!(
-            line_comment_text("fn f() -> &'static str { \"x\" } // gone-rust", rust),
+            line_comment_text(
+                "fn f() -> &'static str { \"x\" } // gone-rust",
+                rust
+            ),
             Some("gone-rust")
         );
         assert_eq!(
-            line_comment_text("fn f<'a>(x: &'a str, y: &'a str) {} // gone2", rust),
+            line_comment_text(
+                "fn f<'a>(x: &'a str, y: &'a str) {} // gone2",
+                rust
+            ),
             Some("gone2")
         );
         assert_eq!(
@@ -685,7 +727,10 @@ mod tests {
         );
         // Fails unless the literal is consumed whole: the " would open a
         // string and eat the comment.
-        assert_eq!(line_comment_text("let q = '\"'; // ok4", rust), Some("ok4"));
+        assert_eq!(
+            line_comment_text("let q = '\"'; // ok4", rust),
+            Some("ok4")
+        );
     }
 
     #[test]
@@ -758,7 +803,8 @@ mod tests {
     #[test]
     fn embedded_newline_in_a_string_reads_as_a_fresh_comment_line() {
         let rust = comment_syntax("rust").unwrap();
-        let got = kinds("let s = \"a\n// [[rr:p]]\n\";\n", Host::Comments(rust));
+        let got =
+            kinds("let s = \"a\n// [[rr:p]]\n\";\n", Host::Comments(rust));
         assert_eq!(got, vec!["2:marker:p"], "{got:?}");
     }
 
@@ -772,14 +818,16 @@ mod tests {
             let got = kinds(line, Host::Comments(rust));
             assert_eq!(got, vec!["1:marker:f"], "{line:?} -> {got:?}");
         }
-        let got = kinds("let r = r#\"a \" b\"; // [[rr:f]]\n", Host::Comments(rust));
+        let got =
+            kinds("let r = r#\"a \" b\"; // [[rr:f]]\n", Host::Comments(rust));
         assert_eq!(got, Vec::<String>::new(), "{got:?}");
     }
 
     #[test]
     fn raw_string_trailing_backslash_is_not_an_escape() {
         let rust = comment_syntax("rust").unwrap();
-        let got = kinds("let s = r\"C:\\\"; // [[rr:x]]\n", Host::Comments(rust));
+        let got =
+            kinds("let s = r\"C:\\\"; // [[rr:x]]\n", Host::Comments(rust));
         assert_eq!(got, vec!["1:marker:x"], "{got:?}");
     }
 
@@ -816,14 +864,18 @@ mod tests {
     #[test]
     fn bare_marker_split_across_comment_lines_is_malformed() {
         let rust = comment_syntax("rust").unwrap();
-        let got = kinds("// see [[rr:Decision\n// outcome]]\n", Host::Comments(rust));
+        let got = kinds(
+            "// see [[rr:Decision\n// outcome]]\n",
+            Host::Comments(rust),
+        );
         assert_eq!(got, vec!["1:malformed"], "{got:?}");
     }
 
     #[test]
     fn code_between_comment_lines_ends_the_paragraph() {
         let rust = comment_syntax("rust").unwrap();
-        let got = kinds("// `[[rr:a\nlet x = 1;\n// b]]`\n", Host::Comments(rust));
+        let got =
+            kinds("// `[[rr:a\nlet x = 1;\n// b]]`\n", Host::Comments(rust));
         assert_eq!(got, vec!["1:malformed"], "{got:?}");
     }
 
@@ -855,14 +907,16 @@ mod tests {
 
     #[test]
     fn finds_markers_in_prose_and_qualifying_spans() {
-        let text = "see [[rr:AD-1]] and `[[rr:AD-2]]` and `rg '\\[\\[rr:'` here\n";
+        let text =
+            "see [[rr:AD-1]] and `[[rr:AD-2]]` and `rg '\\[\\[rr:'` here\n";
         let got = kinds(text, Host::Markdown);
         assert_eq!(got, vec!["1:marker:AD-1", "1:marker:AD-2"], "{got:?}");
     }
 
     #[test]
     fn fenced_blocks_are_invisible() {
-        let text = "[[rr:a]]\n```\n[[rr:fenced]]\nsrc/fenced.rs\n```\n[[rr:b]]\n";
+        let text =
+            "[[rr:a]]\n```\n[[rr:fenced]]\nsrc/fenced.rs\n```\n[[rr:b]]\n";
         let got = kinds(text, Host::Markdown);
         assert_eq!(got, vec!["1:marker:a", "6:marker:b"], "{got:?}");
     }
@@ -924,7 +978,8 @@ mod tests {
 
     #[test]
     fn mentions_come_from_prose_only() {
-        let text = "the parser in src/cli.rs, not `src/other.rs`, and and/or aside\n";
+        let text =
+            "the parser in src/cli.rs, not `src/other.rs`, and and/or aside\n";
         let got = kinds(text, Host::Markdown);
         assert_eq!(
             got,
@@ -937,7 +992,11 @@ mod tests {
     fn marker_interiors_are_not_mentions() {
         let text = "[[rr:src/cli.rs#parse_reference]] narrows it\n";
         let got = kinds(text, Host::Markdown);
-        assert_eq!(got, vec!["1:marker:src/cli.rs#parse_reference"], "{got:?}");
+        assert_eq!(
+            got,
+            vec!["1:marker:src/cli.rs#parse_reference"],
+            "{got:?}"
+        );
     }
 
     #[test]

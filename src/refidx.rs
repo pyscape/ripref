@@ -120,7 +120,8 @@ pub fn serialize(data: &IndexData) -> Vec<u8> {
         paths_body.push('\n');
     }
 
-    let (l_fwd, l_men, l_paths) = (forward_body.len(), mentions_body.len(), paths_body.len());
+    let (l_fwd, l_men, l_paths) =
+        (forward_body.len(), mentions_body.len(), paths_body.len());
 
     // The section offsets are absolute from file start, so they depend on the
     // header's own length, which depends on the digit-count of those
@@ -171,8 +172,8 @@ pub struct Reader<'a> {
 impl<'a> Reader<'a> {
     /// Rejects an index whose [`MAGIC`] is not this reader's.
     pub fn parse(bytes: &'a [u8]) -> Result<Reader<'a>, String> {
-        let text =
-            std::str::from_utf8(bytes).map_err(|_| "index is not valid UTF-8".to_string())?;
+        let text = std::str::from_utf8(bytes)
+            .map_err(|_| "index is not valid UTF-8".to_string())?;
         let mut lines = text.split_inclusive('\n');
 
         let magic = next_line(&mut lines)?;
@@ -209,7 +210,8 @@ impl<'a> Reader<'a> {
                 .next()
                 .and_then(|s| s.parse().ok())
                 .ok_or("malformed section offset")?;
-            let name = parts.next().ok_or("malformed section name")?.to_string();
+            let name =
+                parts.next().ok_or("malformed section name")?.to_string();
             sections.insert(name, (off, len));
         }
 
@@ -219,9 +221,9 @@ impl<'a> Reader<'a> {
         // offsets are taken from the header, but the bytes behind them may
         // not exist).
         for (name, &(off, len)) in &sections {
-            let end = off
-                .checked_add(len)
-                .ok_or_else(|| format!("section '{name}' offset+length overflows"))?;
+            let end = off.checked_add(len).ok_or_else(|| {
+                format!("section '{name}' offset+length overflows")
+            })?;
             if end > bytes.len() {
                 return Err(format!(
                     "section '{name}' extends past end of index ({end} > {})",
@@ -243,7 +245,9 @@ impl<'a> Reader<'a> {
             // `parse` already bounds-checked every section, so the slice is
             // in range; `get(..).unwrap_or(&[])` keeps this total even if a
             // future caller builds a `Reader` by hand without that check.
-            Some(&(off, len)) => self.bytes.get(off..off.saturating_add(len)).unwrap_or(&[]),
+            Some(&(off, len)) => {
+                self.bytes.get(off..off.saturating_add(len)).unwrap_or(&[])
+            }
             None => &[],
         }
     }
@@ -287,8 +291,14 @@ impl<'a> Reader<'a> {
     /// // record spans the document, a heading spans its own section.
     /// let data = IndexData {
     ///     forward: vec![
-    ///         ForwardEntry { anchor: "AD-9".into(), location: "doc/x.md:1-20".into() },
-    ///         ForwardEntry { anchor: "Consequences".into(), location: "doc/x.md:12-20".into() },
+    ///         ForwardEntry {
+    ///             anchor: "AD-9".into(),
+    ///             location: "doc/x.md:1-20".into(),
+    ///         },
+    ///         ForwardEntry {
+    ///             anchor: "Consequences".into(),
+    ///             location: "doc/x.md:12-20".into(),
+    ///         },
     ///     ],
     ///     paths: vec!["doc/x.md".into()],
     ///     ..Default::default()
@@ -300,21 +310,26 @@ impl<'a> Reader<'a> {
     ///
     /// // Line 15 falls inside both spans; `covering` returns outermost first.
     /// let hits = reader.covering("doc/x.md", 15);
-    /// let names: Vec<&str> = hits.iter().map(|h| h.anchor.as_str()).collect();
+    /// let names: Vec<_> = hits.iter().map(|h| h.anchor.as_str()).collect();
     /// assert_eq!(names, ["AD-9", "Consequences"]);
     /// ```
     pub fn covering(&self, file: &str, line: u64) -> Vec<AnchorHit> {
         let mut hits = Vec::new();
         for record in split_records(self.section("forward")) {
-            let Ok(anchor) = std::str::from_utf8(record_key(record, b"fwd:")) else {
+            let Ok(anchor) = std::str::from_utf8(record_key(record, b"fwd:"))
+            else {
                 continue;
             };
-            let Some(loc) = record_value(record).and_then(parse_location) else {
+            let Some(loc) = record_value(record).and_then(parse_location)
+            else {
                 continue;
             };
             // Exact file match (not a prefix): `a/b.rs` must not answer for
             // `b.rs`.
-            if loc.file == file && loc.start_line <= line && line <= loc.end_line {
+            if loc.file == file
+                && loc.start_line <= line
+                && line <= loc.end_line
+            {
                 hits.push(AnchorHit {
                     anchor: anchor.to_string(),
                     file: loc.file.to_string(),
@@ -359,7 +374,9 @@ impl<'a> Reader<'a> {
     }
 }
 
-fn next_line<'a, I: Iterator<Item = &'a str>>(lines: &mut I) -> Result<&'a str, String> {
+fn next_line<'a, I: Iterator<Item = &'a str>>(
+    lines: &mut I,
+) -> Result<&'a str, String> {
     lines
         .next()
         .map(|l| l.strip_suffix('\n').unwrap_or(l))
@@ -445,7 +462,10 @@ mod tests {
         let r = Reader::parse(&bytes).unwrap();
         assert_eq!(r.mtime, 1_718_660_000);
         assert_eq!(r.tree, "abc123");
-        assert_eq!(r.forward_lookup("Alpha"), vec!["a/one.md:1-10".to_string()]);
+        assert_eq!(
+            r.forward_lookup("Alpha"),
+            vec!["a/one.md:1-10".to_string()]
+        );
         assert_eq!(r.forward_lookup("two"), vec!["b/two.rs:1-3".to_string()]);
         assert!(r.forward_lookup("missing").is_empty());
         assert_eq!(

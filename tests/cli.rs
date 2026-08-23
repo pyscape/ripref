@@ -15,7 +15,8 @@ use std::process::{Command, Output};
 
 use common::{code, Dir, TestCommand};
 
-// --- index + read: the forward path ------------------------------------------
+// --- index + read: the forward path
+// ------------------------------------------
 
 // Pins the index summary format (anchors, mentions, files) and the read
 // output (`file:start-end`, one definition per line). The heading's span is
@@ -30,7 +31,9 @@ rrtest!(
         assert_eq!(code(&idx), 0, "index should succeed: {idx:?}");
         let summary = String::from_utf8_lossy(&idx.stdout);
         assert!(
-            summary.contains("indexed 2 anchors and 1 path mentions across 2 files"),
+            summary.contains(
+                "indexed 2 anchors and 1 path mentions across 2 files"
+            ),
             "{summary}"
         );
 
@@ -128,7 +131,9 @@ rrtest!(
         dir.file("a.md", "# alpha\n");
         let out = cmd.args(["read", "alpha"]).run();
         assert_eq!(code(&out), 3, "absent index should exit 3: {out:?}");
-        assert!(String::from_utf8_lossy(&out.stderr).contains("run `rr index`"));
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("run `rr index`")
+        );
     }
 );
 
@@ -156,7 +161,8 @@ rrtest!(
     }
 );
 
-// --- at: the inverse path -----------------------------------------------------
+// --- at: the inverse path
+// -----------------------------------------------------
 
 // [[rr:AD-4#Decision outcome]]
 rrtest!(
@@ -231,7 +237,9 @@ rrtest!(
         assert_eq!(code(&out), 1, "{out:?}");
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(
-            stdout.contains("dangling marker: [[rr:doc/0001.md#Decision outcome]]"),
+            stdout.contains(
+                "dangling marker: [[rr:doc/0001.md#Decision outcome]]"
+            ),
             "{stdout}"
         );
         assert!(!stdout.contains("AD-1#"), "{stdout}");
@@ -249,11 +257,15 @@ rrtest!(
 
         let out = cmd.args(["read", "Beta#Dup"]).run();
         assert_eq!(code(&out), 1, "{out:?}");
-        assert!(String::from_utf8_lossy(&out.stderr).contains("no such anchor"));
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("no such anchor")
+        );
 
         let out = cmd.args(["read", "Alpha#Dup"]).run();
         assert_eq!(code(&out), 1, "{out:?}");
-        assert!(String::from_utf8_lossy(&out.stderr).contains("ambiguous anchor"));
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("ambiguous anchor")
+        );
 
         // Both definitions sit in a.md and no enclosing anchor serves, so the
         // path fallback is all `at` has and it does not invert.
@@ -264,7 +276,8 @@ rrtest!(
             String::from_utf8_lossy(&out.stdout).trim(),
             "[[rr:a.md#Dup]]"
         );
-        assert!(String::from_utf8_lossy(&out.stderr).contains("ambiguous marker for a.md:6"));
+        assert!(String::from_utf8_lossy(&out.stderr)
+            .contains("ambiguous marker for a.md:6"));
         assert_eq!(
             cmd.args(["at", "b.md:4"]).stdout().trim(),
             "[[rr:b.md#Dup]]"
@@ -282,9 +295,14 @@ rrtest!(
 
         let out = cmd.args(["read", "Alpha#Alpha"]).run();
         assert_eq!(code(&out), 1, "{out:?}");
-        assert!(String::from_utf8_lossy(&out.stderr).contains("no such anchor"));
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("no such anchor")
+        );
 
-        assert_eq!(cmd.args(["read", "Alpha#Dup"]).stdout().trim(), "a.md:3-5");
+        assert_eq!(
+            cmd.args(["read", "Alpha#Dup"]).stdout().trim(),
+            "a.md:3-5"
+        );
     }
 );
 
@@ -316,7 +334,9 @@ rrtest!(
         cmd.arg("index").assert_exit_code(0);
         let out = cmd.args(["at", "solo.txt:1"]).run();
         assert_eq!(code(&out), 1, "no covering anchor should exit 1: {out:?}");
-        assert!(String::from_utf8_lossy(&out.stderr).contains("no anchor covers"));
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("no anchor covers")
+        );
     }
 );
 
@@ -412,7 +432,8 @@ rrtest!(
     }
 );
 
-// --- read input hygiene -------------------------------------------------------
+// --- read input hygiene
+// -------------------------------------------------------
 
 // A pasted marker is stripped and unescaped before resolving.
 rrtest!(
@@ -437,7 +458,8 @@ rrtest!(
     }
 );
 
-// --- search: lexical, index-free ----------------------------------------------
+// --- search: lexical, index-free
+// ----------------------------------------------
 
 // [[rr:AD-3#Decision outcome]]
 rrtest!(
@@ -508,7 +530,8 @@ rrtest!(
     }
 );
 
-// --- verify: the gate ----------------------------------------------------------
+// --- verify: the gate
+// ----------------------------------------------------------
 
 // [[rr:AD-3#Decision outcome]], one fixture: the corpus
 // under tests/data carries one violation per line plus a clean section that
@@ -605,8 +628,10 @@ rrtest!(
     |mut dir: Dir, mut cmd: TestCommand| {
         // [[rr:AD-5#Decision outcome]], hence the
         // qualified path and the real directory beside it.
-        dir.file("src/parser.go", "package x\n")
-            .file("a.md", "# T\n\nbad [[rr:nope]] and src/parser.go:42 here\n");
+        dir.file("src/parser.go", "package x\n").file(
+            "a.md",
+            "# T\n\nbad [[rr:nope]] and src/parser.go:42 here\n",
+        );
         let rules = |list: &str| format!("[verify]\nrules = [{list}]\n");
 
         cmd.arg("index").assert_exit_code(0);
@@ -652,11 +677,15 @@ rrtest!(
         assert_eq!(code(&out), 0, "a warning is not an answer: {out:?}");
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(
-            stderr.contains(".rr.toml: line 2: unknown key 'rule' under [verify]"),
+            stderr.contains(
+                ".rr.toml: line 2: unknown key 'rule' under [verify]"
+            ),
             "{stderr}"
         );
         assert!(
-            stderr.contains(".rr.toml: line 5: unknown key 'eligable' under [scan.rust]"),
+            stderr.contains(
+                ".rr.toml: line 5: unknown key 'eligable' under [scan.rust]"
+            ),
             "{stderr}"
         );
 
@@ -684,7 +713,8 @@ rrtest!(
         let out = cmd.arg("index").run();
         assert_eq!(code(&out), 2, "{out:?}");
         assert!(
-            String::from_utf8_lossy(&out.stderr).contains("unsupported escape"),
+            String::from_utf8_lossy(&out.stderr)
+                .contains("unsupported escape"),
             "{out:?}"
         );
     }
@@ -706,7 +736,11 @@ rrtest!(
         .file("x.py", "s = \"[[rr:nope]]\"\n# [[rr:Alpha]]\n");
         cmd.arg("index").assert_exit_code(0);
         let out = cmd.arg("verify").run();
-        assert_eq!(code(&out), 0, "string-literal marker is invisible: {out:?}");
+        assert_eq!(
+            code(&out),
+            0,
+            "string-literal marker is invisible: {out:?}"
+        );
 
         dir.file("y.py", "# [[rr:gone]]\n");
         cmd.arg("index").assert_exit_code(0);
@@ -771,9 +805,13 @@ rrtest!(
         dir.file("real.md", "a dangling [[rr:nope]] here\n");
         let outside = dir.path().with_extension("away.md");
         std::fs::write(&outside, "a dangling [[rr:gone]] here\n").unwrap();
-        std::os::unix::fs::symlink(dir.path().join("real.md"), dir.path().join("alias.md"))
+        std::os::unix::fs::symlink(
+            dir.path().join("real.md"),
+            dir.path().join("alias.md"),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(&outside, dir.path().join("escape.md"))
             .unwrap();
-        std::os::unix::fs::symlink(&outside, dir.path().join("escape.md")).unwrap();
         cmd.arg("index").assert_exit_code(0);
 
         let out = cmd.args(["verify", "alias.md"]).run();
@@ -795,7 +833,8 @@ rrtest!(
     }
 );
 
-// --- the scenario kind -----------------------------------------------------------
+// --- the scenario kind
+// -----------------------------------------------------------
 
 // [[rr:AD-1]]
 rrtest!(
@@ -818,7 +857,8 @@ rrtest!(
     }
 );
 
-// --- python -----------------------------------------------------------------------
+// --- python
+// -----------------------------------------------------------------------
 
 rrtest!(
     python_method_ats_and_reads,
@@ -861,7 +901,8 @@ rrtest!(
     }
 );
 
-// --- a reader that stops reading ---------------------------------------------------
+// --- a reader that stops reading
+// ---------------------------------------------------
 
 // A hook that pipes into `head` closes the pipe early. Rust starts with
 // SIGPIPE ignored, so the write returns EPIPE instead of killing the
@@ -884,7 +925,10 @@ rrtest!(
             let stderr = String::from_utf8_lossy(&out.stderr);
             assert!(!stderr.is_empty(), "{args:?} should say why: {out:?}");
             for line in stderr.lines() {
-                assert!(line.starts_with("rr: "), "{args:?} unprefixed: {line}");
+                assert!(
+                    line.starts_with("rr: "),
+                    "{args:?} unprefixed: {line}"
+                );
             }
         }
     }
@@ -925,13 +969,14 @@ rrtest!(
         dir.run(&["index"]);
 
         for format in [&["verify"][..], &["verify", "--format", "json"]] {
-            let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_rr"))
-                .args(format)
-                .current_dir(dir.path())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-                .expect("spawn rr");
+            let mut child =
+                std::process::Command::new(env!("CARGO_BIN_EXE_rr"))
+                    .args(format)
+                    .current_dir(dir.path())
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()
+                    .expect("spawn rr");
             drop(child.stdout.take());
             let out = child.wait_with_output().expect("wait rr");
             let stderr = String::from_utf8_lossy(&out.stderr);
@@ -945,7 +990,8 @@ rrtest!(
     }
 );
 
-// --- the index artifact ---------------------------------------------------------
+// --- the index artifact
+// ---------------------------------------------------------
 
 /// The default index path within a test [`Dir`].
 fn index_file(dir: &Dir) -> std::path::PathBuf {
@@ -974,7 +1020,8 @@ rrtest!(index_is_refidx_v2, |mut dir: Dir, mut cmd: TestCommand| {
     let header = String::from_utf8(bytes[..header_end].to_vec()).unwrap();
 
     assert!(header.starts_with("refidx v2\n"), "magic line: {header:?}");
-    for section in ["section:forward:", "section:mentions:", "section:paths:"] {
+    for section in ["section:forward:", "section:mentions:", "section:paths:"]
+    {
         assert!(header.contains(section), "missing {section} in {header:?}");
     }
     for forbidden in ["blob", "oid", "pin", "snapshot", "track"] {
@@ -1045,7 +1092,8 @@ rrtest!(
     }
 );
 
-// --- freshness ------------------------------------------------------------------
+// --- freshness
+// ------------------------------------------------------------------
 
 // [[rr:README.md#Freshness]]
 rrtest!(
@@ -1121,7 +1169,8 @@ rrtest!(
     }
 );
 
-// --- CLI surface ------------------------------------------------------------------
+// --- CLI surface
+// ------------------------------------------------------------------
 
 rrtest!(version_exits_zero, |_dir: Dir, mut cmd: TestCommand| {
     let v = cmd.arg("--version").run();
@@ -1165,14 +1214,16 @@ rrtest!(
             let out = cmd.args([gone, "x"]).run();
             assert_eq!(code(&out), 2, "{gone} must be an unknown command");
             assert!(
-                String::from_utf8_lossy(&out.stderr).contains("unknown command"),
+                String::from_utf8_lossy(&out.stderr)
+                    .contains("unknown command"),
                 "{gone}: {out:?}"
             );
         }
     }
 );
 
-// --- dogfood ------------------------------------------------------------------------
+// --- dogfood
+// ------------------------------------------------------------------------
 
 // The index lives in a throwaway location, never the repo's own
 // `.ref-cache/`, even though the tree walked is the real repo.
@@ -1181,7 +1232,8 @@ rrtest!(
     |dir: Dir, _cmd: TestCommand| {
         let index = dir.path().join("index");
         let run = |args: &[&str]| -> Output {
-            let mut full: Vec<OsString> = args.iter().map(|a| OsString::from(*a)).collect();
+            let mut full: Vec<OsString> =
+                args.iter().map(|a| OsString::from(*a)).collect();
             full.push("--index".into());
             full.push(index.clone().into_os_string());
             Command::new(env!("CARGO_BIN_EXE_rr"))
@@ -1209,7 +1261,8 @@ rrtest!(
         let sym = run(&["read", "rrtest"]);
         assert_eq!(code(&sym), 0, "read macro anchor: {sym:?}");
         let sym_loc = String::from_utf8_lossy(&sym.stdout).trim().to_string();
-        let (sym_file, sym_span) = sym_loc.rsplit_once(':').expect("file:span");
+        let (sym_file, sym_span) =
+            sym_loc.rsplit_once(':').expect("file:span");
         assert_eq!(sym_file, "tests/common/mod.rs", "{sym_loc}");
         let (start, end) = sym_span.split_once('-').expect("start-end");
         assert!(
@@ -1237,7 +1290,8 @@ rrtest!(
     }
 );
 
-// --- git helpers ----------------------------------------------------------------
+// --- git helpers
+// ----------------------------------------------------------------
 
 fn git_available() -> bool {
     Command::new("git")
@@ -1297,7 +1351,11 @@ rrtest!(
         use std::os::unix::fs::PermissionsExt;
         dir.file("a.md", "# Head\n").file("locked.md", "# Locked\n");
         let locked = dir.path().join("locked.md");
-        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        std::fs::set_permissions(
+            &locked,
+            std::fs::Permissions::from_mode(0o000),
+        )
+        .unwrap();
 
         let out = cmd.arg("index").run();
         let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1306,7 +1364,11 @@ rrtest!(
         // Anchors and mentions are two halves of one walk over one read.
         assert_eq!(stderr.matches("locked.md").count(), 1, "{out:?}");
 
-        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::fs::set_permissions(
+            &locked,
+            std::fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
     }
 );
 
