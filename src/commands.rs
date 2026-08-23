@@ -85,61 +85,40 @@ fn with_fresh_reader<F>(
 where
     F: FnOnce(&Reader) -> Result<u8, String>,
 {
-    match load_index(index_path, root, skip_freshness)? {
-        IndexState::Missing => {
-            eprintln!("no index at {}: run `rr index`", index_path.display());
-            Ok(exit::STALE)
-        }
-        IndexState::Stale => {
-            eprintln!("index is stale: rebuild with `rr index`");
-            Ok(exit::STALE)
-        }
-        IndexState::Fresh(bytes) => {
-            let reader = Reader::parse(&bytes).map_err(|e| format!("corrupt index: {e}"))?;
-            f(&reader)
-        }
+    let Some(bytes) = read_index(index_path)? else {
+        eprintln!("no index at {}: run `rr index`", index_path.display());
+        return Ok(exit::STALE);
+    };
+    let reader = Reader::parse(&bytes).map_err(|e| format!("corrupt index: {e}"))?;
+    if !fresh(&reader, root, skip_freshness) {
+        eprintln!("index is stale: rebuild with `rr index`");
+        return Ok(exit::STALE);
     }
+    f(&reader)
 }
 
-enum IndexState {
-    Fresh(Vec<u8>),
-    Missing,
-    /// `[[rr:ripref (rr)#Freshness]]`
-    Stale,
-}
-
-/// The mapping is released (copied into a `Vec`) before `fresh` runs,
-/// because `fresh` may spawn `git status` and, on Windows, a concurrent
-/// `rr index` replaces this file; holding a mapping across that is the
-/// fragile case. The atomic write in `rr index` is what actually prevents a
-/// torn read; copying out is defense in depth, plus an `fs::read` fallback
+/// The mapping is released (copied into a `Vec`) before the caller checks
+/// freshness, because that check may spawn `git status` and, on Windows, a
+/// concurrent `rr index` replaces this file; holding a mapping across that is
+/// the fragile case. The atomic write in `rr index` is what actually prevents
+/// a torn read; copying out is defense in depth, plus an `fs::read` fallback
 /// for the rare platform where mmap of a valid file fails to open.
-fn load_index(index_path: &Path, root: &Path, skip_freshness: bool) -> Result<IndexState, String> {
+fn read_index(index_path: &Path) -> Result<Option<Vec<u8>>, String> {
     let file = match std::fs::File::open(index_path) {
         Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(IndexState::Missing);
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(format!("failed to open {}: {e}", index_path.display())),
     };
-    let bytes: Vec<u8> = {
-        // SAFETY: the index is a regular file we just opened; `rr index`
-        // publishes new contents with an atomic rename, so the mapped inode
-        // is always a complete image and is never mutated under us.
-        #[allow(unsafe_code)]
-        match unsafe { Mmap::map(&file) } {
-            Ok(mmap) => mmap.to_vec(),
-            Err(_) => std::fs::read(index_path)
-                .map_err(|e| format!("failed to read {}: {e}", index_path.display()))?,
-        }
+    // SAFETY: the index is a regular file we just opened; `rr index`
+    // publishes new contents with an atomic rename, so the mapped inode
+    // is always a complete image and is never mutated under us.
+    #[allow(unsafe_code)]
+    let bytes = match unsafe { Mmap::map(&file) } {
+        Ok(mmap) => mmap.to_vec(),
+        Err(_) => std::fs::read(index_path)
+            .map_err(|e| format!("failed to read {}: {e}", index_path.display()))?,
     };
-    {
-        let reader = Reader::parse(&bytes).map_err(|e| format!("corrupt index: {e}"))?;
-        if !fresh(&reader, root, skip_freshness) {
-            return Ok(IndexState::Stale);
-        }
-    }
-    Ok(IndexState::Fresh(bytes))
+    Ok(Some(bytes))
 }
 
 /// Whether the index may answer this query (`[[rr:ripref (rr)#Freshness]]`).
@@ -155,17 +134,16 @@ fn fresh(reader: &Reader, root: &Path, skip_freshness: bool) -> bool {
     indexer::newest_mtime(&reader.paths(), root) <= reader.mtime
 }
 
-type Location = (String, u64, u64);
+type Location<'a> = (&'a str, u64, u64);
 
-fn parse_all(locs: Vec<String>) -> Vec<Location> {
-    locs.iter()
-        .filter_map(|l| refidx::parse_location(l))
-        .map(|(f, s, e)| (f.to_string(), s, e))
+fn parse_all<'a>(locs: Vec<&'a str>) -> Vec<Location<'a>> {
+    locs.into_iter()
+        .filter_map(refidx::parse_location)
         .collect()
 }
 
 /// `[[rr:AD-6#Decision outcome]]`
-fn resolve(reader: &Reader, anchor: &str) -> Vec<Location> {
+fn resolve<'a>(reader: &Reader<'a>, anchor: &str) -> Vec<Location<'a>> {
     let direct = parse_all(reader.forward_lookup(anchor));
     if !direct.is_empty() {
         return direct;
@@ -176,8 +154,8 @@ fn resolve(reader: &Reader, anchor: &str) -> Vec<Location> {
     let definitions = parse_all(reader.forward_lookup(identity));
     let by_path: Vec<Location> = definitions
         .iter()
-        .filter(|(f, _, _)| f == qualifier)
-        .cloned()
+        .filter(|(f, _, _)| *f == qualifier)
+        .copied()
         .collect();
     if !by_path.is_empty() {
         return by_path;
@@ -196,7 +174,7 @@ fn resolve(reader: &Reader, anchor: &str) -> Vec<Location> {
 fn minimal_form(reader: &Reader, hit: &AnchorHit) -> String {
     // A candidate that resolves to exactly one definition is not enough: the
     // one it lands on has to be this hit.
-    let target: Location = (hit.file.clone(), hit.start_line, hit.end_line);
+    let target: Location = (&hit.file, hit.start_line, hit.end_line);
     if reader.forward_lookup(&hit.anchor).len() == 1 {
         return hit.anchor.clone();
     }
@@ -210,7 +188,7 @@ fn minimal_form(reader: &Reader, hit: &AnchorHit) -> String {
         })
         .filter(|q| reader.forward_lookup(&q.anchor).len() == 1)
         .map(|q| format!("{}#{}", q.anchor, hit.anchor))
-        .find(|form| resolve(reader, form).as_slice() == [target.clone()]);
+        .find(|form| resolve(reader, form).as_slice() == [target]);
     enclosing.unwrap_or_else(|| format!("{}#{}", hit.file, hit.anchor))
 }
 
@@ -239,7 +217,7 @@ pub(crate) fn run_read(args: &LowArgs) -> Result<u8, String> {
                     if i > 0 {
                         data.push(',');
                     }
-                    push_location(&mut data, &loc.0, loc.1, loc.2);
+                    push_location(&mut data, loc.0, loc.1, loc.2);
                 }
                 data.push_str("]}");
                 writeln!(w, "{}", envelope("read", &data))
@@ -292,7 +270,7 @@ pub(crate) fn run_at(args: &LowArgs) -> Result<u8, String> {
         let uninvertible: Vec<(&str, usize)> = forms
             .iter()
             .filter_map(|(form, h)| {
-                let target: Location = (h.file.clone(), h.start_line, h.end_line);
+                let target: Location = (&h.file, h.start_line, h.end_line);
                 let found = resolve(reader, form);
                 (found.as_slice() != [target]).then_some((form.as_str(), found.len()))
             })

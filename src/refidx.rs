@@ -250,7 +250,7 @@ impl<'a> Reader<'a> {
 
     /// Resolve an anchor through the forward map.
     /// `[[rr:AD-1#Decision outcome]]`
-    pub fn forward_lookup(&self, anchor: &str) -> Vec<String> {
+    pub fn forward_lookup(&self, anchor: &str) -> Vec<&'a str> {
         let slice = self.section("forward");
         let lines: Vec<&[u8]> = split_records(slice);
         let target = anchor.as_bytes();
@@ -263,7 +263,7 @@ impl<'a> Reader<'a> {
                 break;
             }
             if let Some(loc) = record_value(line) {
-                out.push(loc.to_string());
+                out.push(loc);
             }
         }
         out
