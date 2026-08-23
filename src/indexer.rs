@@ -6,7 +6,7 @@ text `[[rr:AD-5]]`.
 The walk reuses ripgrep's `ignore` crate, so `.gitignore` and hidden-file
 rules match rr.toml's defaults (`respect-gitignore = true`, `hidden = false`)
 for free. Per-file anchor extraction is delegated to the
-[`crate::languages`] registry; mention scanning runs only over files the
+`languages` registry; mention scanning runs only over files the
 profile's scan scope selects. The walker itself is type-blind.
 */
 

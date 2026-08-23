@@ -16,50 +16,53 @@ domain model `[[rr:AD-1]]`, the marker grammar `[[rr:AD-2]]`, the verbs
 // `cargo lint` (-D warnings) is the enforcing gate.
 #![warn(unsafe_code)]
 #![warn(clippy::all)]
+#![warn(unreachable_pub)]
+#![deny(missing_docs)]
 
-pub mod atomic;
-pub mod cli;
-pub mod commands;
+pub(crate) mod atomic;
+pub(crate) mod cli;
+pub(crate) mod commands;
 pub mod config;
 pub mod indexer;
-pub mod languages;
+pub(crate) mod languages;
 pub mod marker;
 pub mod refidx;
-pub mod scan;
+pub(crate) mod scan;
 
 use cli::{ParseOutcome, Special, Subcommand};
 
 /// Exit codes, one model across the verbs: `[[rr:AD-4]]` fixes them and
 /// `[[rr:Shared options]]` spells each one out for a user.
-pub mod exit {
-    pub const OK: u8 = 0;
-    pub const ADVERSE: u8 = 1;
-    pub const USAGE: u8 = 2;
-    pub const STALE: u8 = 3;
+pub(crate) mod exit {
+    pub(crate) const OK: u8 = 0;
+    pub(crate) const ADVERSE: u8 = 1;
+    pub(crate) const USAGE: u8 = 2;
+    pub(crate) const STALE: u8 = 3;
 }
 
 /// A non-fatal failure prints here and flips a flag, so one unreadable file
 /// neither aborts the run nor passes unreported. Mirrors ripgrep's
 /// `messages::set_errored`.
-pub mod messages {
+pub(crate) mod messages {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     static ERRORED: AtomicBool = AtomicBool::new(false);
 
-    pub fn error(msg: impl std::fmt::Display) {
+    pub(crate) fn error(msg: impl std::fmt::Display) {
         ERRORED.store(true, Ordering::Relaxed);
         eprintln!("rr: {msg}");
     }
 
-    pub fn errored() -> bool {
+    pub(crate) fn errored() -> bool {
         ERRORED.load(Ordering::Relaxed)
     }
 
-    pub fn warn(msg: impl std::fmt::Display) {
+    pub(crate) fn warn(msg: impl std::fmt::Display) {
         eprintln!("rr: {msg}");
     }
 }
 
+/// `[[rr:AD-4#Decision outcome]]`
 pub fn run() -> u8 {
     let argv: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
     let args = match cli::parse(&argv) {

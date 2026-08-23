@@ -4,8 +4,7 @@
 
 use crate::languages::{Language, Mode};
 
-pub const LANGUAGE: Language = Language {
-    name: "gherkin",
+pub(crate) const LANGUAGE: Language = Language {
     extensions: &["feature"],
     grammar: tree_sitter_md::LANGUAGE,
     anchors_query: "",

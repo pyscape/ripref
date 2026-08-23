@@ -16,14 +16,14 @@ use crate::marker;
 
 /// One scanner hit, located by 1-based line number.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Found {
+pub(crate) struct Found {
     pub line: u64,
     pub what: What,
 }
 
 /// What the scanners find.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum What {
+pub(crate) enum What {
     Marker {
         raw: String,
         anchor: String,
@@ -41,7 +41,7 @@ pub enum What {
 
 /// The host structure a file exposes to the scan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Host {
+pub(crate) enum Host {
     /// Markdown regions, per
     /// `[[rr:AD-2#Decision outcome]]`.
     Markdown,
@@ -53,7 +53,7 @@ pub enum Host {
     Plain,
 }
 
-pub fn host_for(ext: Option<&str>, cfg: &Config) -> Host {
+pub(crate) fn host_for(ext: Option<&str>, cfg: &Config) -> Host {
     match ext {
         Some("md") | Some("markdown") => Host::Markdown,
         Some(ext) => cfg
@@ -73,7 +73,7 @@ pub fn host_for(ext: Option<&str>, cfg: &Config) -> Host {
 /// A language's comment delimiters: the region a `[scan.<lang>]` table with
 /// `eligible = ["comments"]` reads, per `[[rr:AD-2]]`.
 #[derive(Debug, PartialEq, Eq)]
-pub struct CommentSyntax {
+pub(crate) struct CommentSyntax {
     pub line: &'static str,
     /// Only the closer matching whichever opener started the block ends it,
     /// so a `'''` docstring survives a stray `"""` inside it.
@@ -112,7 +112,8 @@ const COMMENT_SYNTAX: &[(&str, &[&str], CommentSyntax)] = &[
     ),
 ];
 
-pub fn comment_syntax(lang: &str) -> Option<&'static CommentSyntax> {
+#[cfg(test)]
+fn comment_syntax(lang: &str) -> Option<&'static CommentSyntax> {
     COMMENT_SYNTAX
         .iter()
         .find(|(name, ..)| *name == lang)
@@ -248,7 +249,7 @@ fn line_comment_text<'a>(line: &'a str, syntax: &CommentSyntax) -> Option<&'a st
 /// writes, in line order.
 /// `[[rr:AD-2#Decision outcome]]`
 /// `[[rr:AD-5#Decision outcome]]`
-pub fn scan(content: &str, host: Host) -> Vec<Found> {
+pub(crate) fn scan(content: &str, host: Host) -> Vec<Found> {
     let mut out = Vec::new();
     let mut fence: Option<&str> = None; // the delimiter that opened the fence
     let mut awaiting_close: Option<&'static str> = None;
@@ -533,7 +534,7 @@ fn is_token_byte(b: u8) -> bool {
 /// segments `[[rr:AD-5]]`. Root-relative only: a leading, trailing, or
 /// doubled separator disqualifies, and so does a `.` or `..` segment, since a
 /// mention never traverses out of the tree it is judged against.
-pub fn is_path_shaped(token: &str) -> bool {
+pub(crate) fn is_path_shaped(token: &str) -> bool {
     token.contains('/')
         && token.split('/').count() >= 2
         && token

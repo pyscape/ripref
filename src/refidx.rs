@@ -15,12 +15,14 @@ than misparsing it.
 
 use std::collections::HashMap;
 
+/// The header's first line.
 pub const MAGIC: &str = "refidx v2";
 
 /// One definition of one anchor, as the `forward` section records it.
 /// `[[rr:AD-1#Decision outcome]]`
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ForwardEntry {
+    /// The identity alone, unqualified; for a path anchor, the path.
     pub anchor: String,
     /// The location body, exactly as printed: `file:start-end`.
     pub location: String,
@@ -30,6 +32,7 @@ pub struct ForwardEntry {
 /// `[[rr:AD-5#Decision outcome]]`
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MentionEntry {
+    /// Any `:line` the prose wrote is part of it.
     pub token: String,
     /// Where the mention sits: `file:line-line`.
     pub location: String,
@@ -39,9 +42,13 @@ pub struct MentionEntry {
 /// `location` unparsed, so the caller can sort by it and emit JSON.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AnchorHit {
+    /// As [`ForwardEntry::anchor`].
     pub anchor: String,
+    /// Repo-relative, forward slashes on every platform.
     pub file: String,
+    /// 1-based and inclusive.
     pub start_line: u64,
+    /// 1-based and inclusive, so a one-line span repeats `start_line`.
     pub end_line: u64,
 }
 
@@ -162,6 +169,7 @@ pub struct Reader<'a> {
 }
 
 impl<'a> Reader<'a> {
+    /// Rejects an index whose [`MAGIC`] is not this reader's.
     pub fn parse(bytes: &'a [u8]) -> Result<Reader<'a>, String> {
         let text =
             std::str::from_utf8(bytes).map_err(|_| "index is not valid UTF-8".to_string())?;

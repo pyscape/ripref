@@ -19,10 +19,10 @@ use tree_sitter_language::LanguageFn;
 
 use crate::refidx::ForwardEntry;
 
-pub mod gherkin;
-pub mod markdown;
-pub mod python;
-pub mod rust;
+pub(crate) mod gherkin;
+pub(crate) mod markdown;
+pub(crate) mod python;
+pub(crate) mod rust;
 
 const ANCHOR_CAPTURE: &str = "anchor";
 const SPAN_CAPTURE: &str = "span";
@@ -31,7 +31,7 @@ type TitleFinder = fn(&str) -> Vec<(String, u64)>;
 
 /// How a language's captures become anchors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Mode {
+pub(crate) enum Mode {
     /// `[[rr:AD-1#Decision outcome]]`: each match is
     /// one anchor whose span is the `@span` node (the whole item), or the
     /// `@anchor` node when no `@span` exists.
@@ -44,9 +44,7 @@ pub enum Mode {
 
 /// A first-class language: a tree-sitter grammar and query, or (`titles`
 /// set) a lexical title finder, whose captures become anchors.
-pub struct Language {
-    /// Stable identifier, e.g. `"rust"`, `"markdown"`.
-    pub name: &'static str,
+pub(crate) struct Language {
     pub extensions: &'static [&'static str],
     /// The grammar, from the language's crate.
     pub grammar: LanguageFn,
@@ -64,14 +62,14 @@ pub struct Language {
 }
 
 /// Every first-class language.
-pub static LANGUAGES: &[Language] = &[
+pub(crate) static LANGUAGES: &[Language] = &[
     markdown::LANGUAGE,
     rust::LANGUAGE,
     gherkin::LANGUAGE,
     python::LANGUAGE,
 ];
 
-pub fn for_extension(ext: Option<&str>) -> Option<&'static Language> {
+pub(crate) fn for_extension(ext: Option<&str>) -> Option<&'static Language> {
     let ext = ext?;
     LANGUAGES.iter().find(|l| l.extensions.contains(&ext))
 }
@@ -86,7 +84,7 @@ struct Capture {
 impl Language {
     /// One [`ForwardEntry`] per anchor. A parse failure yields an empty
     /// result rather than a panic.
-    pub fn extract_from_str(&self, rel_path: &str, content: &str) -> Vec<ForwardEntry> {
+    pub(crate) fn extract_from_str(&self, rel_path: &str, content: &str) -> Vec<ForwardEntry> {
         let captures = match self.titles {
             Some(titles) => titles(content)
                 .into_iter()
@@ -211,7 +209,7 @@ fn sections(
 /// `[[rr:AD-1#Decision outcome]]`, except that the
 /// ID's first segment also accepts digits after its first letter, so `AD2-9`
 /// and `COVID-19` both parse. The record says letters.
-pub fn record_id(title: &str) -> Option<&str> {
+pub(crate) fn record_id(title: &str) -> Option<&str> {
     let (head, _) = title.split_once(':')?;
     let (alpha, digits) = head.split_once('-')?;
     let mut chars = alpha.chars();
@@ -337,14 +335,11 @@ mod tests {
 
     #[test]
     fn for_extension_maps_known_and_unknown() {
-        assert_eq!(for_extension(Some("rs")).map(|l| l.name), Some("rust"));
-        assert_eq!(for_extension(Some("md")).map(|l| l.name), Some("markdown"));
+        let of = |ext| for_extension(Some(ext)).map(|l| l.extensions);
+        assert_eq!(of("rs"), Some(rust::LANGUAGE.extensions));
+        assert_eq!(of("md"), Some(markdown::LANGUAGE.extensions));
         for ext in ["py", "pyi", "pyw"] {
-            assert_eq!(
-                for_extension(Some(ext)).map(|l| l.name),
-                Some("python"),
-                "{ext}"
-            );
+            assert_eq!(of(ext), Some(python::LANGUAGE.extensions), "{ext}");
         }
         assert!(for_extension(Some("xyz")).is_none());
         assert!(for_extension(None).is_none());

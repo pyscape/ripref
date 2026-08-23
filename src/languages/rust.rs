@@ -2,8 +2,7 @@
 
 use crate::languages::{Language, Mode};
 
-pub const LANGUAGE: Language = Language {
-    name: "rust",
+pub(crate) const LANGUAGE: Language = Language {
     extensions: &["rs"],
     grammar: tree_sitter_rust::LANGUAGE,
     anchors_query: ANCHORS,

@@ -34,15 +34,22 @@ pub enum Decoded {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// `[[rr:AD-2#Decision outcome]]`
 pub enum Token {
+    /// A well-formed marker.
     Marker {
+        /// Bytes from the opener through the terminator, so the scanner
+        /// resumes past this marker rather than inside it.
         len: usize,
+        /// The anchor it delimits, unescaped.
         anchor: String,
     },
     /// The opener is present but no well-formed marker follows.
     Malformed(String),
 }
 
+/// `[[rr:AD-2#Decision outcome]]`
+/// The inverse of [`decode`].
 pub fn wrap(anchor: &str) -> String {
     format!("{OPENER}{}]]", escape(anchor))
 }

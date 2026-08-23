@@ -28,7 +28,7 @@ use crate::scan::{self, What};
 
 /// Build or refresh the index from the working tree.
 /// `[[rr:help_text]]`
-pub fn run_index(args: &LowArgs) -> Result<u8, String> {
+pub(crate) fn run_index(args: &LowArgs) -> Result<u8, String> {
     let root = Path::new(".");
     let index_path = PathBuf::from(cli::index_path(args));
     let cfg = config::load(root)?;
@@ -217,7 +217,7 @@ fn minimal_form(reader: &Reader, hit: &AnchorHit) -> String {
 /// `[[rr:help_text]]`. The reader strips a pasted marker's wrapper and
 /// unescapes before resolving `[[rr:AD-2]]`; a token that opens like a
 /// marker but is not one is a usage error, never a silent reparse.
-pub fn run_read(args: &LowArgs) -> Result<u8, String> {
+pub(crate) fn run_read(args: &LowArgs) -> Result<u8, String> {
     let root = Path::new(".");
     let index_path = PathBuf::from(cli::index_path(args));
     let token = args.positional[0].to_string_lossy().into_owned();
@@ -262,7 +262,7 @@ pub fn run_read(args: &LowArgs) -> Result<u8, String> {
 }
 
 /// `[[rr:help_text]]`. The inverse of `run_read`.
-pub fn run_at(args: &LowArgs) -> Result<u8, String> {
+pub(crate) fn run_at(args: &LowArgs) -> Result<u8, String> {
     let root = Path::new(".");
     let index_path = PathBuf::from(cli::index_path(args));
     // `validate` already accepted this; re-parsing here keeps the position
@@ -452,7 +452,7 @@ fn scoped_files(
 
 /// `[[rr:help_text]]`. Purely lexical: no index is read, so it never
 /// returns stale.
-pub fn run_search(args: &LowArgs) -> Result<u8, String> {
+pub(crate) fn run_search(args: &LowArgs) -> Result<u8, String> {
     let root = Path::new(".");
     let cfg = config::load(root)?;
     let matcher = config::scope_matcher(root, &cfg)?;
@@ -645,7 +645,7 @@ struct Finding {
 /// `[[rr:help_text]]`, reporting the six kinds of `[[rr:AD-3]]`. Resolution
 /// judgments need the index, so a stale index exits 3 rather than judging
 /// from stale data; mention judgments run against the live tree.
-pub fn run_verify(args: &LowArgs) -> Result<u8, String> {
+pub(crate) fn run_verify(args: &LowArgs) -> Result<u8, String> {
     let root = Path::new(".");
     let index_path = PathBuf::from(cli::index_path(args));
     let cfg = config::load(root)?;

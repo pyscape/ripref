@@ -5,8 +5,7 @@
 
 use crate::languages::{Language, Mode};
 
-pub const LANGUAGE: Language = Language {
-    name: "markdown",
+pub(crate) const LANGUAGE: Language = Language {
     extensions: &["md", "markdown"],
     grammar: tree_sitter_md::LANGUAGE,
     // In tree-sitter-md, `heading_content` is a field of `atx_heading` whose

@@ -31,7 +31,7 @@ static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// When `path` already exists, its permissions are carried onto the
 /// replacement (Unix); a brand-new file keeps the umask default.
-pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let dir = match path.parent() {
         Some(p) if !p.as_os_str().is_empty() => p,
         _ => Path::new("."),

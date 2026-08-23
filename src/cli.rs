@@ -17,7 +17,7 @@ use crate::marker::{self, Decoded};
 /// `[[rr:AD-3]]`. What each does for a user is `[[rr:help_text]]`, which
 /// prints it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Subcommand {
+pub(crate) enum Subcommand {
     Index,
     Read,
     At,
@@ -53,7 +53,7 @@ impl Subcommand {
 /// any other token already is a bare anchor. `Err` is a token that opens
 /// like a marker but is not one: the user meant a marker, so it is a usage
 /// error rather than a silent reparse.
-pub fn parse_reference(token: &str) -> Result<String, String> {
+pub(crate) fn parse_reference(token: &str) -> Result<String, String> {
     match marker::decode(token) {
         Decoded::Bare => Ok(token.to_string()),
         Decoded::Marker(anchor) => Ok(anchor),
@@ -65,7 +65,7 @@ pub fn parse_reference(token: &str) -> Result<String, String> {
 /// `[[rr:AD-1]]`. `None` when there is no `#` or either side is empty; the
 /// caller tries the whole token as an identity first, so an identity that
 /// itself contains `#` still resolves literally.
-pub fn split_qualifier(anchor: &str) -> Option<(&str, &str)> {
+pub(crate) fn split_qualifier(anchor: &str) -> Option<(&str, &str)> {
     let (path, identity) = anchor.split_once('#')?;
     if path.is_empty() || identity.is_empty() {
         return None;
@@ -75,7 +75,7 @@ pub fn split_qualifier(anchor: &str) -> Option<(&str, &str)> {
 
 /// A "special" mode that short-circuits normal dispatch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Special {
+pub(crate) enum Special {
     Help,
     Version,
 }
@@ -83,7 +83,7 @@ pub enum Special {
 /// Output format for the global `--format` flag `[[rr:AD-4]]`: text by
 /// default, or one `rr-json` envelope per invocation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OutputFormat {
+pub(crate) enum OutputFormat {
     Text,
     Json,
 }
@@ -91,7 +91,7 @@ pub enum OutputFormat {
 /// When to colorize, for the global `--color` flag. Parsed but inert: every
 /// current output is plain text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Color {
+pub(crate) enum Color {
     Auto,
     Always,
     Never,
@@ -100,7 +100,7 @@ pub enum Color {
 /// The low-level, parsed-but-unresolved arguments. Mirrors ripgrep's
 /// `LowArgs`: flags only validate into this struct; commands interpret it.
 #[derive(Clone, Debug)]
-pub struct LowArgs {
+pub(crate) struct LowArgs {
     pub command: Subcommand,
     pub index: Option<OsString>,
     pub format: OutputFormat,
@@ -141,14 +141,14 @@ impl LowArgs {
 }
 
 /// What [`parse`] resolves argv into.
-pub enum ParseOutcome {
+pub(crate) enum ParseOutcome {
     Run(LowArgs),
     Special(Special),
 }
 
 #[derive(Debug)]
-pub enum FlagValue {
-    Switch(bool),
+pub(crate) enum FlagValue {
+    Switch,
     Value(OsString),
 }
 
@@ -156,12 +156,12 @@ impl FlagValue {
     fn into_value(self, long: &str) -> Result<OsString, String> {
         match self {
             FlagValue::Value(v) => Ok(v),
-            FlagValue::Switch(_) => Err(format!("flag --{long} requires a value")),
+            FlagValue::Switch => Err(format!("flag --{long} requires a value")),
         }
     }
 }
 
-pub trait Flag: Sync {
+pub(crate) trait Flag: Sync {
     /// True if the flag is a switch (takes no value).
     fn is_switch(&self) -> bool;
     /// Single-byte short name, if any (e.g. `q` for `-q`).
@@ -170,8 +170,6 @@ pub trait Flag: Sync {
     }
     /// Long name (required), without the leading `--`.
     fn name_long(&self) -> &'static str;
-    /// Documentation category.
-    fn doc_category(&self) -> &'static str;
     /// Empty means shared, the set `[[rr:Shared options]]` lists; on any
     /// other verb a scoped flag is the unknown flag of `[[rr:AD-4]]`. The
     /// same list writes the help prefix, so the two cannot disagree.
@@ -192,9 +190,6 @@ impl Flag for IndexFlag {
     fn name_long(&self) -> &'static str {
         "index"
     }
-    fn doc_category(&self) -> &'static str {
-        "input"
-    }
     fn doc_short(&self) -> &'static str {
         "Path to the index file (default .ref-cache/index)."
     }
@@ -211,9 +206,6 @@ impl Flag for FormatFlag {
     }
     fn name_long(&self) -> &'static str {
         "format"
-    }
-    fn doc_category(&self) -> &'static str {
-        "output"
     }
     fn doc_short(&self) -> &'static str {
         "Output format: text (default) or json."
@@ -236,9 +228,6 @@ impl Flag for ColorFlag {
     }
     fn name_long(&self) -> &'static str {
         "color"
-    }
-    fn doc_category(&self) -> &'static str {
-        "output"
     }
     fn doc_short(&self) -> &'static str {
         "When to colorize: auto (default), always, never."
@@ -263,9 +252,6 @@ impl Flag for NoColorFlag {
     fn name_long(&self) -> &'static str {
         "no-color"
     }
-    fn doc_category(&self) -> &'static str {
-        "output"
-    }
     fn doc_short(&self) -> &'static str {
         "Disable colored output (= --color never)."
     }
@@ -286,9 +272,6 @@ impl Flag for QuietFlag {
     fn name_long(&self) -> &'static str {
         "quiet"
     }
-    fn doc_category(&self) -> &'static str {
-        "logging"
-    }
     fn doc_short(&self) -> &'static str {
         "Suppress the summary line; the answer still prints."
     }
@@ -306,9 +289,6 @@ impl Flag for NoFreshnessFlag {
     fn name_long(&self) -> &'static str {
         "no-freshness"
     }
-    fn doc_category(&self) -> &'static str {
-        "output"
-    }
     fn doc_short(&self) -> &'static str {
         "Skip the staleness check and answer from the index as-is."
     }
@@ -325,9 +305,6 @@ impl Flag for AllFlag {
     }
     fn name_long(&self) -> &'static str {
         "all"
-    }
-    fn doc_category(&self) -> &'static str {
-        "output"
     }
     fn verbs(&self) -> &'static [Subcommand] {
         &[Subcommand::At]
@@ -349,9 +326,6 @@ impl Flag for MentionsFlag {
     fn name_long(&self) -> &'static str {
         "mentions"
     }
-    fn doc_category(&self) -> &'static str {
-        "output"
-    }
     fn verbs(&self) -> &'static [Subcommand] {
         &[Subcommand::Search]
     }
@@ -371,9 +345,6 @@ impl Flag for MarkersFlag {
     }
     fn name_long(&self) -> &'static str {
         "markers"
-    }
-    fn doc_category(&self) -> &'static str {
-        "output"
     }
     fn verbs(&self) -> &'static [Subcommand] {
         &[Subcommand::Search]
@@ -408,7 +379,7 @@ fn lookup_short(ch: char) -> Option<&'static dyn Flag> {
 }
 
 /// `argv` is already stripped of the leading program name.
-pub fn parse(argv: &[OsString]) -> Result<ParseOutcome, String> {
+pub(crate) fn parse(argv: &[OsString]) -> Result<ParseOutcome, String> {
     let mut iter = argv.iter();
     let command = match iter.next() {
         None => return Err("no command given (try 'index' or 'read')".to_string()),
@@ -473,7 +444,7 @@ fn take_value(
         if inline.is_some() {
             return Err(format!("flag --{name} is a switch and takes no value"));
         }
-        Ok(FlagValue::Switch(true))
+        Ok(FlagValue::Switch)
     } else {
         let v = match inline {
             Some(v) => v,
@@ -538,7 +509,7 @@ fn validate(args: &LowArgs) -> Result<(), String> {
 /// of `[[rr:AD-1]]`: the span is the numeric suffix after the last colon, so
 /// a path containing a colon (a Windows drive) keeps its prefix. The line
 /// must be a bare `u64`; `at` takes a single line, never a range.
-pub fn parse_position(s: &str) -> Result<(String, u64), String> {
+pub(crate) fn parse_position(s: &str) -> Result<(String, u64), String> {
     let (file, line) = s
         .rsplit_once(':')
         .ok_or_else(|| format!("expected <file>:<line>, got {s:?}"))?;
@@ -554,7 +525,7 @@ pub fn parse_position(s: &str) -> Result<(String, u64), String> {
 /// The index file to read or write: `--index`, else `REF_INDEX`, else
 /// `.ref-cache/index`.
 /// `[[rr:Shared options]]`
-pub fn index_path(args: &LowArgs) -> OsString {
+pub(crate) fn index_path(args: &LowArgs) -> OsString {
     if let Some(p) = &args.index {
         return p.clone();
     }
@@ -565,7 +536,7 @@ pub fn index_path(args: &LowArgs) -> OsString {
 }
 
 /// Generate `--help` text from the flag registry (`[[rr:Documentation]]`).
-pub fn help_text() -> String {
+pub(crate) fn help_text() -> String {
     let mut out = String::new();
     out.push_str("rr - reference code and prose by stable anchors.\n\n");
     out.push_str("USAGE:\n    rr <command> [options] [args]\n\n");

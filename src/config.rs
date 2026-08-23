@@ -255,6 +255,7 @@ fn unescape(s: &str) -> Result<String, String> {
     Ok(out)
 }
 
+/// `[[rr:Configuration]]`
 pub fn scope_matcher(root: &Path, cfg: &Config) -> Result<ignore::overrides::Override, String> {
     let mut b = ignore::overrides::OverrideBuilder::new(root);
     for glob in &cfg.verify_in_scope {
