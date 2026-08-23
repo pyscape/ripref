@@ -348,16 +348,57 @@ rrtest!(at_json_envelope, |mut dir: Dir, mut cmd: TestCommand| {
     dir.file("guide.md", "# Guide\n\nbody\n");
     cmd.arg("index").assert_exit_code(0);
     let out = cmd.args(["at", "guide.md:2", "--format", "json"]).stdout();
-    assert!(out.contains(r#""format":"rr-json""#), "{out}");
-    assert!(out.contains(r#""version":1"#), "{out}");
-    assert!(out.contains(r#""command":"at""#), "{out}");
-    assert!(out.contains(r#""anchors":[{"anchor":"Guide""#), "{out}");
-    assert!(out.contains(r#""marker":"[[rr:Guide]]""#), "{out}");
-    assert!(
-        out.contains(r#""location":{"file":"guide.md","start_line":1,"end_line":3}"#),
-        "{out}"
+    eqnice!(
+        concat!(
+            r#"{"format":"rr-json","version":1,"command":"at","data":{"anchors":"#,
+            r#"[{"anchor":"Guide","marker":"[[rr:Guide]]","location":"#,
+            r#"{"file":"guide.md","start_line":1,"end_line":3}}]}}"#,
+            "\n"
+        ),
+        out
     );
 });
+
+// [[rr:AD-4#Decision outcome]]
+rrtest!(read_json_envelope, |mut dir: Dir, mut cmd: TestCommand| {
+    dir.file("a.md", "# Alpha\n\nsee [[rr:Beta]] here\n")
+        .file("b.md", "# Beta\n\nsee [[rr:Alpha]] and [[rr:Beta]] too\n");
+    cmd.arg("index").assert_exit_code(0);
+    let out = cmd.args(["read", "Alpha", "--format", "json"]).stdout();
+    eqnice!(
+        concat!(
+            r#"{"format":"rr-json","version":1,"command":"read","data":"#,
+            r#"{"anchor":"Alpha","locations":"#,
+            r#"[{"file":"a.md","start_line":1,"end_line":3}]}}"#,
+            "\n"
+        ),
+        out
+    );
+});
+
+// [[rr:AD-3#Decision outcome]]
+// [[rr:AD-4#Decision outcome]]
+rrtest!(
+    search_json_envelope,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file("a.md", "# Alpha\n\nsee [[rr:Beta]] here\n")
+            .file("b.md", "# Beta\n\nsee [[rr:Alpha]] and [[rr:Beta]] too\n");
+        let out = cmd
+            .args(["search", "--markers", "--format", "json"])
+            .stdout();
+        eqnice!(
+            concat!(
+                r#"{"format":"rr-json","version":1,"command":"search","data":{"matches":["#,
+                r#"{"file":"a.md","line":3,"anchor":"Beta","marker":"[[rr:Beta]]"},"#,
+                r#"{"file":"b.md","line":3,"anchor":"Alpha","marker":"[[rr:Alpha]]"},"#,
+                r#"{"file":"b.md","line":3,"anchor":"Beta","marker":"[[rr:Beta]]"}"#,
+                r#"]}}"#,
+                "\n"
+            ),
+            out
+        );
+    }
+);
 
 rrtest!(
     at_json_not_found_still_emits_envelope,
@@ -483,18 +524,18 @@ rrtest!(
 
         let out = cmd.arg("verify").run();
         assert_eq!(code(&out), 1, "findings are the adverse answer: {out:?}");
-        let s = String::from_utf8_lossy(&out.stdout);
-        for rule in [
-            "malformed marker",
-            "dangling marker",
-            "ambiguous marker",
-            "path-only marker",
-            "bare path:line reference",
-            "stale path mention",
-        ] {
-            assert!(s.contains(rule), "missing {rule:?} in:\n{s}");
-        }
-        assert!(s.contains("7 findings"), "{s}");
+        eqnice!(
+            r#"corpus.md:11: dangling marker: [[rr:no-such-identity-xyzzy]]
+corpus.md:13: ambiguous marker: [[rr:Dup]] resolves to 2 definitions
+corpus.md:15: path-only marker: [[rr:src/lib.rs]]
+corpus.md:17: malformed marker: unterminated [[rr: marker
+corpus.md:19: malformed marker: undefined escape in marker (only \[ \] \\ exist)
+corpus.md:21: bare path:line reference: src/lib.rs
+corpus.md:23: stale path mention: src/no-such-file.rs
+7 findings
+"#,
+            String::from_utf8_lossy(&out.stdout)
+        );
     }
 );
 
@@ -546,11 +587,13 @@ rrtest!(
         cmd.arg("index").assert_exit_code(0);
         let out = cmd.args(["verify", "--format", "json"]).run();
         assert_eq!(code(&out), 1, "{out:?}");
-        let s = String::from_utf8_lossy(&out.stdout);
-        assert!(s.contains(r#""command":"verify""#), "{s}");
-        assert!(
-            s.contains(r#""findings":[{"file":"a.md","line":1,"rule":"dangling marker"}]"#),
-            "{s}"
+        eqnice!(
+            concat!(
+                r#"{"format":"rr-json","version":1,"command":"verify","data":"#,
+                r#"{"findings":[{"file":"a.md","line":1,"rule":"dangling marker"}]}}"#,
+                "\n"
+            ),
+            String::from_utf8_lossy(&out.stdout)
         );
     }
 );
@@ -1063,18 +1106,22 @@ rrtest!(
         assert_eq!(code(&h), 0);
         let text = String::from_utf8_lossy(&h.stdout).into_owned();
         assert!(text.contains("USAGE"));
-        for verb in ["index", "read", "at", "search", "verify"] {
-            assert!(
-                text.contains(&format!("\n    {verb} ")),
-                "help missing {verb}:\n{text}"
-            );
-        }
-        for gone in ["cite", "track", "uncite", "untrack", "enforce"] {
-            assert!(
-                !text.contains(&format!("\n    {gone} ")),
-                "help must not advertise {gone}:\n{text}"
-            );
-        }
+        let commands = text
+            .split_once("COMMANDS:\n")
+            .and_then(|(_, rest)| rest.split_once("\nOPTIONS:"))
+            .unwrap_or_else(|| panic!("no COMMANDS block in:\n{text}"))
+            .0;
+        eqnice!(
+            r#"    index    Build / refresh the index from the working tree (the only writer)
+    read     Resolve a marker or bare anchor to its definition locations
+    at       Print the marker covering a file:line (--all: the whole nest)
+    search [<anchor>|--markers|--mentions] [<path>...]
+             List the markers scoped text writes, or the path mentions
+    verify [<path>...]
+             Judge references in scoped text; findings exit 1
+"#,
+            commands
+        );
     }
 );
 

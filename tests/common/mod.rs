@@ -179,6 +179,21 @@ pub fn code(out: &Output) -> i32 {
 ///     cmd.arg("index").assert_exit_code(0);
 /// });
 /// ```
+/// Whole-output equality that prints both sides as they were printed.
+/// `assert_eq!` renders a multi-line output as one escaped line, which is
+/// unreadable for a whole stdout. Named after ripgrep's helper of the same
+/// name.
+#[macro_export]
+macro_rules! eqnice {
+    ($expected:expr, $got:expr) => {{
+        let expected = &*$expected;
+        let got = &*$got;
+        if expected != got {
+            panic!("printed outputs differ!\n\nexpected:\n---\n{expected}\n---\n\ngot:\n---\n{got}\n---\n");
+        }
+    }};
+}
+
 #[macro_export]
 macro_rules! rrtest {
     ($name:ident, $fun:expr) => {
