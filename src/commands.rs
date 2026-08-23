@@ -1,7 +1,7 @@
 /*!
-Command implementations for the five verbs of `[[rr:AD-3]]`: the single
-writer (`index`), the index readers (`read`, `at`), the lexical lister
-(`search`), and the gate (`verify`).
+Command implementations for four of the five verbs of `[[rr:AD-3]]`: the
+single writer (`index`), the index readers (`read`, `at`), and the lexical
+lister (`search`). The gate is [`crate::verify`].
 
 Each returns `Ok(exit_code)` for a normal outcome (including adverse and
 stale, which are non-zero but not errors) or `Err(message)` for a
@@ -10,8 +10,6 @@ codes follow `[[rr:AD-4]]`.
 */
 
 use std::collections::HashSet;
-use std::fmt::Write as _;
-use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use memmap2::Mmap;
@@ -21,8 +19,8 @@ use crate::cli::{self, LowArgs, OutputFormat};
 use crate::config;
 use crate::exit;
 use crate::indexer;
-use crate::marker;
 use crate::messages;
+use crate::output::{at_json, at_text, emit, envelope, push_json_str, push_location, SearchSink};
 use crate::refidx::{self, AnchorHit, Location, Reader};
 use crate::scan::{self, What};
 
@@ -75,7 +73,7 @@ pub(crate) fn run_index(args: &LowArgs) -> Result<u8, String> {
 
 /// The `Reader` borrows the mmap, so it cannot be returned past its backing
 /// buffer; a closure keeps both alive for the call.
-fn with_fresh_reader<F>(
+pub(crate) fn with_fresh_reader<F>(
     index_path: &Path,
     root: &Path,
     skip_freshness: bool,
@@ -143,7 +141,7 @@ fn parse_all<'a>(locs: Vec<&'a str>) -> Vec<Location<'a>> {
 }
 
 /// `[[rr:AD-6#Decision outcome]]`
-fn resolve<'a>(reader: &Reader<'a>, anchor: &str) -> Vec<Location<'a>> {
+pub(crate) fn resolve<'a>(reader: &Reader<'a>, anchor: &str) -> Vec<Location<'a>> {
     let direct = parse_all(reader.forward_lookup(anchor));
     if !direct.is_empty() {
         return direct;
@@ -319,46 +317,14 @@ pub(crate) fn run_at(args: &LowArgs) -> Result<u8, String> {
     })
 }
 
-/// Text rendering for `rr at`: one marker per line, the document form a
-/// person pastes `[[rr:AD-4]]`. Returned rather than printed so it is
-/// unit-testable; `run_at` does the I/O.
-fn at_text(forms: &[(String, &AnchorHit)]) -> String {
-    forms
-        .iter()
-        .map(|(form, _)| marker::wrap(form))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-/// JSON `data` for `rr at`
-/// (`[[rr:AD-4#Decision outcome]]`). Returned (not
-/// printed) so the exact document can be asserted in tests.
-fn at_json(forms: &[(String, &AnchorHit)]) -> String {
-    let mut out = String::from(r#"{"anchors":["#);
-    for (i, (form, hit)) in forms.iter().enumerate() {
-        if i > 0 {
-            out.push(',');
-        }
-        out.push_str("{\"anchor\":");
-        push_json_str(&mut out, form);
-        out.push_str(",\"marker\":");
-        push_json_str(&mut out, &marker::wrap(form));
-        out.push_str(",\"location\":");
-        push_location(&mut out, &hit.file, hit.start_line, hit.end_line);
-        out.push('}');
-    }
-    out.push_str("]}");
-    out
-}
-
-struct ScopedFile {
-    rel: String,
-    content: String,
-    host: scan::Host,
+pub(crate) struct ScopedFile {
+    pub rel: String,
+    pub content: String,
+    pub host: scan::Host,
 }
 
 /// `[[rr:AD-3]]`, shown to a user in `[[rr:Quick examples]]`.
-fn scoped_files(
+pub(crate) fn scoped_files(
     root: &Path,
     matcher: &ignore::overrides::Override,
     cfg: &config::Config,
@@ -480,7 +446,7 @@ pub(crate) fn run_search(args: &LowArgs) -> Result<u8, String> {
             }
         }
     }
-    let count = sink.count;
+    let count = sink.count();
     let body = sink.finish();
 
     let code = if count > 0 { exit::OK } else { exit::ADVERSE };
@@ -501,74 +467,6 @@ pub(crate) fn run_search(args: &LowArgs) -> Result<u8, String> {
     })
 }
 
-/// `[[rr:AD-4#Decision outcome]]`
-struct SearchSink {
-    buf: String,
-    json: bool,
-    count: usize,
-}
-
-impl SearchSink {
-    fn new(format: OutputFormat) -> Self {
-        let json = format == OutputFormat::Json;
-        let mut buf = String::new();
-        if json {
-            buf.push_str(r#"{"matches":["#);
-        }
-        Self {
-            buf,
-            json,
-            count: 0,
-        }
-    }
-
-    fn marker(&mut self, rel: &str, line: u64, anchor: &str, raw: &str) {
-        if self.json {
-            self.open(rel, line);
-            self.buf.push_str(",\"anchor\":");
-            push_json_str(&mut self.buf, anchor);
-            self.buf.push_str(",\"marker\":");
-            push_json_str(&mut self.buf, raw);
-            self.buf.push('}');
-        } else {
-            self.text(rel, line, raw);
-        }
-        self.count += 1;
-    }
-
-    fn mention(&mut self, rel: &str, line: u64, token: &str) {
-        if self.json {
-            self.open(rel, line);
-            self.buf.push_str(",\"mention\":");
-            push_json_str(&mut self.buf, token);
-            self.buf.push('}');
-        } else {
-            self.text(rel, line, token);
-        }
-        self.count += 1;
-    }
-
-    fn open(&mut self, rel: &str, line: u64) {
-        if self.count > 0 {
-            self.buf.push(',');
-        }
-        self.buf.push_str("{\"file\":");
-        push_json_str(&mut self.buf, rel);
-        write!(self.buf, ",\"line\":{line}").expect("a String never fails to write");
-    }
-
-    fn text(&mut self, rel: &str, line: u64, what: &str) {
-        writeln!(self.buf, "{rel}:{line}: {what}").expect("a String never fails to write");
-    }
-
-    fn finish(mut self) -> String {
-        if self.json {
-            self.buf.push_str("]}");
-        }
-        self.buf
-    }
-}
-
 /// Whether a search filter matches a decoded marker anchor: an unqualified
 /// argument matches every marker whose identity equals it, path-qualified or
 /// not; a qualified argument matches exactly `[[rr:AD-3]]`.
@@ -584,318 +482,9 @@ fn filter_matches(want: &str, anchor: &str) -> bool {
     false
 }
 
-/// One of the six finding kinds of `[[rr:AD-3]]`, selected by the name a
-/// profile writes in `[[rr:Configuration]]`, beside the text a person reads.
-#[derive(Clone, Copy)]
-struct Rule {
-    name: &'static str,
-    text: &'static str,
-}
-
-const MALFORMED: Rule = Rule {
-    name: "malformed-marker",
-    text: "malformed marker",
-};
-const DANGLING: Rule = Rule {
-    name: "dangling-marker",
-    text: "dangling marker",
-};
-const AMBIGUOUS: Rule = Rule {
-    name: "ambiguous-marker",
-    text: "ambiguous marker",
-};
-const PATH_ONLY: Rule = Rule {
-    name: "path-only-marker",
-    text: "path-only marker",
-};
-const PATH_LINE: Rule = Rule {
-    name: "path-line",
-    text: "bare path:line reference",
-};
-const STALE_MENTION: Rule = Rule {
-    name: "stale-mention",
-    text: "stale path mention",
-};
-const RULES: &[Rule] = &[
-    MALFORMED,
-    DANGLING,
-    AMBIGUOUS,
-    PATH_ONLY,
-    PATH_LINE,
-    STALE_MENTION,
-];
-
-/// One `verify` finding.
-struct Finding {
-    file: String,
-    line: u64,
-    rule: Rule,
-    detail: String,
-}
-
-/// `[[rr:help_text]]`, reporting the six kinds of `[[rr:AD-3]]`. Resolution
-/// judgments need the index, so a stale index exits 3 rather than judging
-/// from stale data; mention judgments run against the live tree.
-pub(crate) fn run_verify(args: &LowArgs) -> Result<u8, String> {
-    let root = Path::new(".");
-    let index_path = PathBuf::from(cli::index_path(args));
-    let cfg = config::load(root)?;
-    let matcher = config::scope_matcher(root, &cfg)?;
-    let paths: Vec<String> = args
-        .positional
-        .iter()
-        .map(|p| p.to_string_lossy().into_owned())
-        .collect();
-    // Before the index is touched, so a typo is a usage error rather than
-    // whatever the index's state would have reported. [[rr:Configuration]]
-    if let Some(unknown) = cfg
-        .verify_rules
-        .iter()
-        .find(|n| !RULES.iter().any(|r| r.name == n.as_str()))
-    {
-        return Err(format!("unknown verify rule: {unknown}"));
-    }
-
-    with_fresh_reader(&index_path, root, args.no_freshness, |reader| {
-        let mut findings: Vec<Finding> = Vec::new();
-        for file in scoped_files(root, &matcher, &cfg, &paths)? {
-            for found in scan::scan(&file.content, file.host) {
-                let (rule, detail) = match &found.what {
-                    What::Malformed { reason } => (MALFORMED, reason.clone()),
-                    What::Marker { raw, anchor } => {
-                        if !anchor.contains('#') && scan::is_path_shaped(anchor) {
-                            (PATH_ONLY, raw.clone())
-                        } else {
-                            match resolve(reader, anchor).len() {
-                                0 => (DANGLING, raw.clone()),
-                                1 => continue,
-                                n => (AMBIGUOUS, format!("{raw} resolves to {n} definitions")),
-                            }
-                        }
-                    }
-                    What::Mention { token, line_ref } => {
-                        // [[rr:AD-5#Decision outcome]]
-                        let first = token.split('/').next().unwrap_or("");
-                        if first.is_empty() || !root.join(first).is_dir() {
-                            continue;
-                        }
-                        if *line_ref {
-                            (PATH_LINE, token.clone())
-                        } else if !root.join(token).exists() {
-                            (STALE_MENTION, token.clone())
-                        } else {
-                            continue;
-                        }
-                    }
-                };
-                if !cfg.verify_rules.iter().any(|n| n == rule.name) {
-                    continue;
-                }
-                findings.push(Finding {
-                    file: file.rel.clone(),
-                    line: found.line,
-                    rule,
-                    detail,
-                });
-            }
-        }
-
-        let code = if findings.is_empty() {
-            exit::OK
-        } else {
-            exit::ADVERSE
-        };
-        emit(code, |w| {
-            if args.format == OutputFormat::Json {
-                let mut data = String::from(r#"{"findings":["#);
-                for (i, f) in findings.iter().enumerate() {
-                    if i > 0 {
-                        data.push(',');
-                    }
-                    data.push_str("{\"file\":");
-                    push_json_str(&mut data, &f.file);
-                    data.push_str(&format!(",\"line\":{}", f.line));
-                    data.push_str(",\"rule\":");
-                    push_json_str(&mut data, f.rule.text);
-                    data.push('}');
-                }
-                data.push_str("]}");
-                writeln!(w, "{}", envelope("verify", &data))
-            } else {
-                for f in &findings {
-                    writeln!(w, "{}:{}: {}: {}", f.file, f.line, f.rule.text, f.detail)?;
-                }
-                if args.quiet {
-                    return Ok(());
-                }
-                writeln!(w, "{} findings", findings.len())
-            }
-        })
-    })
-}
-
-fn emit(code: u8, write: impl FnOnce(&mut dyn Write) -> std::io::Result<()>) -> Result<u8, String> {
-    let stdout = std::io::stdout();
-    emit_to(BufWriter::new(stdout.lock()), code, write)
-}
-
-/// The `pipefail` contract of `[[rr:Shared options]]`: a reader that closed
-/// the pipe has what it asked for, so `BrokenPipe` keeps `code`. Flushed
-/// explicitly because `BufWriter`'s drop discards the error this exists to
-/// catch. Generic over the writer so both branches are reachable without a
-/// real pipe.
-fn emit_to<W: Write>(
-    mut out: W,
-    code: u8,
-    write: impl FnOnce(&mut dyn Write) -> std::io::Result<()>,
-) -> Result<u8, String> {
-    match write(&mut out).and_then(|()| out.flush()) {
-        Ok(()) => Ok(code),
-        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(code),
-        Err(e) => Err(format!("cannot write to stdout: {e}")),
-    }
-}
-
-/// The one `rr-json` envelope every verb prints under `--format json`
-/// `[[rr:AD-4]]`. Hand-rolled because the crate has no serde dependency
-/// and the schema is a hand-written source of truth.
-fn envelope(command: &str, data: &str) -> String {
-    format!(r#"{{"format":"rr-json","version":1,"command":"{command}","data":{data}}}"#)
-}
-
-/// Append a structured location object.
-fn push_location(out: &mut String, file: &str, start: u64, end: u64) {
-    out.push_str("{\"file\":");
-    push_json_str(out, file);
-    out.push_str(&format!(",\"start_line\":{start},\"end_line\":{end}}}"));
-}
-
-/// `[[rr:AD-2#Decision drivers]]`
-fn push_json_str(out: &mut String, s: &str) {
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Fails one operation with one kind, so every `emit_to` branch is
-    /// reachable without a real pipe. `on_flush` writes cleanly and fails
-    /// only at the flush, which is where a buffered error actually surfaces.
-    struct FailingWriter {
-        kind: std::io::ErrorKind,
-        writes_ok: bool,
-    }
-
-    impl FailingWriter {
-        fn on_write(kind: std::io::ErrorKind) -> Self {
-            FailingWriter {
-                kind,
-                writes_ok: false,
-            }
-        }
-        fn on_flush(kind: std::io::ErrorKind) -> Self {
-            FailingWriter {
-                kind,
-                writes_ok: true,
-            }
-        }
-    }
-
-    impl Write for FailingWriter {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            if self.writes_ok {
-                Ok(buf.len())
-            } else {
-                Err(std::io::Error::from(self.kind))
-            }
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Err(std::io::Error::from(self.kind))
-        }
-    }
-
-    #[test]
-    fn emit_keeps_the_code_on_broken_pipe_and_errors_otherwise() {
-        use std::io::ErrorKind::{BrokenPipe, PermissionDenied};
-
-        let mut sink = Vec::new();
-        assert_eq!(
-            emit_to(&mut sink, exit::ADVERSE, |w| writeln!(w, "one")),
-            Ok(exit::ADVERSE),
-            "the answer's code survives a whole write"
-        );
-        assert_eq!(sink, b"one\n");
-
-        for hung_up in [
-            FailingWriter::on_write(BrokenPipe),
-            FailingWriter::on_flush(BrokenPipe),
-        ] {
-            assert_eq!(
-                emit_to(hung_up, exit::ADVERSE, |w| writeln!(w, "one")),
-                Ok(exit::ADVERSE),
-                "a reader that stopped reading still got its answer"
-            );
-        }
-
-        for refused in [
-            FailingWriter::on_write(PermissionDenied),
-            FailingWriter::on_flush(PermissionDenied),
-        ] {
-            let err = emit_to(refused, exit::ADVERSE, |w| writeln!(w, "one"));
-            assert!(err.is_err(), "any other kind is a real failure: {err:?}");
-        }
-    }
-
-    fn hit(anchor: &str, file: &str, start_line: u64, end_line: u64) -> AnchorHit {
-        AnchorHit {
-            anchor: anchor.to_string(),
-            file: file.to_string(),
-            start_line,
-            end_line,
-        }
-    }
-
-    #[test]
-    fn at_text_wraps_each_form() {
-        let a = hit("Guide", "docs/guide.md", 1, 40);
-        let b = hit("Configuration", "docs/guide.md", 12, 30);
-        let forms = vec![
-            ("Guide".to_string(), &a),
-            ("docs/guide.md#Configuration".to_string(), &b),
-        ];
-        assert_eq!(
-            at_text(&forms),
-            "[[rr:Guide]]\n[[rr:docs/guide.md#Configuration]]"
-        );
-    }
-
-    #[test]
-    fn at_json_is_an_anchors_list() {
-        let h = hit("handle_request", "src/handlers.py", 8, 30);
-        let forms = vec![("handle_request".to_string(), &h)];
-        assert_eq!(
-            envelope("at", &at_json(&forms)),
-            r#"{"format":"rr-json","version":1,"command":"at","data":{"anchors":[{"anchor":"handle_request","marker":"[[rr:handle_request]]","location":{"file":"src/handlers.py","start_line":8,"end_line":30}}]}}"#
-        );
-    }
-
-    #[test]
-    fn at_json_empty_list_still_shapes() {
-        assert_eq!(at_json(&[]), r#"{"anchors":[]}"#);
-    }
 
     #[test]
     fn filter_matches_identity_through_qualifier() {
@@ -913,40 +502,5 @@ mod tests {
             "parse_reference"
         ));
         assert!(!filter_matches("other", "src/cli.rs#parse_reference"));
-    }
-
-    #[test]
-    fn push_json_str_escapes_quotes_backslashes_and_controls() {
-        let mut quoted = String::new();
-        push_json_str(&mut quoted, r#"a"b\c"#);
-        assert_eq!(quoted, r#""a\"b\\c""#);
-
-        let mut whitespace = String::new();
-        push_json_str(&mut whitespace, "tab\tnl\n");
-        assert_eq!(whitespace, r#""tab\tnl\n""#);
-
-        let mut control = String::new();
-        push_json_str(&mut control, "\u{1}");
-        assert!(
-            control.contains("u0001"),
-            "control char should escape: {control}"
-        );
-        assert!(
-            !control.contains(char::from_u32(1).unwrap()),
-            "raw control byte must not survive"
-        );
-    }
-
-    #[test]
-    fn at_json_escapes_anchor_text() {
-        // [[rr:AD-2#Decision drivers]]
-        let h = hit(r#"x.feature#say "hi""#, "x.feature", 3, 3);
-        let forms = vec![(h.anchor.clone(), &h)];
-        let doc = at_json(&forms);
-        assert!(doc.contains(r#""anchor":"x.feature#say \"hi\"""#), "{doc}");
-        assert!(
-            doc.contains(r#""marker":"[[rr:x.feature#say \"hi\"]]""#),
-            "{doc}"
-        );
     }
 }

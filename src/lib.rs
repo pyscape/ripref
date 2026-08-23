@@ -26,8 +26,10 @@ pub mod config;
 pub mod indexer;
 pub(crate) mod languages;
 pub mod marker;
+pub(crate) mod output;
 pub mod refidx;
 pub(crate) mod scan;
+pub(crate) mod verify;
 
 use cli::{ParseOutcome, Special, Subcommand};
 
@@ -98,7 +100,7 @@ pub fn run() -> u8 {
         Subcommand::Read => commands::run_read(&args),
         Subcommand::At => commands::run_at(&args),
         Subcommand::Search => commands::run_search(&args),
-        Subcommand::Verify => commands::run_verify(&args),
+        Subcommand::Verify => verify::run_verify(&args),
     };
 
     match result {
