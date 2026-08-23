@@ -39,12 +39,10 @@ type FileRecords = (Vec<ForwardEntry>, Vec<MentionEntry>, String);
 /// order), but it need not be: [`crate::refidx::serialize`] sorts to a total
 /// order, so the on-disk image is identical regardless of the order records
 /// arrive in.
-pub fn build(
-    root: &Path,
-    index_path: &Path,
-    scope: &Override,
-    cfg: &config::Config,
-) -> std::io::Result<IndexData> {
+///
+/// Reports a failed read or walk entry rather than returning one
+/// (`[[rr:error]]`).
+pub fn build(root: &Path, index_path: &Path, scope: &Override, cfg: &config::Config) -> IndexData {
     let index_rel = index_path
         .strip_prefix(root)
         .unwrap_or(index_path)
@@ -157,13 +155,13 @@ pub fn build(
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    Ok(IndexData {
+    IndexData {
         mtime,
         tree: git_tree(root),
         forward,
         mentions,
         paths,
-    })
+    }
 }
 
 /// `[[rr:AD-1#Decision outcome]]`

@@ -66,7 +66,7 @@ fn bench_build(c: &mut Criterion) {
         // expected count while a dead grammar (near-zero anchors) fails loudly
         // instead of timing nothing meaningful. Mirrors grammar_loader's
         // native/wasm guard.
-        let data = indexer::build(&root, &index_path, &scope, &cfg).unwrap();
+        let data = indexer::build(&root, &index_path, &scope, &cfg);
         assert!(
             data.forward.len() >= n * 5,
             "corpus at scale {n} extracted only {} anchors (< {}); language extraction is broken",
@@ -76,7 +76,7 @@ fn bench_build(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements(n as u64));
         group.bench_with_input(BenchmarkId::new("build", n), &n, |b, _| {
-            b.iter(|| black_box(indexer::build(&root, &index_path, &scope, &cfg).unwrap()));
+            b.iter(|| black_box(indexer::build(&root, &index_path, &scope, &cfg)));
         });
 
         // build is read-only on the tree, so the measurements above all reused
@@ -96,7 +96,7 @@ fn bench_serialize(c: &mut Criterion) {
         let index_path = index_path_for(&root);
         let cfg = config::load(&root).unwrap();
         let scope = config::scope_matcher(&root, &cfg).unwrap();
-        let data: IndexData = indexer::build(&root, &index_path, &scope, &cfg).unwrap();
+        let data: IndexData = indexer::build(&root, &index_path, &scope, &cfg);
         std::fs::remove_dir_all(&root).ok();
 
         group.throughput(Throughput::Elements(n as u64));

@@ -34,8 +34,7 @@ pub(crate) fn run_index(args: &LowArgs) -> Result<u8, String> {
     let cfg = config::load(root)?;
     let scope = config::scope_matcher(root, &cfg)?;
 
-    let data = indexer::build(root, &index_path, &scope, &cfg)
-        .map_err(|e| format!("failed to walk the working tree: {e}"))?;
+    let data = indexer::build(root, &index_path, &scope, &cfg);
     let bytes = refidx::serialize(&data);
 
     if let Some(parent) = index_path.parent() {
