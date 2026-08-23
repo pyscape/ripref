@@ -1099,8 +1099,6 @@ fn commit_all(dir: &Dir, msg: &str) {
     git(dir, &["commit", "-q", "-m", msg]);
 }
 
-// A read that fails for any reason but absence is reported, and the run
-// answers 2 rather than answering from what it could read.
 rrtest!(
     an_unreadable_project_profile_is_not_an_absent_one,
     |mut dir: Dir, mut cmd: TestCommand| {
@@ -1129,7 +1127,7 @@ rrtest!(
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert_eq!(code(&out), 2, "{out:?}");
         assert!(stderr.contains("locked.md"), "{out:?}");
-        // One read per file, so one line, not one per half of the walk.
+        // Anchors and mentions are two halves of one walk over one read.
         assert_eq!(stderr.matches("locked.md").count(), 1, "{out:?}");
 
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644)).unwrap();

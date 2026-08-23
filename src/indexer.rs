@@ -88,8 +88,7 @@ pub fn build(
             let mut mentions = Vec::new();
             let language = languages::for_extension(ext);
             let in_scope = config::in_scope(scope, &rel_path);
-            // One read feeds both halves, so a file that is anchored and in
-            // scope is neither read twice nor reported twice.
+            // One read feeds both halves, so a failure is reported once.
             if language.is_some() || in_scope {
                 match std::fs::read_to_string(dent.path()) {
                     Ok(content) => {
@@ -110,8 +109,8 @@ pub fn build(
                             }
                         }
                     }
-                    // Not valid UTF-8 is a binary file, which is simply not
-                    // scoped text.
+                    // A binary file fails as InvalidData: nothing to anchor,
+                    // and not scoped text.
                     Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {}
                     Err(e) => messages::error(format_args!("{rel_path}: {e}")),
                 }

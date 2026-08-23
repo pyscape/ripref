@@ -38,9 +38,9 @@ pub mod exit {
     pub const STALE: u8 = 3;
 }
 
-/// A non-fatal failure prints here and flips a flag `run` reads once the
-/// walk is over, so one unreadable file neither aborts the run nor passes
-/// unreported. Mirrors ripgrep's `messages::set_errored`.
+/// A non-fatal failure prints here and flips a flag, so one unreadable file
+/// neither aborts the run nor passes unreported. Mirrors ripgrep's
+/// `messages::set_errored`.
 pub mod messages {
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -84,8 +84,9 @@ pub fn run() -> u8 {
     };
 
     match result {
-        // A stale index is its own answer and keeps saying so; anything else
-        // yields to a failure the run already reported.
+        // [[rr:AD-4#Decision outcome]]
+        // A stale index is its own answer; every other code yields to a
+        // failure the run already reported.
         Ok(exit::STALE) => exit::STALE,
         Ok(_) if messages::errored() => exit::USAGE,
         Ok(code) => code,

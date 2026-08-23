@@ -40,8 +40,8 @@ pub fn load(root: &Path) -> Result<Config, String> {
     apply(DEFAULTS, &mut cfg).map_err(|e| format!("built-in rr.toml: {e}"))?;
     match std::fs::read_to_string(root.join(".rr.toml")) {
         Ok(text) => apply(&text, &mut cfg).map_err(|e| format!(".rr.toml: {e}"))?,
-        // Absent is the normal case; unreadable would silently drop the
-        // project layer and answer from the defaults instead.
+        // Unreadable would otherwise drop the project layer in silence and
+        // answer from the defaults.
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(format!(".rr.toml: {e}")),
     }

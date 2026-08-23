@@ -431,8 +431,7 @@ fn scoped_files(
         }
         let content = match std::fs::read_to_string(dent.path()) {
             Ok(content) => content,
-            // Not valid UTF-8 is a binary file, which is simply not scoped
-            // text; anything else is a failure to read text that is.
+            // A binary file fails as InvalidData, and is not scoped text.
             Err(e) if e.kind() == std::io::ErrorKind::InvalidData => continue,
             Err(e) => {
                 messages::error(format_args!("{rel}: {e}"));

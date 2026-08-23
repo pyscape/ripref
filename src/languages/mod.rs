@@ -85,7 +85,7 @@ struct Capture {
 
 impl Language {
     /// One [`ForwardEntry`] per anchor. A parse failure yields an empty
-    /// result rather than a panic; the caller owns the read.
+    /// result rather than a panic.
     pub fn extract_from_str(&self, rel_path: &str, content: &str) -> Vec<ForwardEntry> {
         let captures = match self.titles {
             Some(titles) => titles(content)
