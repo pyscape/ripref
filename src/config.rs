@@ -50,8 +50,9 @@ pub fn load(root: &Path) -> Result<Config, String> {
 
 fn apply(text: &str, cfg: &mut Config) -> Result<(), String> {
     let mut section = String::new();
-    let mut lines = text.lines();
-    while let Some(line) = lines.next() {
+    let mut lines = text.lines().enumerate();
+    while let Some((idx, line)) = lines.next() {
+        let lineno = idx + 1;
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
@@ -75,13 +76,17 @@ fn apply(text: &str, cfg: &mut Config) -> Result<(), String> {
             // A truncated value reads as a deliberately short list, so it
             // is rejected like an unknown name. [[rr:Configuration]]
             if quote != Quote::Outside {
-                return Err(format!("unterminated string in value for {key:?}"));
+                return Err(format!(
+                    "line {lineno}: unterminated string in value for {key:?}"
+                ));
             }
             if depth <= 0 {
                 break;
             }
-            let Some(next) = lines.next() else {
-                return Err(format!("unterminated array in value for {key:?}"));
+            let Some((_, next)) = lines.next() else {
+                return Err(format!(
+                    "line {lineno}: unterminated array in value for {key:?}"
+                ));
             };
             value.push(' ');
             value.push_str(strip_comment(next).trim());
@@ -409,6 +414,22 @@ mod tests {
 
         let err = apply("[verify]\nrules = [\n  \"path-line\",\n", &mut blank()).unwrap_err();
         assert!(err.contains("unterminated array"), "{err}");
+    }
+
+    #[test]
+    fn an_error_names_the_line_the_key_is_on() {
+        let mut cfg = Config {
+            verify_in_scope: Vec::new(),
+            verify_exclude: Vec::new(),
+            verify_rules: Vec::new(),
+            scan: Vec::new(),
+        };
+
+        let err = apply("\n# note\n[verify]\nrules = [\"path-line", &mut cfg).unwrap_err();
+        assert_eq!(err, "line 4: unterminated string in value for \"rules\"");
+
+        let err = apply("[verify]\nrules = [\n  \"path-line\",\n", &mut cfg).unwrap_err();
+        assert_eq!(err, "line 2: unterminated array in value for \"rules\"");
     }
 
     #[test]
