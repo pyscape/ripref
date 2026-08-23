@@ -324,6 +324,42 @@ pub(crate) struct ScopedFile {
 }
 
 /// `[[rr:AD-3]]`, shown to a user in `[[rr:Quick examples]]`.
+/// Never asks the filesystem, so a named symlink keeps the spelling the
+/// caller wrote rather than its target's. `None` when the path climbs past
+/// the root: that is the bound check.
+fn normalize_lexically(rel: &str) -> Option<String> {
+    let mut parts: Vec<&str> = Vec::new();
+    for part in rel.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            part => parts.push(part),
+        }
+    }
+    Some(parts.join("/"))
+}
+
+/// Only the directory chain is resolved, because `/tmp` and `/private/tmp`
+/// must meet; the last component keeps its name, so a symlinked file still
+/// reports as itself.
+fn absolute_to_tree_path(given: &str, root_abs: &Path) -> Result<String, String> {
+    let path = Path::new(given);
+    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+        return Err(format!("outside the tree: {given}"));
+    };
+    let parent = parent
+        .canonicalize()
+        .map_err(|e| format!("cannot read {given}: {e}"))?;
+    Ok(parent
+        .join(name)
+        .strip_prefix(root_abs)
+        .map_err(|_| format!("outside the tree: {given}"))?
+        .to_string_lossy()
+        .replace('\\', "/"))
+}
+
 pub(crate) fn scoped_files(
     root: &Path,
     matcher: &ignore::overrides::Override,
@@ -338,20 +374,17 @@ pub(crate) fn scoped_files(
         let mut seen = HashSet::new();
         for raw in paths {
             let given = raw.replace('\\', "/");
-            let abs = root.join(&given);
+            let named = if Path::new(&given).is_absolute() {
+                absolute_to_tree_path(&given, &root_abs)?
+            } else {
+                given.clone()
+            };
+            let rel =
+                normalize_lexically(&named).ok_or_else(|| format!("outside the tree: {given}"))?;
+            let abs = root.join(&rel);
             if !abs.is_file() {
                 return Err(format!("not a file: {given}"));
             }
-            // Canonicalize to fold away `./` and `..` before the bound check,
-            // so no spelling of a path reaches past the root.
-            let abs = abs
-                .canonicalize()
-                .map_err(|e| format!("cannot read {given}: {e}"))?;
-            let rel = abs
-                .strip_prefix(&root_abs)
-                .map_err(|_| format!("outside the tree: {given}"))?
-                .to_string_lossy()
-                .replace('\\', "/");
             if !seen.insert(rel.clone()) {
                 continue;
             }
@@ -485,6 +518,16 @@ fn filter_matches(want: &str, anchor: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalize_lexically_folds_dots_and_bounds_at_the_root() {
+        assert_eq!(normalize_lexically("a.md").unwrap(), "a.md");
+        assert_eq!(normalize_lexically("./a.md").unwrap(), "a.md");
+        assert_eq!(normalize_lexically("d/../a.md").unwrap(), "a.md");
+        assert_eq!(normalize_lexically("d//e/./f.md").unwrap(), "d/e/f.md");
+        assert!(normalize_lexically("../a.md").is_none());
+        assert!(normalize_lexically("d/../../a.md").is_none());
+    }
 
     #[test]
     fn filter_matches_identity_through_qualifier() {

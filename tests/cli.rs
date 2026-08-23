@@ -763,6 +763,38 @@ rrtest!(
     }
 );
 
+// A named path is the caller's spelling, not the filesystem's answer about it.
+#[cfg(unix)]
+rrtest!(
+    a_named_symlink_is_judged_under_the_name_given,
+    |mut dir: Dir, mut cmd: TestCommand| {
+        dir.file("real.md", "a dangling [[rr:nope]] here\n");
+        let outside = dir.path().with_extension("away.md");
+        std::fs::write(&outside, "a dangling [[rr:gone]] here\n").unwrap();
+        std::os::unix::fs::symlink(dir.path().join("real.md"), dir.path().join("alias.md"))
+            .unwrap();
+        std::os::unix::fs::symlink(&outside, dir.path().join("escape.md")).unwrap();
+        cmd.arg("index").assert_exit_code(0);
+
+        let out = cmd.args(["verify", "alias.md"]).run();
+        eqnice!(
+            "alias.md:1: dangling marker: [[rr:nope]]\n1 findings\n",
+            String::from_utf8_lossy(&out.stdout)
+        );
+
+        // The name is in the tree, so the gate reads it, wherever the
+        // target lives.
+        let out = cmd.args(["verify", "escape.md"]).run();
+        assert_eq!(code(&out), 1, "{out:?}");
+        eqnice!(
+            "escape.md:1: dangling marker: [[rr:gone]]\n1 findings\n",
+            String::from_utf8_lossy(&out.stdout)
+        );
+
+        std::fs::remove_file(&outside).unwrap();
+    }
+);
+
 // --- the scenario kind -----------------------------------------------------------
 
 // [[rr:AD-1]]
