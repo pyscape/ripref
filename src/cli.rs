@@ -176,6 +176,18 @@ pub(crate) trait Flag: Sync {
     fn verbs(&self) -> &'static [Subcommand] {
         &[]
     }
+    /// Spelling that negates this flag, without the leading `--`. The
+    /// negated name takes no value whatever the flag's own arity, and reaches
+    /// `update` as `FlagValue::Switch`.
+    fn name_negated(&self) -> Option<&'static str> {
+        None
+    }
+    /// Accepted values, the default first; empty for a switch or a
+    /// free-form value. The same list writes the help clause and the
+    /// rejection message, so the two cannot disagree.
+    fn doc_choices(&self) -> &'static [&'static str] {
+        &[]
+    }
     /// Terse one-line help string, without the verb prefix `verbs` writes.
     fn doc_short(&self) -> &'static str;
     /// Fold a parsed value into the low-level args.
@@ -207,20 +219,18 @@ impl Flag for FormatFlag {
     fn name_long(&self) -> &'static str {
         "format"
     }
+    fn doc_choices(&self) -> &'static [&'static str] {
+        &["text", "json"]
+    }
     fn doc_short(&self) -> &'static str {
-        "Output format: text (default) or json."
+        "Output format."
     }
     fn update(&self, value: FlagValue, args: &mut LowArgs) -> Result<(), String> {
         let v = value.into_value(self.name_long())?;
         args.format = match v.to_str() {
             Some("text") => OutputFormat::Text,
             Some("json") => OutputFormat::Json,
-            _ => {
-                return Err(format!(
-                    "--format expects 'text' or 'json', got '{}'",
-                    v.to_string_lossy()
-                ))
-            }
+            _ => return Err(expected_one_of(self.name_long(), self.doc_choices(), &v)),
         };
         Ok(())
     }
@@ -234,39 +244,30 @@ impl Flag for ColorFlag {
     fn name_long(&self) -> &'static str {
         "color"
     }
+    /// `[[rr:Shared options]]`
+    fn name_negated(&self) -> Option<&'static str> {
+        Some("no-color")
+    }
+    fn doc_choices(&self) -> &'static [&'static str] {
+        &["auto", "always", "never"]
+    }
     fn doc_short(&self) -> &'static str {
-        "When to colorize: auto (default), always, never."
+        "When to colorize."
     }
     fn update(&self, value: FlagValue, args: &mut LowArgs) -> Result<(), String> {
-        let v = value.into_value(self.name_long())?;
+        let v = match value {
+            FlagValue::Switch => {
+                args.color = Color::Never;
+                return Ok(());
+            }
+            FlagValue::Value(v) => v,
+        };
         args.color = match v.to_str() {
             Some("auto") => Color::Auto,
             Some("always") => Color::Always,
             Some("never") => Color::Never,
-            _ => {
-                return Err(format!(
-                    "--color expects 'auto', 'always', or 'never', got '{}'",
-                    v.to_string_lossy()
-                ))
-            }
+            _ => return Err(expected_one_of(self.name_long(), self.doc_choices(), &v)),
         };
-        Ok(())
-    }
-}
-
-struct NoColorFlag;
-impl Flag for NoColorFlag {
-    fn is_switch(&self) -> bool {
-        true
-    }
-    fn name_long(&self) -> &'static str {
-        "no-color"
-    }
-    fn doc_short(&self) -> &'static str {
-        "Disable colored output (= --color never)."
-    }
-    fn update(&self, _value: FlagValue, args: &mut LowArgs) -> Result<(), String> {
-        args.color = Color::Never;
         Ok(())
     }
 }
@@ -372,7 +373,6 @@ static FLAGS: &[&dyn Flag] = &[
     &IndexFlag,
     &FormatFlag,
     &ColorFlag,
-    &NoColorFlag,
     &QuietFlag,
     &NoFreshnessFlag,
     &AllFlag,
@@ -381,7 +381,21 @@ static FLAGS: &[&dyn Flag] = &[
 ];
 
 fn lookup_long(name: &str) -> Option<&'static dyn Flag> {
-    FLAGS.iter().copied().find(|f| f.name_long() == name)
+    FLAGS
+        .iter()
+        .copied()
+        .find(|f| f.name_long() == name || f.name_negated() == Some(name))
+}
+
+fn expected_one_of(long: &str, choices: &[&'static str], got: &OsStr) -> String {
+    let quoted: Vec<String> = choices.iter().map(|c| format!("'{c}'")).collect();
+    let list = match quoted.as_slice() {
+        [] => String::new(),
+        [one] => one.clone(),
+        [a, b] => format!("{a} or {b}"),
+        [rest @ .., last] => format!("{}, or {last}", rest.join(", ")),
+    };
+    format!("--{long} expects {list}, got '{}'", got.to_string_lossy())
 }
 
 fn lookup_short(ch: char) -> Option<&'static dyn Flag> {
@@ -421,9 +435,15 @@ pub(crate) fn parse(argv: &[OsString]) -> Result<ParseOutcome, String> {
                 None => (rest, None),
             };
             let flag = lookup_long(name).ok_or_else(|| format!("unknown flag: --{name}"))?;
-            let value = take_value(flag, name, inline, &mut iter)?;
+            // A scope error names the spelling the caller typed, not the one
+            // it negates.
+            let (name, negated) = match flag.name_negated() {
+                Some(negated) if negated == name => (negated, true),
+                _ => (flag.name_long(), false),
+            };
+            let value = take_value(flag, name, negated, inline, &mut iter)?;
             flag.update(value, &mut args)?;
-            args.seen_flags.push(flag.name_long());
+            args.seen_flags.push(name);
         } else if text.starts_with('-') && text != "-" {
             let ch = text.chars().nth(1).unwrap();
             let flag = lookup_short(ch).ok_or_else(|| format!("unknown flag: -{ch}"))?;
@@ -432,7 +452,7 @@ pub(crate) fn parse(argv: &[OsString]) -> Result<ParseOutcome, String> {
             } else {
                 None
             };
-            let value = take_value(flag, flag.name_long(), inline, &mut iter)?;
+            let value = take_value(flag, flag.name_long(), false, inline, &mut iter)?;
             flag.update(value, &mut args)?;
             args.seen_flags.push(flag.name_long());
         } else {
@@ -447,10 +467,11 @@ pub(crate) fn parse(argv: &[OsString]) -> Result<ParseOutcome, String> {
 fn take_value(
     flag: &dyn Flag,
     name: &str,
+    negated: bool,
     inline: Option<OsString>,
     iter: &mut std::slice::Iter<'_, OsString>,
 ) -> Result<FlagValue, String> {
-    if flag.is_switch() {
+    if negated || flag.is_switch() {
         if inline.is_some() {
             return Err(format!("flag --{name} is a switch and takes no value"));
         }
@@ -570,11 +591,31 @@ pub(crate) fn help_text() -> String {
             [] => String::new(),
             verbs => format!("{}: ", verb_list(verbs)),
         };
+        let doc = match flag.doc_choices() {
+            [] => flag.doc_short().to_string(),
+            [default, rest @ ..] => {
+                let mut doc = format!(
+                    "{}: {default} (default)",
+                    flag.doc_short().trim_end_matches('.')
+                );
+                for choice in rest {
+                    doc.push_str(&format!(", {choice}"));
+                }
+                doc.push('.');
+                doc
+            }
+        };
         out.push_str(&format!(
-            "    {short}--{:<12} {scope}{}\n",
-            flag.name_long(),
-            flag.doc_short()
+            "    {short}--{:<12} {scope}{doc}\n",
+            flag.name_long()
         ));
+        if let Some(negated) = flag.name_negated() {
+            out.push_str(&format!(
+                "        --{:<12} {scope}Negate --{}.\n",
+                negated,
+                flag.name_long()
+            ));
+        }
     }
     out.push_str("    -h, --help         Show this help\n");
     out.push_str("    -V, --version      Print version\n");
@@ -718,6 +759,37 @@ mod tests {
             "--format expects 'text' or 'json', got 'xml'",
             "a rejected value is echoed in single quotes, never Debug-quoted"
         );
+        assert_eq!(
+            parse_err(&["index", "--color", "purple"]),
+            "--color expects 'auto', 'always', or 'never', got 'purple'",
+            "three choices take the serial comma"
+        );
+    }
+
+    #[test]
+    fn a_negated_name_is_a_switch_over_its_flag() {
+        assert_eq!(parse_run(&["index", "--no-color"]).color, Color::Never);
+        assert!(parse_err(&["index", "--no-color=never"]).contains("switch"));
+        assert!(
+            parse_err(&["index", "--no-format"]).contains("unknown flag"),
+            "a negated spelling exists only where a flag declares one"
+        );
+        assert_eq!(
+            parse_run(&["index", "--no-color"]).seen_flags,
+            vec!["no-color"],
+            "the spelling as typed, so a scope error can name it"
+        );
+    }
+
+    #[test]
+    fn only_value_flags_declare_a_negated_name() {
+        for flag in FLAGS {
+            assert!(
+                !(flag.is_switch() && flag.name_negated().is_some()),
+                "--{} is a switch: `update` cannot tell its negation apart",
+                flag.name_long()
+            );
+        }
     }
 
     #[test]
@@ -810,6 +882,23 @@ mod tests {
                 "help missing --{}",
                 flag.name_long()
             );
+            for choice in flag.doc_choices() {
+                assert!(
+                    help.contains(choice),
+                    "help missing {choice} for --{}",
+                    flag.name_long()
+                );
+            }
+            if let Some(negated) = flag.name_negated() {
+                assert!(help.contains(negated), "help missing --{negated}");
+            }
+        }
+        assert!(
+            help.contains("auto (default), always, never"),
+            "the choice list writes the clause, defaulting to the first"
+        );
+        for line in help.lines() {
+            assert!(line.len() <= 80, "help line over 80 columns: {line}");
         }
         for verb in ["index", "read", "at", "search", "verify"] {
             assert!(help.contains(verb), "help missing verb {verb}");
