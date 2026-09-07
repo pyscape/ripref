@@ -256,13 +256,13 @@ impl<'a> Reader<'a> {
     /// `[[rr:AD-1#Decision outcome]]`
     pub fn forward_lookup(&self, anchor: &str) -> Vec<&'a str> {
         let slice = self.section("forward");
-        let lines: Vec<&[u8]> = split_records(slice);
         let target = anchor.as_bytes();
-        // Binary search: `forward` records are sorted by the key after
-        // `fwd:`, so the predicate "key < target" is monotonic.
-        let start = lines.partition_point(|l| record_key(l, b"fwd:") < target);
+        let start = lower_bound_record(slice, b"fwd:", target);
         let mut out = Vec::new();
-        for line in &lines[start..] {
+        for line in slice[start..]
+            .split(|&b| b == b'\n')
+            .filter(|line| !line.is_empty())
+        {
             if record_key(line, b"fwd:") != target {
                 break;
             }
@@ -398,6 +398,32 @@ fn record_key<'r>(line: &'r [u8], tag: &[u8]) -> &'r [u8] {
     }
 }
 
+/// Byte offset of the first newline-delimited record whose key is at least
+/// `target`. The section is sorted by key, so inspecting the record around a
+/// byte midpoint preserves binary-search bounds without first materializing a
+/// `Vec` of every record.
+fn lower_bound_record(slice: &[u8], tag: &[u8], target: &[u8]) -> usize {
+    let mut left = 0;
+    let mut right = slice.len();
+    while left < right {
+        let mid = left + (right - left) / 2;
+        let start = slice[..mid]
+            .iter()
+            .rposition(|&b| b == b'\n')
+            .map_or(0, |i| i + 1);
+        let end = slice[mid..]
+            .iter()
+            .position(|&b| b == b'\n')
+            .map_or(slice.len(), |i| mid + i);
+        if record_key(&slice[start..end], tag) < target {
+            left = end.saturating_add(1).min(slice.len());
+        } else {
+            right = start;
+        }
+    }
+    left
+}
+
 /// The value body of a record: everything after the tab.
 fn record_value(line: &[u8]) -> Option<&str> {
     let tab = line.iter().position(|&b| b == b'\t')?;
@@ -504,6 +530,87 @@ mod tests {
         let bytes = serialize(&data);
         let r = Reader::parse(&bytes).unwrap();
         assert_eq!(r.forward_lookup("dup").len(), 2);
+    }
+
+    #[test]
+    fn forward_lookup_handles_raw_record_search_boundaries() {
+        let empty = serialize(&IndexData::default());
+        let r = Reader::parse(&empty).unwrap();
+        assert!(r.forward_lookup("anything").is_empty());
+
+        let single = serialize(&IndexData {
+            forward: vec![ForwardEntry {
+                anchor: "only".into(),
+                location: "one.md:1-1".into(),
+            }],
+            ..Default::default()
+        });
+        let r = Reader::parse(&single).unwrap();
+        assert_eq!(r.forward_lookup("only"), ["one.md:1-1"]);
+        assert!(r.forward_lookup("before").is_empty());
+        assert!(r.forward_lookup("z-after").is_empty());
+
+        let long =
+            "delta-with-an-intentionally-long-key-that-puts-byte-midpoints-inside-this-record";
+        let varied = serialize(&IndexData {
+            forward: vec![
+                ForwardEntry {
+                    anchor: "界".into(),
+                    location: "z.md:9-9".into(),
+                },
+                ForwardEntry {
+                    anchor: "a".into(),
+                    location: "first.md:1-1".into(),
+                },
+                ForwardEntry {
+                    anchor: "éclair".into(),
+                    location: "unicode/three.md:33-333".into(),
+                },
+                ForwardEntry {
+                    anchor: long.into(),
+                    location: "a/very/deeply/nested/path/whose/value/is/also/uneven.md:222-999".into(),
+                },
+                ForwardEntry {
+                    anchor: "a".into(),
+                    location: "second/with/a/much/longer/location.md:2-20".into(),
+                },
+                ForwardEntry {
+                    anchor: "éclair".into(),
+                    location: "unicode/one.md:1-1".into(),
+                },
+                ForwardEntry {
+                    anchor: "界".into(),
+                    location: "a.md:8-8".into(),
+                },
+                ForwardEntry {
+                    anchor: "éclair".into(),
+                    location: "unicode/two.md:2-22".into(),
+                },
+            ],
+            ..Default::default()
+        });
+        let r = Reader::parse(&varied).unwrap();
+
+        assert_eq!(
+            r.forward_lookup("a"),
+            ["first.md:1-1", "second/with/a/much/longer/location.md:2-20"]
+        );
+        assert_eq!(
+            r.forward_lookup(long),
+            ["a/very/deeply/nested/path/whose/value/is/also/uneven.md:222-999"]
+        );
+        assert_eq!(
+            r.forward_lookup("éclair"),
+            [
+                "unicode/one.md:1-1",
+                "unicode/three.md:33-333",
+                "unicode/two.md:2-22"
+            ]
+        );
+        assert_eq!(r.forward_lookup("界"), ["a.md:8-8", "z.md:9-9"]);
+        assert!(r.forward_lookup("0-before").is_empty());
+        assert!(r.forward_lookup("between").is_empty());
+        assert!(r.forward_lookup("😀-after").is_empty());
     }
 
     #[test]

@@ -31,24 +31,17 @@
 //! It UTF-8-validates the whole image first (`str::from_utf8` over every
 //! byte), so its cost grows with total index size, not just header size.
 //! query/forward_lookup_hit - [`Reader::forward_lookup`] of an anchor that
-//! exists. This is the microsecond lookup target, and the bench exists to
-//! check it. The lookup IS a binary search (O(log n) comparisons), but today
-//! it first materializes a record index over the entire forward section (an
-//! O(n) `split_records` pass) on every call before bisecting that vec, so the
-//! real cost is dominated by the O(n) preamble. The code's own doc comment
-//! flags this ("a future version can bisect the raw bytes in place without
-//! materializing it"); this bench quantifies what that preamble costs and how
-//! it scales. query/forward_lookup_miss - the same lookup for an anchor
-//! guaranteed absent (the bisect lands on a partition point and finds no
-//! match), to confirm a miss is no cheaper or dearer than a hit.
+//! exists. It binary-searches the newline-delimited forward-section bytes in
+//! place, with no O(n) record table allocation. This is the microsecond lookup
+//! target, and the bench checks both its absolute cost and its scaling.
+//! query/forward_lookup_miss - the same lookup for an anchor guaranteed absent
+//! (the bisect lands on a partition point and finds no match), to confirm a
+//! miss is no cheaper or dearer than a hit.
 //! query/covering - [`Reader::covering`]: the work `rr at` does. A LINEAR scan
 //! of the whole forward section, O(n) in total anchor count, so its throughput
-//! is reported as anchors/second (the scan rate). The honest finding to
-//! surface: neither read/forward_lookup nor at/covering is constant-time
-//! today; both walk the whole forward section per query, so query cost grows
-//! with index size (covering by construction, forward_lookup via the index it
-//! rebuilds each call). The microsecond target holds at small index sizes but
-//! degrades as the corpus grows.
+//! is reported as anchors/second (the scan rate). Unlike `forward_lookup`, it
+//! still walks the whole forward section per query, so its cost grows with
+//! index size.
 //!
 //! The index is synthesized (no `indexer::build`, no tree-sitter): the query
 //! path operates purely on the serialized index, so synthesizing gives precise
@@ -71,9 +64,8 @@ use corpus::{hit_anchor, make_index, miss_anchor};
 
 // File counts bracketing clam (~2,200 files / ~26k anchors). At ~12 anchors
 // per file (one module anchor plus ITEMS_PER_FILE symbol anchors) these land
-// near ~3k and ~25k anchors; the third, larger scale makes each operation's
-// scaling with index size unmistakable (see the module header: covering and
-// forward_lookup both grow with the corpus today).
+// near ~3k and ~25k anchors; the third, larger scale distinguishes the flat
+// lookup from covering's linear growth.
 const SCALES: &[usize] = &[256, 2048, 8192];
 
 /// Serialize `data`, write it to a throwaway index file on disk, and
@@ -165,10 +157,8 @@ fn bench_query(c: &mut Criterion) {
             },
         );
 
-        // forward_lookup hit: the microsecond lookup target. A binary search,
-        // but preceded by an O(n) rebuild of the record index on every call
-        // (see the module header), so this is where the claim is checked
-        // against scale.
+        // forward_lookup hit: the microsecond lookup target. Its raw-byte
+        // binary search is checked against scale here.
         group.bench_with_input(
             BenchmarkId::new("forward_lookup_hit", files),
             &hit,

@@ -1,11 +1,10 @@
 //! Allocation pin for the index read path.
 //!
-//! [`Reader::forward_lookup`] and [`Reader::covering`] allocate O(n) in the
-//! index size on every call
-//! `[[rr:BENCHMARKS.md#Findings that hold on both platforms]]`. A real
-//! in-place bisect would allocate O(1); when that lands these bounds should
-//! drop toward zero and the scales-with-N assertions below should be
-//! inverted or deleted.
+//! [`Reader::covering`] allocates O(n) in the index size on every call
+//! `[[rr:BENCHMARKS.md#Findings that hold on both platforms]]`.
+//! [`Reader::forward_lookup`] bisects the raw section bytes in place, so each
+//! lookup allocates only for its result and stays O(1) for a fixed number of
+//! matches.
 //!
 //! Key invariant: a CLEAN allocation counter requires exactly ONE test thread.
 //! Cargo runs the `#[test]` fns in a binary on parallel threads sharing this
@@ -105,22 +104,23 @@ fn measure(f: impl FnOnce()) -> (usize, usize) {
 
 /// `[[rr:Findings that hold on both platforms]]`
 ///
-/// Asserts only the robust ">0" and "scales-with-N" shape; exact byte counts
-/// vary by allocator and platform, so they live in comments, not assertions.
+/// Asserts the robust allocation shapes: constant for `forward_lookup`, and
+/// positive and growing for `covering`. Exact byte counts vary by allocator
+/// and platform, so they live in comments, not assertions.
 ///
 /// Measured on this machine (System allocator, 64-bit; bytes / `alloc` calls):
 ///
 /// | op             | N = 1000      | N = 8000        |
 /// | -------------- | ------------- | --------------- |
-/// | forward_lookup | 32,768 B / 10 | 262,144 B / 13  |
+/// | forward_lookup | 64 B / 1      | 64 B / 1        |
 /// | covering       | 33,000 B / 12 | 262,380 B / 15  |
 ///
-/// The ~8x byte jump tracks the 8x entry count: `split_records` builds a
-/// `Vec<&[u8]>` holding one fat pointer per record, so its backing buffer is
+/// `forward_lookup`'s equal byte counts are its one-entry result vectors.
+/// The ~8x `covering` jump tracks the 8x entry count: `split_records` builds
+/// a `Vec<&[u8]>` holding one fat pointer per record, so its backing buffer is
 /// O(n) (the dominant term -- 8000 records times 16 bytes, plus growth
-/// overshoot, is ~256 KB). The handful of extra small `alloc`s are the result
-/// `Vec`s the operations return, and do not scale with the index. Counts are
-/// recorded for context only; the assertions below are on bytes.
+/// overshoot, is ~256 KB). Counts are recorded for context only; the
+/// assertions below are on bytes.
 #[test]
 fn read_path_allocates_and_scales_with_index_size() {
     // SETUP -- everything that allocates happens here, BEFORE any measurement:
@@ -194,10 +194,10 @@ fn read_path_allocates_and_scales_with_index_size() {
         fwd_small_b > 0,
         "forward_lookup must allocate at N={SMALL}; got {fwd_small_b} B"
     );
-    assert!(
-        fwd_large_b > fwd_small_b,
-        "forward_lookup must allocate more at N={LARGE} than N={SMALL} \
-         (scales with index size): {fwd_large_b} B vs {fwd_small_b} B"
+    assert_eq!(
+        fwd_large_b, fwd_small_b,
+        "forward_lookup allocation must stay constant as the index grows: \
+         {fwd_large_b} B at N={LARGE} vs {fwd_small_b} B at N={SMALL}"
     );
 
     // covering: same two properties.

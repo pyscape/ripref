@@ -38,14 +38,16 @@ These transfer across the two machines; they are the point of the report.
    Windows. That is ~0.9 s to index 512 files on Linux (a ~2,200-file tree is
    ~4 s, ~5.4 s end to end), versus microsecond-to-millisecond reads.
    Parallelizing `indexer::build` is the open lever.
-2. **Reads are O(n), not the README's "microsecond binary search".**
-   `forward_lookup` and `covering` both grow linearly with index size on both
-   platforms (Linux `forward_lookup_hit` 64.9 us at ~3k anchors -> 2.39 ms at
-   ~98k; covering similar), because each rebuilds a record `Vec` over the whole
-   forward section per call (`split_records`). They also allocate O(n)
-   (~32.8 KB at N=1000 -> ~262 KB at N=8000, platform-independent; the
-   `tests/alloc.rs` pin passes on both). The mmap and header parse are genuinely
-   microseconds.
+2. **Forward lookup now searches record bytes in place.** The original
+   `forward_lookup` and the still-current `covering` both grew linearly with
+   index size because each rebuilt a record `Vec` over the whole forward
+   section per call (`split_records`). `forward_lookup` now binary-searches the
+   newline-delimited section bytes in place; its parse cost is unchanged and,
+   for a fixed number of matches, its per-call allocation stays constant as
+   the index grows. On the ChessAmis corpus, where `verify` resolves thousands
+   of markers through one reader, this reduced a Linux release run from 20.11 s
+   to 0.23 s. `covering` remains linear and its allocation pin remains in
+   `tests/alloc.rs`.
 3. **Native language loading is free; WASM is not.** `language_init` is ~2 ns
    native (a function-pointer wrap) versus ~80 ms (Linux) / ~145 ms (Windows)
    for the WASM path (cranelift compiling the grammar, paid per process). Query
@@ -124,6 +126,9 @@ on Windows under Defender), so treat them as order-of-magnitude.
 
 ### Query: the reader (medians)
 
+These figures predate the raw-byte lookup described in finding 2 and remain as
+the baseline that exposed the per-call record split.
+
 | operation | Windows | Linux |
 | --- | --- | --- |
 | open + mmap (any N) | ~45.9 us | ~1.9 us |
@@ -133,8 +138,8 @@ on Windows under Defender), so treat them as order-of-magnitude.
 | covering, 8192 | 10.3 ms | 6.55 ms |
 
 `open + mmap` is flat in N (it establishes the mapping); its ~24x Windows cost is
-Defender scanning the opened index file. `forward_lookup` and `covering` are O(n)
-on both (see finding 2).
+Defender scanning the opened index file. `forward_lookup` in this table includes
+the since-removed per-call record split; `covering` remains O(n) (see finding 2).
 
 ### Grammar loading: native vs WASM
 
